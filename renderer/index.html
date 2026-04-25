@@ -12,34 +12,34 @@
 <style>
   *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
   :root {
-    --bg:     #07070a;
-    --border: rgba(255,255,255,0.055);
-    --text:   #ededf4;
-    --accent: #9b7dff;
-    --titlebar-h: 28px;
+    --bg:          #07070a;
+    --border:      rgba(255,255,255,0.055);
+    --text:        #ededf4;
+    --accent:      #b2b2b2;
+    --titlebar-h:  28px;
   }
-  html, body { width:100%; height:100%; overflow:hidden; background:var(--bg); }
-  body { font-family:'Space Grotesk',sans-serif; color:var(--text); }
-<<<<<<< HEAD
+  html { width:100%; height:100%; overflow:hidden; background:transparent; border-radius:12px; }
+  body {
+    width:100%; height:100%; overflow:hidden;
+    background:var(--bg); border-radius:12px;
+    font-family:'Space Grotesk',sans-serif; color:var(--text);
+  }
   body::before {
-    content:''; position:fixed; inset:0; z-index:0; pointer-events:none;
+    content:''; position:fixed; inset:0; z-index:0; pointer-events:none; border-radius:12px;
     background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-    opacity:0.02;
+    opacity:0.022;
   }
   body::after {
-    content:''; position:fixed; inset:0; z-index:0; pointer-events:none;
+    content:''; position:fixed; inset:0; z-index:0; pointer-events:none; border-radius:12px;
     background:radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,0.5) 100%);
   }
-
-  /* titlebar */
-=======
->>>>>>> 004c332d41aa99ef8833caf42de6aec92f95bd3b
   #titlebar {
     position:fixed; top:0; left:0; right:0; height:var(--titlebar-h);
     -webkit-app-region: drag;
     display:flex; align-items:center; justify-content:flex-end;
     padding-right:8px; z-index:1000;
     background:rgba(7,7,10,0.6);
+    border-radius:12px 12px 0 0;
     border-bottom:1px solid rgba(255,255,255,0.03);
   }
   .win-btn {
@@ -52,15 +52,12 @@
   }
   .win-btn:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.7); }
   .win-btn.close:hover { background:rgba(255,80,80,0.18); color:#ff6060; }
-<<<<<<< HEAD
-
-=======
->>>>>>> 004c332d41aa99ef8833caf42de6aec92f95bd3b
   #root {
     position:relative; z-index:1;
     width:100vw; height:calc(100vh - var(--titlebar-h));
     margin-top:var(--titlebar-h);
     display:flex; overflow:hidden;
+    border-radius:0 0 12px 12px;
   }
   ::-webkit-scrollbar { width:2px; }
   ::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.07); border-radius:2px; }
@@ -71,10 +68,7 @@
 </style>
 </head>
 <body>
-<<<<<<< HEAD
 
-=======
->>>>>>> 004c332d41aa99ef8833caf42de6aec92f95bd3b
 <div id="titlebar">
   <button class="win-btn" onclick="window.electronAPI.minimize()" title="Свернуть">
     <svg width="10" height="2" viewBox="0 0 10 2" fill="currentColor"><rect width="10" height="2" rx="1"/></svg>
@@ -86,7 +80,6 @@
     <svg width="10" height="10" viewBox="0 0 10 10" stroke="currentColor" strokeWidth="1.5"><line x1="1" y1="1" x2="9" y2="9"/><line x1="9" y1="1" x2="1" y2="9"/></svg>
   </button>
 </div>
-<<<<<<< HEAD
 
 <div id="root"></div>
 <script type="text/babel">
@@ -108,37 +101,44 @@ function fmt(s) {
   return `${m}:${sec.toString().padStart(2,'0')}`;
 }
 
-/* ── Magnet physics hook ─────────────────────────────────────────────────── */
+/* ── Magnet spring hook ──────────────────────────────────────────────────── */
 function useMagnet(strength = 0.25) {
-  const ref = useRef(null);
+  const ref       = useRef(null);
   const [xy, setXY] = useState({x:0, y:0});
-  const raf = useRef(null);
-  const current = useRef({x:0, y:0});
-  const target  = useRef({x:0, y:0});
+  const raf       = useRef(null);
+  const pos       = useRef({x:0, y:0});
+  const vel       = useRef({x:0, y:0});
+  const target    = useRef({x:0, y:0});
+  const isHovered = useRef(false);
+  const SPRING = 0.10, DAMPING = 0.74, CLAMP = 12;
 
   const onMove = useCallback((e) => {
-    const el = ref.current;
-    if (!el) return;
+    const el = ref.current; if (!el) return;
+    isHovered.current = true;
     const r = el.getBoundingClientRect();
     const dx = (e.clientX - (r.left + r.width/2))  * strength;
     const dy = (e.clientY - (r.top  + r.height/2)) * strength;
-    target.current = { x: Math.max(-8, Math.min(8, dx)), y: Math.max(-8, Math.min(8, dy)) };
+    target.current = { x: Math.max(-CLAMP, Math.min(CLAMP, dx)), y: Math.max(-CLAMP, Math.min(CLAMP, dy)) };
   }, [strength]);
 
   const onLeave = useCallback(() => {
+    isHovered.current = false;
     target.current = {x:0, y:0};
   }, []);
 
   useEffect(() => {
     const loop = () => {
-      const { x: cx, y: cy } = current.current;
-      const { x: tx, y: ty } = target.current;
-      const nx = cx + (tx - cx) * 0.12;
-      const ny = cy + (ty - cy) * 0.12;
-      current.current = {x: nx, y: ny};
-      if (Math.abs(nx - cx) > 0.01 || Math.abs(ny - cy) > 0.01) {
-        setXY({x: nx, y: ny});
-      }
+      const { x:cx, y:cy } = pos.current;
+      const { x:tx, y:ty } = target.current;
+      const { x:vx, y:vy } = vel.current;
+      const nvx = (vx + (tx-cx)*SPRING)*DAMPING;
+      const nvy = (vy + (ty-cy)*SPRING)*DAMPING;
+      const nx = cx+nvx, ny = cy+nvy;
+      pos.current = {x:nx, y:ny};
+      vel.current = {x:nvx, y:nvy};
+      const moving = Math.abs(nx)>0.003||Math.abs(ny)>0.003||Math.abs(nvx)>0.003||Math.abs(nvy)>0.003;
+      if (moving || isHovered.current) setXY({x:nx, y:ny});
+      else setXY(p => (p.x===0&&p.y===0)?p:{x:0,y:0});
       raf.current = requestAnimationFrame(loop);
     };
     raf.current = requestAnimationFrame(loop);
@@ -153,83 +153,85 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying }) {
   const wrapRef   = useRef(null);
   const canvasRef = useRef(null);
   const rafRef    = useRef(null);
-  const progRef    = useRef(progress);
-  const dispProg   = useRef(progress);
-  const playRef    = useRef(isPlaying);
-  const beatRef    = useRef(0);
-  const dragging   = useRef(false);
-  const H = 56;
+  const progRef   = useRef(progress);
+  const dispProg  = useRef(progress);
+  const playRef   = useRef(isPlaying);
+  const beatRef   = useRef(0);
+  const beatTgt   = useRef(0);
+  const dragging  = useRef(false);
+  const startTime = useRef(null);
+  const H = 52;
 
   useEffect(() => { progRef.current = progress; }, [progress]);
   useEffect(() => { playRef.current = isPlaying; }, [isPlaying]);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    const wrap   = wrapRef.current;
+    const canvas = canvasRef.current, wrap = wrapRef.current;
     if (!canvas || !wrap) return;
     const dpr = window.devicePixelRatio || 1;
     const resize = () => {
       const W = wrap.clientWidth;
-      canvas.width  = W * dpr; canvas.height = H * dpr;
+      canvas.width = W*dpr; canvas.height = H*dpr;
       canvas.style.width = W+'px'; canvas.style.height = H+'px';
     };
     resize();
     const ro = new ResizeObserver(resize);
     ro.observe(wrap);
 
-    let t = 0;
-    const draw = () => {
-      t++;
-      if (playRef.current && Math.random() < 0.02) beatRef.current = 0.6 + Math.random();
-      beatRef.current *= 0.92;
-      const beat = beatRef.current;
+    const draw = (now) => {
+      if (!startTime.current) startTime.current = now;
+      const t = (now - startTime.current) * 0.001;
+
+      if (playRef.current && Math.random() < 0.015) beatTgt.current = 0.4 + Math.random()*0.5;
+      beatTgt.current *= 0.90;
+      beatRef.current += (beatTgt.current - beatRef.current) * 0.12;
 
       const ctx = canvas.getContext('2d');
       const W = canvas.width, HH = canvas.height;
       ctx.clearRect(0, 0, W, HH);
 
-      dispProg.current += (progRef.current - dispProg.current) * 0.06;
+      dispProg.current += (progRef.current - dispProg.current) * 0.05;
       const p = dispProg.current;
-
-      const cy = HH * 0.5;
-      const freq  = 0.020 / dpr, freq2 = 0.038 / dpr;
-      const spd   = 0.022,       spd2  = 0.014;
+      const beat = beatRef.current;
+      const cy = HH*0.5;
+      const freq = 0.020/dpr, freq2 = 0.038/dpr;
 
       const env = (x) => {
-        const nx   = x / W;
-        const gauss = Math.exp(-Math.pow((nx - 0.5) * 2.6, 2));
-        const edge  = Math.min(nx * 14, (1 - nx) * 14, 1);
+        const nx = x/W;
+        /* sharp fade at edges, flat middle */
+        const edge = Math.min(nx/0.04, (1-nx)/0.04, 1);
+        const gauss = Math.exp(-Math.pow((nx-0.5)*2.4, 2));
         return gauss * edge;
       };
 
       const pts = [];
       for (let x = 0; x <= W; x += dpr) {
         const e = env(x);
-        const baseAmp = HH * 0.26 * e;
-        const beatAmp = beat * HH * 0.20 * e;
-        const a = baseAmp + beatAmp;
-        const y = cy
-          + a * Math.sin(x * freq  - t * spd)
-          + a * 0.38 * Math.sin(x * freq2 - t * spd2 + 1.8);
+        const a = (HH*0.26 + beat*HH*0.18) * e;
+        const y = cy + a*Math.sin(x*freq - t*1.4) + a*0.38*Math.sin(x*freq2 - t*0.9 + 1.8);
         pts.push({x, y});
       }
 
-      const grad  = ctx.createLinearGradient(0, 0, W, 0);
-      if (p > 0.005) {
-        grad.addColorStop(0,                         '#9b7dff');
-        grad.addColorStop(Math.min(p, 0.999),        '#9b7dff');
-        grad.addColorStop(Math.min(p + 0.001, 1),    'rgba(255,255,255,0.18)');
+      /* gradient with alpha fade at edges */
+      const grad = ctx.createLinearGradient(0, 0, W, 0);
+      const FADE = 0.04;
+      grad.addColorStop(0,               'rgba(0,0,0,0)');
+      grad.addColorStop(FADE,            p > FADE+0.01 ? '#b2b2b2' : 'rgba(255,255,255,0.16)');
+      if (p > FADE+0.01 && p < 1-FADE-0.01) {
+        grad.addColorStop(Math.max(FADE+0.001, p-0.001), '#b2b2b2');
+        grad.addColorStop(Math.min(1-FADE-0.001, p+0.001), 'rgba(255,255,255,0.16)');
       }
-      grad.addColorStop(1, 'rgba(255,255,255,0.18)');
+      grad.addColorStop(1-FADE,          'rgba(255,255,255,0.16)');
+      grad.addColorStop(1,               'rgba(0,0,0,0)');
 
       ctx.beginPath();
       pts.forEach(({x,y}, i) => i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y));
-      ctx.lineWidth   = 2.8 * dpr;
+      ctx.lineWidth   = 2.4*dpr;
       ctx.lineCap     = 'round';
       ctx.lineJoin    = 'round';
       ctx.strokeStyle = grad;
-      ctx.shadowColor = 'rgba(155,125,255,0.4)';
-      ctx.shadowBlur  = 6 * dpr * p;
+      ctx.shadowColor = `rgba(178,178,178,${0.3*p})`;
+      ctx.shadowBlur  = 5*dpr*p;
       ctx.stroke();
       ctx.shadowBlur  = 0;
 
@@ -241,18 +243,14 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying }) {
 
   const getVal = (e) => {
     const rect = canvasRef.current.getBoundingClientRect();
-    return Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    return Math.max(0, Math.min(1, (e.clientX - rect.left)/rect.width));
   };
-
   useEffect(() => {
     const onMove = (e) => { if (dragging.current) onSeek(getVal(e)); };
     const onUp   = () => { dragging.current = false; };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup',   onUp);
-    return () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup',   onUp);
-    };
+    return () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
   }, [onSeek]);
 
   return (
@@ -261,74 +259,98 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying }) {
         onMouseDown={e => { dragging.current = true; onSeek(getVal(e)); }}>
         <canvas ref={canvasRef} style={{display:'block'}}/>
       </div>
-      <div style={{display:'flex', justifyContent:'space-between', marginTop:10,
-                   fontSize:11, color:'rgba(255,255,255,0.22)'}}>
+      <div style={{display:'flex', justifyContent:'space-between', marginTop:8, fontSize:10.5, color:'rgba(255,255,255,0.2)'}}>
         <span>{fmt(elapsed)}</span><span>{fmt(total)}</span>
       </div>
     </div>
   );
 }
 
-/* ── Vertical Volume Wave ────────────────────────────────────────────────── */
-function VerticalVolumeWave({ volume, onChange }) {
-  const wrapRef   = useRef(null);
-  const canvasRef = useRef(null);
-  const rafRef    = useRef(null);
-  const volRef    = useRef(volume);
-  const dragging  = useRef(false);
-  const W = 18;
+/* ── Thin Volume Slider ───────────────────────────────────────────────────── */
+function ThinVolumeSlider({ volume, onChange }) {
+  const wrapRef    = useRef(null);
+  const canvasRef  = useRef(null);
+  const rafRef     = useRef(null);
+  const volActual  = useRef(volume); /* follows props when idle, follows cursor during drag */
+  const volDisp    = useRef(volume); /* smoothly chases volActual */
+  const dragging   = useRef(false);
+  const trackWAnim = useRef(2);      /* animates between 2 and 4 on press */
+  const handleRAnim= useRef(3.5);
+  const onChangeCb = useRef(onChange);
+  const TW = 28;
 
-  useEffect(() => { volRef.current = volume; }, [volume]);
+  useEffect(() => { onChangeCb.current = onChange; }, [onChange]);
+  useEffect(() => { if (!dragging.current) volActual.current = volume; }, [volume]);
+
+  const getVal = useCallback((e) => {
+    const rect = canvasRef.current.getBoundingClientRect();
+    return Math.max(0, Math.min(1, 1 - (e.clientY - rect.top)/rect.height));
+  }, []);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    const wrap   = wrapRef.current;
+    const canvas = canvasRef.current, wrap = wrapRef.current;
     if (!canvas || !wrap) return;
     const dpr = window.devicePixelRatio || 1;
+
     const resize = () => {
-      const HH = wrap.clientHeight;
-      canvas.height = HH * dpr; canvas.width = W * dpr;
-      canvas.style.height = HH+'px'; canvas.style.width = W+'px';
+      canvas.height = wrap.clientHeight * dpr;
+      canvas.width  = TW * dpr;
+      canvas.style.height = wrap.clientHeight + 'px';
+      canvas.style.width  = TW + 'px';
     };
     resize();
     const ro = new ResizeObserver(resize);
     ro.observe(wrap);
 
-    let t = 0;
     const draw = () => {
-      t++;
+      /* smooth display chases actual */
+      const speed = dragging.current ? 0.09 : 0.04;
+      volDisp.current += (volActual.current - volDisp.current) * speed;
+      const v = volDisp.current;
+
+      /* animate track thickness */
+      const tgtTW = dragging.current ? 4 : 2;
+      const tgtHR = dragging.current ? 6 : 3.5;
+      trackWAnim.current  += (tgtTW - trackWAnim.current)  * 0.14;
+      handleRAnim.current += (tgtHR - handleRAnim.current) * 0.14;
+      const TRW = trackWAnim.current  * dpr;
+      const HR  = handleRAnim.current * dpr;
+
       const ctx = canvas.getContext('2d');
       const WW = canvas.width, HH = canvas.height;
       ctx.clearRect(0, 0, WW, HH);
-      const cx   = WW * 0.5;
-      const amp  = WW * 0.28;
-      const freq = 0.028 / dpr;
-      const spd  = 0.022;
-      const fillY = HH * (1 - volRef.current);
 
-      const grad = ctx.createLinearGradient(0, 0, 0, HH);
-      grad.addColorStop(0, 'rgba(255,255,255,0.09)');
-      if (volRef.current > 0.005) {
-        grad.addColorStop(Math.max(0, fillY / HH), 'rgba(255,255,255,0.09)');
-        grad.addColorStop(Math.min(1, fillY / HH + 0.001), '#9b7dff');
-      }
-      grad.addColorStop(1, '#9b7dff');
+      const cx       = WW/2;
+      const pad      = HR + 2*dpr;
+      const trackH   = HH - pad*2;
+      const fillTop  = pad + trackH*(1-v);
+      const trackBot = HH - pad;
 
+      /* track bg */
       ctx.beginPath();
-      let first = true;
-      for (let y = 0; y <= HH; y += dpr) {
-        const x = cx + amp * Math.sin(y * freq - t * spd)
-                     + amp * 0.3 * Math.sin(y * freq * 1.7 - t * spd * 0.65 + 2);
-        first ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-        first = false;
+      ctx.roundRect(cx - TRW/2, pad, TRW, trackH, TRW/2);
+      ctx.fillStyle = 'rgba(255,255,255,0.07)';
+      ctx.fill();
+
+      /* fill */
+      if (v > 0.005) {
+        ctx.shadowColor = 'rgba(178,178,178,0.4)';
+        ctx.shadowBlur  = 4*dpr;
+        ctx.beginPath();
+        ctx.roundRect(cx - TRW/2, fillTop, TRW, trackBot-fillTop, TRW/2);
+        ctx.fillStyle = '#b2b2b2';
+        ctx.fill();
+        ctx.shadowBlur = 0;
       }
-      ctx.lineWidth   = 1.8 * dpr;
-      ctx.lineCap     = 'round';
-      ctx.strokeStyle = grad;
-      ctx.shadowColor = 'rgba(155,125,255,0.35)';
-      ctx.shadowBlur  = volRef.current * 5 * dpr;
-      ctx.stroke();
-      ctx.shadowBlur  = 0;
+
+      /* handle */
+      ctx.beginPath();
+      ctx.arc(cx, fillTop, HR, 0, Math.PI*2);
+      ctx.fillStyle = v > 0.005 ? 'rgba(200,200,200,0.9)' : 'rgba(255,255,255,0.18)';
+      ctx.shadowColor = 'rgba(200,200,200,0.5)';
+      ctx.shadowBlur  = dragging.current ? 8*dpr : (v > 0.005 ? 5*dpr : 0);
+      ctx.fill();
+      ctx.shadowBlur = 0;
 
       rafRef.current = requestAnimationFrame(draw);
     };
@@ -336,25 +358,24 @@ function VerticalVolumeWave({ volume, onChange }) {
     return () => { cancelAnimationFrame(rafRef.current); ro.disconnect(); };
   }, []);
 
-  const getVal = (e) => {
-    const rect = canvasRef.current.getBoundingClientRect();
-    return Math.max(0, Math.min(1, 1 - (e.clientY - rect.top) / rect.height));
-  };
-
   useEffect(() => {
-    const onMove = (e) => { if (dragging.current) onChange(getVal(e)); };
-    const onUp   = () => { dragging.current = false; };
+    const onMove = (e) => {
+      if (!dragging.current) return;
+      volActual.current = getVal(e);
+    };
+    const onUp = () => {
+      if (!dragging.current) return;
+      dragging.current = false;
+      onChangeCb.current(volDisp.current);
+    };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup',   onUp);
-    return () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup',   onUp);
-    };
-  }, [onChange]);
+    return () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+  }, [getVal]);
 
   return (
     <div ref={wrapRef} style={{flex:1, cursor:'ns-resize', display:'flex', alignItems:'stretch'}}
-      onMouseDown={e => { dragging.current = true; onChange(getVal(e)); }}>
+      onMouseDown={e => { dragging.current = true; volActual.current = getVal(e); }}>
       <canvas ref={canvasRef} style={{display:'block'}}/>
     </div>
   );
@@ -363,35 +384,35 @@ function VerticalVolumeWave({ volume, onChange }) {
 /* ── Album Art ───────────────────────────────────────────────────────────── */
 function AlbumArt({ track, isPlaying }) {
   return (
-    <div style={{position:'relative', width:'100%', aspectRatio:'1', borderRadius:22, overflow:'hidden'}}>
+    <div style={{position:'relative', width:'100%', aspectRatio:'1', borderRadius:20, overflow:'hidden'}}>
       <div style={{
         position:'absolute', inset:-40, borderRadius:'50%', background:track.color,
-        filter:'blur(56px)', opacity: isPlaying ? 0.52 : 0.28,
+        filter:'blur(56px)', opacity: isPlaying ? 0.48 : 0.24,
         transition:'opacity 1.4s ease',
         animation: isPlaying ? 'breathe 3.5s ease-in-out infinite' : 'none',
       }}/>
       <div style={{
-        position:'absolute', inset:0, borderRadius:22,
-        background:`linear-gradient(148deg, ${track.color}22 0%, #040408 100%)`,
-        border:'1px solid rgba(255,255,255,0.07)',
+        position:'absolute', inset:0, borderRadius:20,
+        background:`linear-gradient(148deg, ${track.color}20 0%, #040408 100%)`,
+        border:'1px solid rgba(255,255,255,0.06)',
         display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden',
       }}>
         <svg width="100%" height="100%" viewBox="0 0 300 300" preserveAspectRatio="xMidYMid slice" style={{position:'absolute',inset:0}}>
           <defs>
             <radialGradient id={`rg${track.id}`} cx="38%" cy="32%" r="75%">
-              <stop offset="0%" stopColor={track.color} stopOpacity="0.7"/>
+              <stop offset="0%" stopColor={track.color} stopOpacity="0.65"/>
               <stop offset="100%" stopColor="#040408" stopOpacity="1"/>
             </radialGradient>
           </defs>
           <rect width="300" height="300" fill={`url(#rg${track.id})`}/>
           {[68,105,138].map(r => (
             <circle key={r} cx="150" cy="150" r={r} fill="none"
-              stroke={`rgba(255,255,255,${r===68?0.07:r===105?0.04:0.025})`} strokeWidth="1"/>
+              stroke={`rgba(255,255,255,${r===68?0.06:r===105?0.035:0.02})`} strokeWidth="1"/>
           ))}
         </svg>
         <div style={{
-          position:'relative', zIndex:1, width:40, height:40, borderRadius:'50%',
-          border:`2px solid ${track.color}88`, boxShadow:`0 0 18px ${track.color}55`,
+          position:'relative', zIndex:1, width:38, height:38, borderRadius:'50%',
+          border:`1.5px solid ${track.color}77`, boxShadow:`0 0 16px ${track.color}44`,
           animation: isPlaying ? 'spin 9s linear infinite' : 'none',
         }}/>
       </div>
@@ -399,21 +420,20 @@ function AlbumArt({ track, isPlaying }) {
   );
 }
 
-/* ── Physics Button ──────────────────────────────────────────────────────── */
-function MagBtn({ onClick, active, children, size=44 }) {
+/* ── MagBtn ──────────────────────────────────────────────────────────────── */
+function MagBtn({ onClick, active, children, size=52 }) {
   const { ref, xy, onMove, onLeave } = useMagnet(0.28);
   const [pressed, setPressed] = useState(false);
   return (
     <button ref={ref} onClick={onClick}
-      onMouseMove={onMove} onMouseLeave={() => { onLeave(); }}
-      onMouseDown={() => setPressed(true)}
-      onMouseUp={() => setPressed(false)}
+      onMouseMove={onMove} onMouseLeave={onLeave}
+      onMouseDown={() => setPressed(true)} onMouseUp={() => setPressed(false)}
       style={{
         width:size, height:size, borderRadius:'50%', border:'none', background:'none',
-        color: active ? 'var(--accent)' : 'rgba(255,255,255,0.42)',
+        color: active ? 'var(--accent)' : 'rgba(255,255,255,0.38)',
         display:'flex', alignItems:'center', justifyContent:'center',
         cursor:'pointer', flexShrink:0,
-        transform: `translate(${xy.x}px,${xy.y}px) scale(${pressed?0.83:1})`,
+        transform:`translate(${xy.x}px,${xy.y}px) scale(${pressed?0.83:1})`,
         transition: pressed ? 'transform 0.08s ease' : 'color 0.2s ease',
         willChange:'transform',
       }}>
@@ -422,26 +442,25 @@ function MagBtn({ onClick, active, children, size=44 }) {
   );
 }
 
-/* ── Play Button ─────────────────────────────────────────────────────────── */
+/* ── PlayBtn ─────────────────────────────────────────────────────────────── */
 function PlayBtn({ isPlaying, onToggle }) {
   const { ref, xy, onMove, onLeave } = useMagnet(0.18);
   const [pressed, setPressed] = useState(false);
   return (
     <button ref={ref} onClick={onToggle}
       onMouseMove={onMove} onMouseLeave={onLeave}
-      onMouseDown={() => setPressed(true)}
-      onMouseUp={() => setPressed(false)}
+      onMouseDown={() => setPressed(true)} onMouseUp={() => setPressed(false)}
       style={{
-        width:74, height:74, borderRadius:'50%', border:'none',
-        background: isPlaying ? 'rgba(155,125,255,0.15)' : 'rgba(255,255,255,0.06)',
+        width:82, height:82, borderRadius:'50%', border:'none',
+        background: isPlaying ? 'rgba(178,178,178,0.12)' : 'rgba(255,255,255,0.055)',
         color:'var(--text)',
         display:'flex', alignItems:'center', justifyContent:'center',
         cursor:'pointer', flexShrink:0,
-        transform: `translate(${xy.x}px,${xy.y}px) scale(${pressed?0.88:1})`,
+        transform:`translate(${xy.x}px,${xy.y}px) scale(${pressed?0.88:1})`,
         transition: pressed ? 'transform 0.09s ease' : 'background 0.3s ease, box-shadow 0.3s ease',
         boxShadow: isPlaying
-          ? '0 0 30px rgba(155,125,255,0.2), inset 0 0 0 1px rgba(155,125,255,0.3)'
-          : 'inset 0 0 0 1px rgba(255,255,255,0.08)',
+          ? '0 0 28px rgba(178,178,178,0.12), inset 0 0 0 1px rgba(178,178,178,0.22)'
+          : 'inset 0 0 0 1px rgba(255,255,255,0.07)',
         willChange:'transform',
       }}>
       {isPlaying
@@ -452,7 +471,7 @@ function PlayBtn({ isPlaying, onToggle }) {
   );
 }
 
-/* ── Nav Icon ────────────────────────────────────────────────────────────── */
+/* ── NavIcon ─────────────────────────────────────────────────────────────── */
 function NavIcon({ icon, label, active, onClick, size=38 }) {
   const { ref, xy, onMove, onLeave } = useMagnet(0.22);
   return (
@@ -460,11 +479,11 @@ function NavIcon({ icon, label, active, onClick, size=38 }) {
       onMouseMove={onMove} onMouseLeave={onLeave}
       style={{
         width:size, height:size, borderRadius:11, border:'none',
-        background: active ? 'rgba(155,125,255,0.13)' : 'none',
-        color: active ? 'var(--accent)' : 'rgba(255,255,255,0.26)',
+        background: active ? 'rgba(178,178,178,0.11)' : 'none',
+        color: active ? 'var(--accent)' : 'rgba(255,255,255,0.24)',
         display:'flex', alignItems:'center', justifyContent:'center',
         cursor:'pointer', flexShrink:0,
-        transform: `translate(${xy.x}px,${xy.y}px)`,
+        transform:`translate(${xy.x}px,${xy.y}px)`,
         transition:'color 0.18s ease, background 0.18s ease',
         willChange:'transform',
       }}>
@@ -473,42 +492,42 @@ function NavIcon({ icon, label, active, onClick, size=38 }) {
   );
 }
 
-/* ── Track row ───────────────────────────────────────────────────────────── */
+/* ── TrackRow ────────────────────────────────────────────────────────────── */
 function TrackRow({ track, isActive, onClick }) {
   const [hov, setHov] = useState(false);
   return (
     <div onClick={onClick} onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
       style={{
-        display:'flex', alignItems:'center', gap:9, padding:'7px 8px', borderRadius:9,
-        background: isActive ? 'rgba(155,125,255,0.1)' : hov ? 'rgba(255,255,255,0.03)' : 'none',
+        display:'flex', alignItems:'center', gap:10, padding:'8px 10px', borderRadius:9,
+        background: isActive ? 'rgba(178,178,178,0.09)' : hov ? 'rgba(255,255,255,0.03)' : 'none',
         cursor:'pointer', transition:'background 0.15s ease',
       }}>
       <div style={{
-        width:32, height:32, borderRadius:7, flexShrink:0,
+        width:34, height:34, borderRadius:7, flexShrink:0,
         background:`linear-gradient(135deg, ${track.color}44, #101014)`,
-        border:'1px solid rgba(255,255,255,0.06)',
+        border:'1px solid rgba(255,255,255,0.05)',
         display:'flex', alignItems:'center', justifyContent:'center',
       }}>
-        <svg width="9" height="9" fill={isActive?'var(--accent)':'rgba(255,255,255,0.3)'} viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>
+        <svg width="9" height="9" fill={isActive?'var(--accent)':'rgba(255,255,255,0.28)'} viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>
       </div>
       <div style={{flex:1, overflow:'hidden'}}>
-        <div style={{fontSize:12, fontWeight:500,
-          color: isActive ? 'var(--accent)' : 'rgba(255,255,255,0.8)',
+        <div style={{fontSize:12.5, fontWeight:500,
+          color: isActive ? 'var(--accent)' : 'rgba(255,255,255,0.78)',
           whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{track.title}</div>
-        <div style={{fontSize:10.5, color:'rgba(255,255,255,0.28)', marginTop:1}}>{track.artist}</div>
+        <div style={{fontSize:11, color:'rgba(255,255,255,0.26)', marginTop:1}}>{track.artist}</div>
       </div>
-      <div style={{fontSize:10.5, color:'rgba(255,255,255,0.18)', flexShrink:0}}>{fmt(track.duration)}</div>
+      <div style={{fontSize:11, color:'rgba(255,255,255,0.16)', flexShrink:0}}>{fmt(track.duration)}</div>
     </div>
   );
 }
 
-/* ── Home card ───────────────────────────────────────────────────────────── */
-function HomeCard({ track, onClick }) {
+/* ── HomeCard ────────────────────────────────────────────────────────────── */
+function HomeCard({ track, onClick, artRef }) {
   const [hov, setHov] = useState(false);
   const { ref, xy, onMove, onLeave } = useMagnet(0.18);
   return (
     <div ref={ref} onClick={onClick}
-      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>{setHov(false); onLeave();}}
+      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>{setHov(false);onLeave();}}
       onMouseMove={onMove}
       style={{
         borderRadius:16, overflow:'hidden', cursor:'pointer',
@@ -516,59 +535,87 @@ function HomeCard({ track, onClick }) {
         transition:'transform 0.35s cubic-bezier(0.34,1.56,0.64,1)',
         willChange:'transform',
       }}>
-      <div style={{
+      <div ref={artRef} style={{
         width:'100%', aspectRatio:'1', position:'relative',
-        background:`linear-gradient(145deg, ${track.color}55, #060609)`,
-        border:'1px solid rgba(255,255,255,0.07)',
+        background:`linear-gradient(145deg, ${track.color}50, #060609)`,
+        border:'1px solid rgba(255,255,255,0.06)',
         display:'flex', alignItems:'center', justifyContent:'center',
         overflow:'hidden',
       }}>
         <svg width="100%" height="100%" viewBox="0 0 200 200" preserveAspectRatio="xMidYMid slice" style={{position:'absolute',inset:0}}>
           <defs>
             <radialGradient id={`hg${track.id}`} cx="40%" cy="35%" r="70%">
-              <stop offset="0%" stopColor={track.color} stopOpacity="0.75"/>
+              <stop offset="0%" stopColor={track.color} stopOpacity="0.7"/>
               <stop offset="100%" stopColor="#060609" stopOpacity="1"/>
             </radialGradient>
           </defs>
           <rect width="200" height="200" fill={`url(#hg${track.id})`}/>
-          <circle cx="100" cy="100" r="45" fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="1"/>
-          <circle cx="100" cy="100" r="70" fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="1"/>
+          <circle cx="100" cy="100" r="45" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="1"/>
+          <circle cx="100" cy="100" r="70" fill="none" stroke="rgba(255,255,255,0.035)" strokeWidth="1"/>
         </svg>
         <div style={{
-          position:'relative', zIndex:1, width:28, height:28, borderRadius:'50%',
-          border:`2px solid ${track.color}88`, boxShadow:`0 0 12px ${track.color}55`,
+          position:'relative', zIndex:1, width:26, height:26, borderRadius:'50%',
+          border:`1.5px solid ${track.color}88`, boxShadow:`0 0 10px ${track.color}44`,
         }}/>
         <div style={{
-          position:'absolute', inset:0, background:'rgba(0,0,0,0.35)',
+          position:'absolute', inset:0, background:'rgba(0,0,0,0.32)',
           display:'flex', alignItems:'center', justifyContent:'center',
-          opacity: hov ? 1 : 0, transition:'opacity 0.2s ease',
+          opacity: hov?1:0, transition:'opacity 0.2s ease',
         }}>
-          <svg width="28" height="28" fill="white" viewBox="0 0 24 24" style={{marginLeft:3}}><polygon points="5,3 19,12 5,21"/></svg>
+          <svg width="26" height="26" fill="white" viewBox="0 0 24 24" style={{marginLeft:3}}><polygon points="5,3 19,12 5,21"/></svg>
         </div>
       </div>
-      <div style={{padding:'10px 4px 4px'}}>
-        <div style={{fontSize:12.5, fontWeight:500, color:'rgba(255,255,255,0.88)',
+      <div style={{padding:'9px 4px 4px'}}>
+        <div style={{fontSize:12, fontWeight:500, color:'rgba(255,255,255,0.85)',
           whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{track.title}</div>
-        <div style={{fontSize:11, color:'rgba(255,255,255,0.3)', marginTop:2}}>{track.artist}</div>
+        <div style={{fontSize:10.5, color:'rgba(255,255,255,0.28)', marginTop:2}}>{track.artist}</div>
       </div>
     </div>
   );
 }
 
-/* ── Transition overlay ──────────────────────────────────────────────────── */
-function RevealOverlay({ x, y, color, phase }) {
+/* ── Hero clone ──────────────────────────────────────────────────────────── */
+function HeroClone({ hero }) {
+  const [style, setStyle] = useState({
+    position:'fixed',
+    left: hero.startRect.left, top: hero.startRect.top,
+    width: hero.startRect.width, height: hero.startRect.height,
+    borderRadius:16, zIndex:960, pointerEvents:'none', overflow:'hidden',
+    background:`linear-gradient(145deg, ${hero.track.color}50, #060609)`,
+    border:'1px solid rgba(255,255,255,0.06)', transition:'none',
+  });
+
+  useEffect(() => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      setStyle(s => ({
+        ...s,
+        left: hero.targetRect.left, top: hero.targetRect.top,
+        width: hero.targetRect.size, height: hero.targetRect.size,
+        borderRadius:20,
+        transition:'left 0.52s cubic-bezier(0.4,0,0.2,1), top 0.52s cubic-bezier(0.4,0,0.2,1), width 0.52s cubic-bezier(0.4,0,0.2,1), height 0.52s cubic-bezier(0.4,0,0.2,1), border-radius 0.52s cubic-bezier(0.4,0,0.2,1)',
+      }));
+    }));
+  }, []);
+
   return ReactDOM.createPortal(
-    <div style={{
-      position:'fixed', inset:0, zIndex:900, pointerEvents:'none',
-      background: color,
-      clipPath: phase === 'expand'
-        ? `circle(200% at ${x}px ${y}px)`
-        : `circle(0% at ${x}px ${y}px)`,
-      transition: phase === 'expand'
-        ? 'clip-path 0.55s cubic-bezier(0.4,0,0.2,1)'
-        : 'none',
-      opacity:0.6,
-    }}/>,
+    <div style={style}>
+      <svg width="100%" height="100%" viewBox="0 0 200 200" preserveAspectRatio="xMidYMid slice" style={{position:'absolute',inset:0}}>
+        <defs>
+          <radialGradient id={`hc${hero.track.id}`} cx="40%" cy="35%" r="70%">
+            <stop offset="0%" stopColor={hero.track.color} stopOpacity="0.7"/>
+            <stop offset="100%" stopColor="#060609" stopOpacity="1"/>
+          </radialGradient>
+        </defs>
+        <rect width="200" height="200" fill={`url(#hc${hero.track.id})`}/>
+        <circle cx="100" cy="100" r="45" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="1"/>
+        <circle cx="100" cy="100" r="70" fill="none" stroke="rgba(255,255,255,0.035)" strokeWidth="1"/>
+      </svg>
+      <div style={{
+        position:'absolute', zIndex:1, width:26, height:26, borderRadius:'50%',
+        top:'50%', left:'50%', transform:'translate(-50%,-50%)',
+        border:`1.5px solid ${hero.track.color}88`, boxShadow:`0 0 10px ${hero.track.color}44`,
+      }}/>
+    </div>,
     document.body
   );
 }
@@ -576,14 +623,10 @@ function RevealOverlay({ x, y, color, phase }) {
 /* ── Sidebar ─────────────────────────────────────────────────────────────── */
 function Sidebar({ navActive, onNav }) {
   const NAV = [
-    { id:"home",    label:"Главная",
-      icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><path d="M3 9.5L12 3l9 6.5V21H3V9.5z"/></svg> },
-    { id:"library", label:"Библиотека",
-      icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.2"/><rect x="14" y="3" width="7" height="7" rx="1.2"/><rect x="3" y="14" width="7" height="7" rx="1.2"/><rect x="14" y="14" width="7" height="7" rx="1.2"/></svg> },
-    { id:"liked",   label:"Любимое",
-      icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z"/></svg> },
-    { id:"search",  label:"Поиск",
-      icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg> },
+    { id:"home",    label:"Главная",    icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><path d="M3 9.5L12 3l9 6.5V21H3V9.5z"/></svg> },
+    { id:"library", label:"Библиотека", icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.2"/><rect x="14" y="3" width="7" height="7" rx="1.2"/><rect x="3" y="14" width="7" height="7" rx="1.2"/><rect x="14" y="14" width="7" height="7" rx="1.2"/></svg> },
+    { id:"liked",   label:"Любимое",   icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z"/></svg> },
+    { id:"search",  label:"Поиск",     icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg> },
   ];
   return (
     <div style={{
@@ -591,49 +634,48 @@ function Sidebar({ navActive, onNav }) {
       display:'flex', flexDirection:'column', alignItems:'center',
       paddingTop:18, paddingBottom:22, gap:6,
       borderRight:'1px solid var(--border)',
-      background:'rgba(255,255,255,0.014)', zIndex:10,
+      background:'rgba(255,255,255,0.012)', zIndex:10,
     }}>
       <div style={{
-        width:42, height:42, borderRadius:'50%',
-        background:'rgba(155,125,255,0.1)', border:'1px solid rgba(155,125,255,0.2)',
+        width:40, height:40, borderRadius:'50%',
+        background:'rgba(178,178,178,0.08)', border:'1px solid rgba(178,178,178,0.15)',
         display:'flex', alignItems:'center', justifyContent:'center',
         cursor:'pointer', color:'var(--accent)', marginBottom:12, flexShrink:0,
       }}>
-        <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.6" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+        <svg width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.6" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
       </div>
       {NAV.map(n => (
-        <NavIcon key={n.id} icon={n.icon} label={n.label}
-          active={navActive===n.id} onClick={() => onNav(n.id)}/>
+        <NavIcon key={n.id} icon={n.icon} label={n.label} active={navActive===n.id} onClick={()=>onNav(n.id)}/>
       ))}
       <div style={{flex:1}}/>
-      <NavIcon label="Настройки"
-        icon={<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>}
-        active={false} onClick={()=>{}}/>
+      <NavIcon label="Настройки" active={false} onClick={()=>{}}
+        icon={<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>}/>
     </div>
   );
 }
 
 /* ── App ─────────────────────────────────────────────────────────────────── */
 function App() {
-  const [view,      setView]      = useState('home');
-  const [trackIdx,  setTrackIdx]  = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [progress,  setProgress]  = useState(0);
-  const [shuffle,   setShuffle]   = useState(false);
-  const [repeat,    setRepeat]    = useState(false);
-  const [navActive, setNavActive] = useState('home');
-  const [search,    setSearch]    = useState('');
-  const [volume,    setVolume]    = useState(0.7);
-  const [reveal,    setReveal]    = useState(null);
+  const [view,          setView]          = useState('home');
+  const [trackIdx,      setTrackIdx]      = useState(0);
+  const [isPlaying,     setIsPlaying]     = useState(false);
+  const [progress,      setProgress]      = useState(0);
+  const [shuffle,       setShuffle]       = useState(false);
+  const [repeat,        setRepeat]        = useState(false);
+  const [navActive,     setNavActive]     = useState('home');
+  const [search,        setSearch]        = useState('');
+  const [volume,        setVolume]        = useState(0.7);
+  const [hero,          setHero]          = useState(null);
   const [playerVisible, setPlayerVisible] = useState(false);
 
-  const track = TRACKS[trackIdx];
+  const artRefs = useRef({});
+  const track   = TRACKS[trackIdx];
 
   useEffect(() => {
     if (!isPlaying) return;
     const id = setInterval(() => {
       setProgress(p => {
-        const next = p + 1 / track.duration * 0.25;
+        const next = p + 1/track.duration*0.25;
         if (next >= 1) { handleNext(); return 0; }
         return next;
       });
@@ -645,8 +687,7 @@ function App() {
     if (repeat) { setProgress(0); return; }
     setTrackIdx(i => shuffle
       ? (() => { let n; do { n=Math.floor(Math.random()*TRACKS.length); } while(n===i); return n; })()
-      : (i+1)%TRACKS.length
-    );
+      : (i+1)%TRACKS.length);
     setProgress(0);
   }
   function handlePrev() {
@@ -655,31 +696,30 @@ function App() {
     setProgress(0);
   }
 
-  function selectTrack(idx, e) {
-    const el = e.currentTarget;
-    const rect = el.getBoundingClientRect();
-    const cx = rect.left + rect.width/2;
-    const cy = rect.top  + rect.height/2;
-    setTrackIdx(idx);
-    setProgress(0);
-    setIsPlaying(true);
-    setReveal({ x: cx, y: cy, color: TRACKS[idx].color, phase: 'start' });
-    setTimeout(() => setReveal(r => r ? {...r, phase:'expand'} : r), 30);
+  function selectTrack(idx) {
+    const artEl = artRefs.current[idx];
+    const startRect = artEl ? artEl.getBoundingClientRect() : { left:0, top:0, width:0, height:0 };
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const artSize = 260;
+    const sideW = 58, libW = 260, volW = 28;
+    const availW = vw - sideW - libW - volW;
+    const targetLeft = sideW + libW + (availW - artSize)/2;
+    const targetTop  = 28 + 20;
+
+    setTrackIdx(idx); setProgress(0); setIsPlaying(true);
+    setHero({ track: TRACKS[idx], startRect, targetRect:{ left:targetLeft, top:targetTop, size:artSize } });
+
     setTimeout(() => {
-      setView('player');
-      setNavActive('library');
-      setPlayerVisible(false);
-      setReveal(null);
-      setTimeout(() => setPlayerVisible(true), 50);
-    }, 480);
+      setView('player'); setNavActive('library'); setPlayerVisible(false);
+      setTimeout(() => setPlayerVisible(true), 80);
+    }, 160);
+    setTimeout(() => setHero(null), 560);
   }
 
   const filtered = TRACKS.filter(t =>
     t.title.toLowerCase().includes(search.toLowerCase()) ||
     t.artist.toLowerCase().includes(search.toLowerCase())
   );
-  const ROW_H = 48, HEADER_H = 54;
-  const libH  = Math.min(HEADER_H + filtered.length * ROW_H + 12, window.innerHeight * 0.82);
   const elapsed = Math.floor(progress * track.duration);
 
   const handleNav = (id) => {
@@ -689,57 +729,47 @@ function App() {
   };
 
   return (
-    <div style={{display:'flex', width:'100%', height:'100%', overflow:'hidden', alignItems:'flex-start'}}>
-      {reveal && <RevealOverlay x={reveal.x} y={reveal.y} color={reveal.color} phase={reveal.phase}/>}
+    <div style={{display:'flex', width:'100%', height:'100%', overflow:'hidden'}}>
+      {hero && <HeroClone hero={hero}/>}
       <Sidebar navActive={navActive} onNav={handleNav}/>
 
       {view === 'home' && (
-        <div style={{flex:1, height:'100%', overflowY:'auto', padding:'36px 40px'}}>
-          <div style={{
-            fontSize:13, fontWeight:500, color:'rgba(255,255,255,0.25)',
-            letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:28,
-          }}>Все треки</div>
-          <div style={{
-            display:'grid',
-            gridTemplateColumns:'repeat(auto-fill, minmax(130px, 1fr))',
-            gap:20,
-          }}>
+        <div style={{flex:1, height:'100%', overflowY:'auto', padding:'32px 36px'}}>
+          <div style={{fontSize:12, fontWeight:500, color:'rgba(255,255,255,0.22)',
+            letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:24}}>Все треки</div>
+          <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(128px, 1fr))', gap:18}}>
             {TRACKS.map((t,i) => (
-              <HomeCard key={t.id} track={t} onClick={(e) => selectTrack(i, e)}/>
+              <HomeCard key={t.id} track={t}
+                artRef={el => artRefs.current[i] = el}
+                onClick={() => selectTrack(i)}/>
             ))}
           </div>
         </div>
       )}
 
       {view === 'player' && (<>
+        {/* library panel — full height, no fixed height */}
         <div style={{
-          width:214, flexShrink:0, height: libH,
+          width:260, flexShrink:0, height:'100%',
           display:'flex', flexDirection:'column',
           borderRight:'1px solid var(--border)',
-          borderBottom:'1px solid var(--border)',
-          borderBottomRightRadius: 14,
-          background:'rgba(255,255,255,0.016)',
+          background:'rgba(255,255,255,0.014)',
           zIndex:9, overflow:'hidden',
-          transition:'height 0.3s cubic-bezier(0.4,0,0.2,1)',
           opacity: playerVisible ? 1 : 0,
           transform: playerVisible ? 'translateX(0)' : 'translateX(-20px)',
-          transitionProperty:'height,opacity,transform',
-          transitionDuration:'0.3s,0.35s,0.35s',
-          transitionTimingFunction:'cubic-bezier(0.4,0,0.2,1)',
-          transitionDelay:'0s,0.1s,0.1s',
+          transition:'opacity 0.35s ease 0.1s, transform 0.35s ease 0.1s',
         }}>
           <div style={{padding:'12px 10px 8px', flexShrink:0}}>
             <div style={{
               display:'flex', alignItems:'center', gap:7,
               background:'rgba(255,255,255,0.03)',
-              border:'1px solid rgba(255,255,255,0.045)',
+              border:'1px solid rgba(255,255,255,0.04)',
               borderRadius:8, padding:'6px 10px',
             }}>
-              <svg width="11" height="11" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg>
+              <svg width="11" height="11" fill="none" stroke="rgba(255,255,255,0.22)" strokeWidth="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg>
               <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Поиск..."
                 style={{flex:1, background:'none', border:'none', outline:'none',
-                        color:'rgba(255,255,255,0.65)', fontSize:11.5,
-                        fontFamily:'Space Grotesk,sans-serif'}}/>
+                        color:'rgba(255,255,255,0.6)', fontSize:11.5, fontFamily:'Space Grotesk,sans-serif'}}/>
             </div>
           </div>
           <div style={{flex:1, overflowY:'auto', padding:'2px 6px 10px'}}>
@@ -750,83 +780,71 @@ function App() {
           </div>
         </div>
 
+        {/* center player */}
         <div style={{
           flex:1, minWidth:0, height:'100%',
-          display:'flex', flexDirection:'column',
-          alignItems:'center', justifyContent:'flex-start',
-          paddingTop:44,
+          display:'flex', alignItems:'center', justifyContent:'center',
           opacity: playerVisible ? 1 : 0,
-          transform: playerVisible ? 'translateY(0)' : 'translateY(16px)',
+          transform: playerVisible ? 'translateY(0)' : 'translateY(14px)',
           transition:'opacity 0.4s ease 0.15s, transform 0.4s ease 0.15s',
         }}>
-          <div style={{width:'min(360px, 45vh)', flexShrink:0, marginBottom:26}}>
-            <AlbumArt track={track} isPlaying={isPlaying}/>
-          </div>
-          <div style={{textAlign:'center', marginBottom:30, width:'100%', maxWidth:380, padding:'0 24px'}}>
-            <div style={{fontSize:24, fontWeight:600, letterSpacing:'-0.025em',
-              whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{track.title}</div>
-            <div style={{fontSize:12.5, color:'rgba(255,255,255,0.32)', marginTop:5}}>{track.artist}</div>
-          </div>
-          <div style={{width:'100%', maxWidth:400, padding:'0 32px', marginBottom:42}}>
-            <WaveProgressBar
-              progress={progress} elapsed={elapsed} total={track.duration}
-              onSeek={v=>setProgress(v)} isPlaying={isPlaying}/>
-          </div>
-          <div style={{display:'flex', alignItems:'center', gap:12,
-                       width:'100%', maxWidth:400, justifyContent:'center', padding:'0 32px'}}>
-            <MagBtn onClick={()=>setShuffle(s=>!s)} active={shuffle} size={46}>
-              <svg width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                <polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/>
-                <polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/>
-                <line x1="4" y1="4" x2="9" y2="9"/>
-              </svg>
-            </MagBtn>
-            <MagBtn onClick={handlePrev} size={50}>
-              <svg width="22" height="22" fill="currentColor" viewBox="0 0 24 24"><polygon points="19,20 9,12 19,4"/><rect x="5" y="4" width="3" height="16" rx="1"/></svg>
-            </MagBtn>
-            <PlayBtn isPlaying={isPlaying} onToggle={()=>setIsPlaying(p=>!p)}/>
-            <MagBtn onClick={handleNext} size={50}>
-              <svg width="22" height="22" fill="currentColor" viewBox="0 0 24 24"><polygon points="5,4 15,12 5,20"/><rect x="16" y="4" width="3" height="16" rx="1"/></svg>
-            </MagBtn>
-            <MagBtn onClick={()=>setRepeat(r=>!r)} active={repeat} size={46}>
-              <div style={{position:'relative'}}>
+          <div style={{
+            width:300, display:'flex', flexDirection:'column',
+            alignItems:'center', gap:0,
+          }}>
+            <div style={{width:260, marginBottom:22}}>
+              <AlbumArt track={track} isPlaying={isPlaying}/>
+            </div>
+            <div style={{textAlign:'center', marginBottom:18, width:'100%'}}>
+              <div style={{fontSize:22, fontWeight:600, letterSpacing:'-0.022em',
+                whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{track.title}</div>
+              <div style={{fontSize:12, color:'rgba(255,255,255,0.28)', marginTop:4}}>{track.artist}</div>
+            </div>
+            <div style={{width:'100%', marginBottom:20}}>
+              <WaveProgressBar progress={progress} elapsed={elapsed} total={track.duration}
+                onSeek={v=>setProgress(v)} isPlaying={isPlaying}/>
+            </div>
+            <div style={{display:'flex', alignItems:'center', gap:8, justifyContent:'center'}}>
+              <MagBtn onClick={()=>setShuffle(s=>!s)} active={shuffle} size={48}>
                 <svg width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                  <polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>
-                  <polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+                  <polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/>
+                  <polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/>
+                  <line x1="4" y1="4" x2="9" y2="9"/>
                 </svg>
-                {repeat && <span style={{
-                  position:'absolute', top:'50%', left:'50%',
-                  transform:'translate(-50%,-50%)', fontSize:7, fontWeight:700,
-                  color:'var(--accent)', lineHeight:1, textShadow:'0 0 8px var(--accent)',
-                }}>1</span>}
-              </div>
-            </MagBtn>
+              </MagBtn>
+              <MagBtn onClick={handlePrev} size={54}>
+                <svg width="22" height="22" fill="currentColor" viewBox="0 0 24 24"><polygon points="19,20 9,12 19,4"/><rect x="5" y="4" width="3" height="16" rx="1"/></svg>
+              </MagBtn>
+              <PlayBtn isPlaying={isPlaying} onToggle={()=>setIsPlaying(p=>!p)}/>
+              <MagBtn onClick={handleNext} size={54}>
+                <svg width="22" height="22" fill="currentColor" viewBox="0 0 24 24"><polygon points="5,4 15,12 5,20"/><rect x="16" y="4" width="3" height="16" rx="1"/></svg>
+              </MagBtn>
+              <MagBtn onClick={()=>setRepeat(r=>!r)} active={repeat} size={48}>
+                <div style={{position:'relative'}}>
+                  <svg width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+                    <polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+                    <polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+                  </svg>
+                  {repeat && <span style={{
+                    position:'absolute', top:'50%', left:'50%',
+                    transform:'translate(-50%,-50%)', fontSize:7, fontWeight:700,
+                    color:'var(--accent)', lineHeight:1,
+                  }}>1</span>}
+                </div>
+              </MagBtn>
+            </div>
           </div>
         </div>
 
+        {/* volume panel — no border, no bg */}
         <div style={{
-          width:34, height:'100%', flexShrink:0,
+          width:28, flexShrink:0, height:'100%',
           display:'flex', flexDirection:'column', alignItems:'center',
-          paddingTop:32, paddingBottom:28, gap:10,
-          borderLeft:'1px solid var(--border)',
-          background:'rgba(255,255,255,0.01)',
+          paddingTop:80, paddingBottom:80, paddingRight:5,
           opacity: playerVisible ? 1 : 0,
           transition:'opacity 0.4s ease 0.2s',
         }}>
-          <div style={{color:'rgba(255,255,255,0.22)', flexShrink:0}}>
-            <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24">
-              {volume>0.5
-                ? <><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></>
-                : volume>0
-                ? <><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></>
-                : <><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></>
-              }
-            </svg>
-          </div>
-          <VerticalVolumeWave volume={volume} onChange={setVolume}/>
-          <div style={{fontSize:7.5, color:'rgba(255,255,255,0.12)', flexShrink:0}}>
-            {Math.round(volume*100)}
-          </div>
+          <ThinVolumeSlider volume={volume} onChange={setVolume}/>
         </div>
       </>)}
     </div>
@@ -837,12 +855,3 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
 </script>
 </body>
 </html>
-=======
-<div id="root"></div>
-<script type="text/babel">
-const { useState, useEffect, useRef, useCallback } = React;
-// ... (full app code in repo)
-</script>
-</body>
-</html>
->>>>>>> 004c332d41aa99ef8833caf42de6aec92f95bd3b

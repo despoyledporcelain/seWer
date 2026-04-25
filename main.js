@@ -10,7 +10,7 @@ function createWindow() {
     minWidth: 700,
     minHeight: 500,
     frame: false,
-    backgroundColor: '#07070a',
+    transparent: true,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
