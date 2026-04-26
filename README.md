@@ -21,23 +21,6 @@ the aesthetic: pitch-black background, purple accents, spring-physics buttons, c
 
 ---
 
-## features
-
-```
-sidebar          58px · nav icons · collapsible library toggle · settings
-library panel    collapsible with fluid animation · search filter
-player           album art (breathing gradient + spinning disc)
-                 wave progress bar · canvas-drawn · drag to seek
-                 playback controls with magnet physics
-                 shuffle · repeat
-volume           vertical canvas slider · 28px · drag up/down
-settings         autoplay · crossfade · quality · accent color
-                 animations · compact mode · tray · autostart
-transitions      circle reveal (home → player) · hero art animation
-```
-
----
-
 ## stack
 
 | layer | what |
