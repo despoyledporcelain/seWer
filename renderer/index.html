@@ -522,7 +522,7 @@ function TrackRow({ track, isActive, onClick }) {
 }
 
 /* ── HomeCard ────────────────────────────────────────────────────────────── */
-function HomeCard({ track, onClick, artRef }) {
+function HomeCard({ track, onClick, artRef, artHidden }) {
   const [hov, setHov] = useState(false);
   const { ref, xy, onMove, onLeave } = useMagnet(0.18);
   return (
@@ -536,6 +536,7 @@ function HomeCard({ track, onClick, artRef }) {
         willChange:'transform',
       }}>
       <div ref={artRef} style={{
+        opacity: artHidden ? 0 : 1,
         width:'100%', aspectRatio:'1', position:'relative',
         background:`linear-gradient(145deg, ${track.color}50, #060609)`,
         border:'1px solid rgba(255,255,255,0.06)',
@@ -575,7 +576,7 @@ function HomeCard({ track, onClick, artRef }) {
 }
 
 /* ── Hero clone ──────────────────────────────────────────────────────────── */
-function HeroClone({ hero, exiting }) {
+function HeroClone({ hero, exiting, reverse = false }) {
   const { left: tLeft, top: tTop, size } = hero.targetRect;
   const { left: sLeft, top: sTop, width: sW, height: sH } = hero.startRect;
 
@@ -588,6 +589,11 @@ function HeroClone({ hero, exiting }) {
     requestAnimationFrame(() => requestAnimationFrame(() => setReady(true)));
   }, []);
 
+  const gid = `hc${reverse ? 'r' : 'f'}${hero.track.id}`;
+  const transform = ready
+    ? (reverse ? `translate(${dx}px,${dy}px) scale(${sc})` : 'translate(0,0) scale(1)')
+    : (reverse ? 'translate(0,0) scale(1)' : `translate(${dx}px,${dy}px) scale(${sc})`);
+
   return ReactDOM.createPortal(
     <div style={{
       position:'fixed',
@@ -598,18 +604,18 @@ function HeroClone({ hero, exiting }) {
       background:`linear-gradient(145deg, ${hero.track.color}50, #060609)`,
       border:'1px solid rgba(255,255,255,0.06)',
       transformOrigin:'center center',
-      transform: ready ? 'translate(0,0) scale(1)' : `translate(${dx}px,${dy}px) scale(${sc})`,
+      transform,
       opacity: exiting ? 0 : 1,
-      transition: ready ? 'transform 0.52s cubic-bezier(0.4,0,0.2,1), opacity 0.14s ease' : 'none',
+      transition: ready ? 'transform 0.34s cubic-bezier(0.4,0,0.2,1), opacity 0.12s ease' : 'none',
     }}>
       <svg width="100%" height="100%" viewBox="0 0 200 200" preserveAspectRatio="xMidYMid slice" style={{position:'absolute',inset:0}}>
         <defs>
-          <radialGradient id={`hc${hero.track.id}`} cx="40%" cy="35%" r="70%">
+          <radialGradient id={gid} cx="40%" cy="35%" r="70%">
             <stop offset="0%" stopColor={hero.track.color} stopOpacity="0.7"/>
             <stop offset="100%" stopColor="#060609" stopOpacity="1"/>
           </radialGradient>
         </defs>
-        <rect width="200" height="200" fill={`url(#hc${hero.track.id})`}/>
+        <rect width="200" height="200" fill={`url(#${gid})`}/>
         <circle cx="100" cy="100" r="45" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="1"/>
         <circle cx="100" cy="100" r="70" fill="none" stroke="rgba(255,255,255,0.035)" strokeWidth="1"/>
       </svg>
@@ -812,10 +818,12 @@ function App() {
   const [navActive,     setNavActive]     = useState('home');
   const [search,        setSearch]        = useState('');
   const [volume,        setVolume]        = useState(0.7);
-  const [hero,          setHero]          = useState(null);
-  const [playerVisible, setPlayerVisible] = useState(false);
-  const [homeVisible,   setHomeVisible]   = useState(true);
-  const [heroExiting,   setHeroExiting]   = useState(false);
+  const [hero,               setHero]               = useState(null);
+  const [playerVisible,      setPlayerVisible]      = useState(false);
+  const [homeVisible,        setHomeVisible]        = useState(true);
+  const [heroExiting,        setHeroExiting]        = useState(false);
+  const [reverseHero,        setReverseHero]        = useState(null);
+  const [reverseHeroExiting, setReverseHeroExiting] = useState(false);
   const [libCollapsed,  setLibCollapsed]  = useState(false);
   const [settings,      setSettings]      = useState({
     autoplay:false, crossfade:0, quality:'320', defaultRepeat:false,
@@ -861,7 +869,7 @@ function App() {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
     const artSize = 260;
-    const sideW = 58, libW = 260, volW = 28;
+    const sideW = 58, libW = libCollapsed ? 0 : 260, volW = 28;
     const availW = vw - sideW - libW - volW;
     const targetLeft = sideW + libW + (availW - artSize) / 2;
     const playerContentH = 526;
@@ -870,12 +878,12 @@ function App() {
     setTrackIdx(idx); setProgress(0); setIsPlaying(true);
     setHero({ track: TRACKS[idx], startRect, targetRect:{ left:targetLeft, top:targetTop, size:artSize } });
     setHomeVisible(false);
+    setPlayerVisible(true);
     setView('player');
     setNavActive('library');
-    requestAnimationFrame(() => requestAnimationFrame(() => setPlayerVisible(true)));
 
-    setTimeout(() => setHeroExiting(true), 480);
-    setTimeout(() => { setHero(null); setHeroExiting(false); }, 600);
+    setTimeout(() => setHeroExiting(true), 300);
+    setTimeout(() => { setHero(null); setHeroExiting(false); }, 420);
   }
 
   const filtered = TRACKS.filter(t =>
@@ -888,15 +896,30 @@ function App() {
     setNavActive(id);
     if (id === 'home') {
       if (view === 'player') {
+        const artEl = artRefs.current[trackIdx];
+        if (artEl) {
+          const endRect = artEl.getBoundingClientRect();
+          const vw = window.innerWidth, vh = window.innerHeight;
+          const artSize = 260;
+          const sideW = 58, lW = libCollapsed ? 0 : 260, volW = 28;
+          const availW = vw - sideW - lW - volW;
+          const startLeft = sideW + lW + (availW - artSize) / 2;
+          const playerContentH = 526;
+          const startTop = 28 + Math.max(20, (vh - 28 - playerContentH) / 2);
+          setReverseHero({
+            track: TRACKS[trackIdx],
+            targetRect: { left: startLeft, top: startTop, size: artSize },
+            startRect:  { left: endRect.left, top: endRect.top, width: endRect.width, height: endRect.height },
+          });
+          setTimeout(() => setReverseHeroExiting(true), 300);
+          setTimeout(() => { setReverseHero(null); setReverseHeroExiting(false); }, 420);
+        }
         setPlayerVisible(false);
-        setTimeout(() => {
-          setHomeVisible(false);
-          setView('home');
-          setTimeout(() => setHomeVisible(true), 20);
-        }, 280);
-      } else if (view === 'settings') {
+        setHomeVisible(true);
         setView('home');
-        setTimeout(() => setHomeVisible(true), 20);
+      } else if (view === 'settings') {
+        setHomeVisible(true);
+        setView('home');
       }
     } else if (id === 'settings') {
       if (view === 'player') setPlayerVisible(false);
@@ -904,34 +927,30 @@ function App() {
       setTimeout(() => setView('settings'), view === 'home' ? 240 : 300);
     } else if (view === 'home') {
       setHomeVisible(false);
-      setTimeout(() => {
-        setView('player');
-        setPlayerVisible(false);
-        setTimeout(() => setPlayerVisible(true), 50);
-      }, 240);
-    } else if (view === 'settings') {
+      setPlayerVisible(true);
       setView('player');
-      setPlayerVisible(false);
-      setTimeout(() => setPlayerVisible(true), 50);
+    } else if (view === 'settings') {
+      setPlayerVisible(true);
+      setView('player');
     }
   };
 
   return (
     <div style={{display:'flex', width:'100%', height:'100%', overflow:'hidden'}}>
-      {hero && <HeroClone hero={hero} exiting={heroExiting}/>}
+      {hero && hero.targetRect && <HeroClone hero={hero} exiting={heroExiting}/>}
+      {reverseHero && reverseHero.targetRect && <HeroClone hero={reverseHero} exiting={reverseHeroExiting} reverse={true}/>}
       <Sidebar navActive={navActive} onNav={handleNav}
         libCollapsed={libCollapsed} onToggleLib={()=>setLibCollapsed(v=>!v)}
         inPlayer={view==='player'}/>
 
       <div style={{position:'relative', flex:1, height:'100%', overflow:'hidden'}}>
 
-        {view === 'home' && (
+        {(
           <div style={{
             position:'absolute', inset:0,
             overflowY:'auto', padding:'32px 36px',
             opacity: homeVisible ? 1 : 0,
-            transform: homeVisible ? 'none' : 'scale(0.975)',
-            transition:'opacity 0.26s ease, transform 0.26s ease',
+            transition:'opacity 0.08s ease',
             pointerEvents: homeVisible ? 'auto' : 'none',
           }}>
             <div style={{fontSize:12, fontWeight:500, color:'rgba(255,255,255,0.22)',
@@ -940,17 +959,19 @@ function App() {
               {TRACKS.map((t,i) => (
                 <HomeCard key={t.id} track={t}
                   artRef={el => artRefs.current[i] = el}
-                  onClick={() => selectTrack(i)}/>
+                  onClick={() => selectTrack(i)}
+                  artHidden={reverseHero && !reverseHeroExiting && i === trackIdx}/>
               ))}
             </div>
           </div>
         )}
 
-        {view === 'player' && (
+        {(
           <div style={{
             position:'absolute', inset:0, display:'flex',
             opacity: playerVisible ? 1 : 0,
-            transition:'opacity 0.32s ease',
+            transition:'opacity 0.1s ease',
+            pointerEvents: playerVisible ? 'auto' : 'none',
           }}>
         {/* library panel */}
         <div style={{
@@ -993,7 +1014,7 @@ function App() {
             width:300, display:'flex', flexDirection:'column',
             alignItems:'center', gap:0,
           }}>
-            <div style={{width:260, marginBottom:22, opacity: hero ? 0 : 1, transition: hero ? 'none' : 'opacity 0.22s ease'}}>
+            <div id="player-album-art" style={{width:260, marginBottom:22, opacity: ((hero && !heroExiting) || reverseHero) ? 0 : 1}}>
               <AlbumArt track={track} isPlaying={isPlaying}/>
             </div>
             <div style={{textAlign:'center', marginBottom:18, width:'100%'}}>
