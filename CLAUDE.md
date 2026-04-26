@@ -57,7 +57,7 @@ npm run build      # сборка .exe через electron-builder (NSIS)
 - **home** — сетка карточек треков
 - **player** — боковая библиотека + центральный плеер + слайдер громкости
 
-переход home → player: анимация circle reveal (clipPath)
+переход home → player и обратно: hero-clone анимация (обложка летит между карточкой и плеером)
 
 **заглушки**: `TRACKS` — статичный массив 8 треков `{id, title, artist, duration, color}`.
 
@@ -69,6 +69,20 @@ npm run build      # сборка .exe через electron-builder (NSIS)
 - волновой прогресс-бар на canvas
 - вертикальный слайдер громкости на canvas
 - обложка с дышащим градиентом + spinning disc
+
+## переходы между view (важно)
+
+оба view (`home` и `player`) **всегда смонтированы** — видимость через `homeVisible`/`playerVisible` (`opacity` + `pointerEvents`). `SettingsView` тоже всегда в dom, управляется через `visible={view==='settings'}`.
+
+все смены view делаются в **одном react-батче** — `setHomeVisible` + `setPlayerVisible` + `setView` вместе, без `setTimeout`/`requestAnimationFrame`. это даёт настоящий кросс-фейд без чёрного экрана.
+
+**HeroClone** — портал в `document.body`, летит css-transition за 340мс:
+- вперёд (home→player): из карточки в центр плеера
+- назад (player→home): из центра плеера в карточку (`reverse=true`)
+- пока clone летит — реальный `AlbumArt` в плеере скрыт (`opacity:0`), target-карточка в home grid тоже скрыта (`artHidden`)
+- когда `heroExiting`/`reverseHeroExiting` — clone fadeout, арт мгновенно открывается
+
+`libCollapsed` учитывается при расчёте `targetRect` — иначе clone летит не туда.
 
 ## план разработки
 

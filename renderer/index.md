@@ -71,7 +71,13 @@ ReactDOM.createPortal → document.body. стартует с позиции ка
 пропсы: `{navActive, onNav}`  
 левая панель 58px. иконки: home/library/liked/search + settings внизу. все через NavIcon.
 
-### `App` — строки 657–852
+### `SettingsView` — строки 684–868
+пропсы: `{settings, onSettings, visible}`  
+макет: левая навигация 214px (секции: playback/appearance/system/about) + правый контент с карточками.  
+внутренние компоненты: `Toggle`, `Row`, `Card`. локальный стейт `sec` — активная секция.  
+карточки (`Card`): `borderRadius:13`, `background rgba(255,255,255,0.034)`, overflow:hidden. строки через `Row` с `borderBottom` кроме последней (`last`).
+
+### `App` — строки 869–
 **state:**
 ```
 view           'home'|'player'

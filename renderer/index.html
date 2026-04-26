@@ -681,127 +681,190 @@ function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer }) {
   );
 }
 
+/* ── CrossfadeSlider ─────────────────────────────────────────────────────── */
+function CrossfadeSlider({ value, onChange }) {
+  const trackRef = useRef(null);
+  const dragging = useRef(false);
+
+  const calcVal = (e) => {
+    const rect = trackRef.current.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    return Math.round(x * 12);
+  };
+
+  useEffect(() => {
+    const move = (e) => { if (dragging.current) onChange(calcVal(e)); };
+    const up   = ()  => { dragging.current = false; };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+    return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+  }, []);
+
+  const pct = (value / 12) * 100;
+
+  return (
+    <div style={{display:'flex', alignItems:'center', gap:12}}>
+      <div ref={trackRef} style={{width:130, height:20, display:'flex', alignItems:'center', cursor:'pointer', position:'relative'}}
+        onMouseDown={e=>{ dragging.current=true; onChange(calcVal(e)); e.preventDefault(); }}>
+        <div style={{width:'100%', height:3, borderRadius:2, background:'rgba(255,255,255,0.1)', position:'relative', overflow:'visible'}}>
+          <div style={{
+            position:'absolute', left:0, top:0, height:'100%', borderRadius:2,
+            width:`${pct}%`, background:'#9b7dff',
+          }}/>
+          <div style={{
+            position:'absolute', top:'50%', left:`${pct}%`,
+            transform:'translate(-50%,-50%)',
+            width:13, height:13, borderRadius:'50%',
+            background:'#fff', boxShadow:'0 1px 5px rgba(0,0,0,0.5)',
+            border:'2px solid rgba(155,125,255,0.6)',
+          }}/>
+        </div>
+      </div>
+      <span style={{fontSize:12, color:'rgba(255,255,255,0.32)', minWidth:28, textAlign:'right'}}>
+        {value === 0 ? 'выкл' : `${value} с`}
+      </span>
+    </div>
+  );
+}
+
 /* ── SettingsView ─────────────────────────────────────────────────────────── */
 function SettingsView({ settings, onSettings, visible }) {
   const set = (k, v) => onSettings({ ...settings, [k]: v });
+  const [sec, setSec] = useState('playback');
 
-  const SectionLabel = ({ children }) => (
-    <div style={{
-      fontSize:10.5, letterSpacing:'0.09em', textTransform:'uppercase',
-      color:'rgba(255,255,255,0.18)', marginTop:28, marginBottom:10,
-    }}>{children}</div>
-  );
-  const Row = ({ label, sub, children }) => (
+  const Toggle = ({ k }) => {
+    const on = !!settings[k];
+    return (
+      <div style={{
+        width:38, height:22, borderRadius:11, cursor:'pointer', flexShrink:0,
+        background: on ? '#9b7dff' : 'rgba(255,255,255,0.1)',
+        position:'relative', transition:'background 0.22s ease',
+      }} onClick={()=>set(k, !on)}>
+        <div style={{
+          position:'absolute', top:4, width:14, height:14, borderRadius:'50%',
+          background:'#fff', boxShadow:'0 1px 4px rgba(0,0,0,0.4)',
+          left: on ? 20 : 4,
+          transition:'left 0.22s cubic-bezier(0.4,0,0.2,1)',
+        }}/>
+      </div>
+    );
+  };
+
+  const Row = ({ label, sub, children, last }) => (
     <div style={{
       display:'flex', alignItems:'center', justifyContent:'space-between',
-      padding:'11px 0', borderBottom:'1px solid rgba(255,255,255,0.035)',
+      padding:'13px 20px',
+      borderBottom: last ? 'none' : '1px solid rgba(255,255,255,0.045)',
     }}>
       <div>
-        <div style={{fontSize:13, color:'rgba(255,255,255,0.62)'}}>{label}</div>
-        {sub && <div style={{fontSize:11, color:'rgba(255,255,255,0.22)', marginTop:2}}>{sub}</div>}
+        <div style={{fontSize:13, color:'rgba(255,255,255,0.75)'}}>{label}</div>
+        {sub && <div style={{fontSize:11, color:'rgba(255,255,255,0.28)', marginTop:2}}>{sub}</div>}
       </div>
       {children}
     </div>
   );
-  const Toggle = ({ k }) => (
-    <div style={{
-      width:34, height:19, borderRadius:10, cursor:'pointer', flexShrink:0,
-      background: settings[k] ? '#9b7dff' : 'rgba(255,255,255,0.09)',
-      position:'relative', transition:'background 0.2s ease',
-    }} onClick={()=>set(k, !settings[k])}>
+
+  const Card = ({ title, children }) => (
+    <div style={{marginBottom:18}}>
+      {title && <div style={{
+        fontSize:10.5, letterSpacing:'0.09em', textTransform:'uppercase',
+        color:'rgba(255,255,255,0.25)', marginBottom:8, paddingLeft:4,
+      }}>{title}</div>}
       <div style={{
-        position:'absolute', top:3, width:13, height:13, borderRadius:'50%',
-        background:'rgba(255,255,255,0.9)',
-        left: settings[k] ? 18 : 3,
-        transition:'left 0.2s ease',
-      }}/>
+        background:'rgba(255,255,255,0.034)',
+        border:'1px solid rgba(255,255,255,0.075)',
+        borderRadius:13, overflow:'hidden',
+      }}>{children}</div>
     </div>
   );
 
-  const ACCENTS = [
-    {c:'#9b7dff',n:'Фиолетовый'}, {c:'#ff7d9b',n:'Розовый'},
-    {c:'#7dc8ff',n:'Голубой'},    {c:'#7dffc8',n:'Мятный'},
-    {c:'#ffb87d',n:'Персиковый'},
+  const SECS = [
+    { id:'playback',   label:'Воспроизведение',
+      icon:<svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg> },
+    { id:'system',     label:'Система',
+      icon:<svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg> },
+    { id:'about',      label:'О приложении',
+      icon:<svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg> },
   ];
+
+  const content = {
+    playback: (
+      <Card title="Аудио">
+        <Row label="Автовоспроизведение" sub="Следующий трек запускается автоматически"><Toggle k="autoplay"/></Row>
+        <Row label="Повтор по умолчанию"><Toggle k="defaultRepeat"/></Row>
+        <Row label="Кроссфейд" sub="Плавное перекрытие треков" last>
+          <CrossfadeSlider value={settings.crossfade} onChange={v=>set('crossfade', v)}/>
+        </Row>
+      </Card>
+    ),
+    system: (<>
+      <Card title="Запуск">
+        <Row label="Запускать при старте Windows"><Toggle k="startWithWindows"/></Row>
+        <Row label="Сворачивать в трей" last><Toggle k="minimizeToTray"/></Row>
+      </Card>
+      <Card title="Данные">
+        <Row label="Кэш обложек" sub="Загруженные обложки" last>
+          <div style={{
+            fontSize:12, color:'rgba(255,255,255,0.4)', cursor:'pointer',
+            background:'rgba(255,255,255,0.055)', border:'1px solid rgba(255,255,255,0.09)',
+            borderRadius:7, padding:'5px 14px',
+          }}>Очистить</div>
+        </Row>
+      </Card>
+    </>),
+    about: (
+      <Card>
+        <Row label="Версия"><span style={{fontSize:12, color:'rgba(255,255,255,0.3)'}}>0.1.0-alpha</span></Row>
+        <Row label="Репозиторий"><span style={{fontSize:12, color:'rgba(255,255,255,0.3)'}}>despoyledporcelain/seWer</span></Row>
+        <Row label="Стек" last><span style={{fontSize:12, color:'rgba(255,255,255,0.3)'}}>Electron · React · HTML</span></Row>
+      </Card>
+    ),
+  };
 
   return (
     <div style={{
-      position:'absolute', inset:0, overflowY:'auto', padding:'36px 52px',
+      position:'absolute', inset:0, display:'flex',
       opacity: visible ? 1 : 0, transform: visible ? 'none' : 'translateY(8px)',
       transition:'opacity 0.28s ease, transform 0.28s ease',
       pointerEvents: visible ? 'auto' : 'none',
     }}>
-      <div style={{fontSize:11, fontWeight:500, color:'rgba(255,255,255,0.18)',
-        letterSpacing:'0.08em', textTransform:'uppercase', marginBottom:32}}>Настройки</div>
+      {/* левая навигация */}
+      <div style={{
+        width:214, flexShrink:0, height:'100%',
+        padding:'36px 14px 24px',
+        borderRight:'1px solid var(--border)',
+        display:'flex', flexDirection:'column',
+        background:'rgba(255,255,255,0.01)',
+      }}>
+        <div style={{
+          fontSize:19, fontWeight:600, letterSpacing:'-0.025em',
+          color:'rgba(255,255,255,0.85)', marginBottom:26, paddingLeft:10,
+        }}>Настройки</div>
+        <div style={{display:'flex', flexDirection:'column', gap:2}}>
+          {SECS.map(s => (
+            <div key={s.id} style={{
+              display:'flex', alignItems:'center', gap:10,
+              padding:'9px 12px', borderRadius:9, cursor:'pointer',
+              background: sec===s.id ? 'rgba(155,125,255,0.14)' : 'transparent',
+              color: sec===s.id ? '#9b7dff' : 'rgba(255,255,255,0.4)',
+              transition:'background 0.15s, color 0.15s',
+            }} onClick={()=>setSec(s.id)}>
+              {s.icon}
+              <span style={{fontSize:13, fontWeight: sec===s.id ? 500 : 400}}>{s.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
 
-      <div style={{maxWidth:460}}>
-        <SectionLabel>Воспроизведение</SectionLabel>
-        <Row label="Автовоспроизведение" sub="Следующий трек запускается автоматически">
-          <Toggle k="autoplay"/>
-        </Row>
-        <Row label={`Кроссфейд — ${settings.crossfade} с`} sub="Плавное перекрытие треков">
-          <input type="range" min={0} max={12} step={1} value={settings.crossfade}
-            onChange={e=>set('crossfade', +e.target.value)}
-            style={{width:100, accentColor:'#9b7dff', cursor:'pointer'}}/>
-        </Row>
-        <Row label="Качество">
-          <select value={settings.quality} onChange={e=>set('quality', e.target.value)}
-            style={{
-              background:'rgba(255,255,255,0.06)', border:'1px solid rgba(255,255,255,0.08)',
-              borderRadius:6, padding:'5px 10px', color:'rgba(255,255,255,0.6)',
-              fontSize:12, fontFamily:'Space Grotesk,sans-serif', cursor:'pointer', outline:'none',
-            }}>
-            <option value="128">128 кбит/с</option>
-            <option value="256">256 кбит/с</option>
-            <option value="320">320 кбит/с</option>
-          </select>
-        </Row>
-        <Row label="Повтор по умолчанию">
-          <Toggle k="defaultRepeat"/>
-        </Row>
-
-        <SectionLabel>Внешний вид</SectionLabel>
-        <Row label="Акцентный цвет">
-          <div style={{display:'flex', gap:7}}>
-            {ACCENTS.map(({c,n})=>(
-              <div key={c} title={n} style={{
-                width:18, height:18, borderRadius:'50%', background:c, cursor:'pointer',
-                outline: settings.accent===c ? `2px solid ${c}` : 'none',
-                outlineOffset:2, transition:'outline 0.15s, transform 0.15s',
-                transform: settings.accent===c ? 'scale(1.2)' : 'scale(1)',
-              }} onClick={()=>set('accent', c)}/>
-            ))}
-          </div>
-        </Row>
-        <Row label="Анимации" sub="Переходы, магнит, волны">
-          <Toggle k="animations"/>
-        </Row>
-        <Row label="Компактный режим" sub="Уменьшает отступы и размеры элементов">
-          <Toggle k="compact"/>
-        </Row>
-        <Row label="Показывать обложку в тайтлбаре">
-          <Toggle k="artInTitlebar"/>
-        </Row>
-
-        <SectionLabel>Система</SectionLabel>
-        <Row label="Запускать при старте Windows">
-          <Toggle k="startWithWindows"/>
-        </Row>
-        <Row label="Сворачивать в трей">
-          <Toggle k="minimizeToTray"/>
-        </Row>
-        <Row label="Кэш обложек" sub="Очистить загруженные обложки">
-          <div style={{
-            fontSize:12, color:'rgba(255,255,255,0.35)', cursor:'pointer',
-            background:'rgba(255,255,255,0.05)', border:'1px solid rgba(255,255,255,0.07)',
-            borderRadius:6, padding:'5px 12px',
-          }}>Очистить</div>
-        </Row>
-
-        <SectionLabel>О приложении</SectionLabel>
-        <Row label="Версия"><span style={{fontSize:12, color:'rgba(255,255,255,0.2)'}}>0.1.0-alpha</span></Row>
-        <Row label="Репозиторий"><span style={{fontSize:12, color:'rgba(255,255,255,0.2)'}}>despoyledporcelain/seWer</span></Row>
-        <Row label="Стек"><span style={{fontSize:12, color:'rgba(255,255,255,0.2)'}}>Electron · React · HTML</span></Row>
+      {/* правый контент */}
+      <div style={{flex:1, overflowY:'auto', padding:'36px 40px'}}>
+        <div style={{
+          fontSize:11, fontWeight:500, color:'rgba(255,255,255,0.22)',
+          letterSpacing:'0.08em', textTransform:'uppercase', marginBottom:22,
+        }}>{SECS.find(s=>s.id===sec)?.label}</div>
+        <div style={{maxWidth:480}}>
+          {content[sec]}
+        </div>
       </div>
     </div>
   );
@@ -826,8 +889,7 @@ function App() {
   const [reverseHeroExiting, setReverseHeroExiting] = useState(false);
   const [libCollapsed,  setLibCollapsed]  = useState(false);
   const [settings,      setSettings]      = useState({
-    autoplay:false, crossfade:0, quality:'320', defaultRepeat:false,
-    accent:'#9b7dff', animations:true, compact:false, artInTitlebar:false,
+    autoplay:false, crossfade:0, defaultRepeat:false,
     startWithWindows:false, minimizeToTray:false,
   });
 
