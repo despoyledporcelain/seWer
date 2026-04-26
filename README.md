@@ -9,22 +9,6 @@
   [![platform](https://img.shields.io/badge/windows-only-0d0d0d?style=flat-square&logo=windows11&logoColor=9b7dff)](https://github.com/despoyledporcelain/seWer)
   [![status](https://img.shields.io/badge/status-wip-0d0d0d?style=flat-square&logoColor=white&color=0d0d0d&labelColor=9b7dff)](https://github.com/despoyledporcelain/seWer)
 
-  <br />
-
-```
-┌──────────────────────────────────────────────────────┐
-│                                                      │
-│   ╔══════╗   Cloud Nothings                          │
-│   ║  ▶   ║   I'm Not Part of Me                     │
-│   ╚══════╝                                           │
-│            ────────────────────░░░░░░   2:34 / 4:12  │
-│                                                      │
-│   ◀◀   ⏮   ▶   ⏭   ▶▶                              │
-│                                                      │
-└──────────────────────────────────────────────────────┘
-```
-
-  <br />
 </div>
 
 ---
