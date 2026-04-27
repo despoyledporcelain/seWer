@@ -171,7 +171,9 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying }) {
     const dpr = window.devicePixelRatio || 1;
     const resize = () => {
       const W = wrap.clientWidth;
-      canvas.width = W*dpr; canvas.height = H*dpr;
+      const nW = Math.round(W*dpr), nH = Math.round(H*dpr);
+      if (canvas.width === nW && canvas.height === nH) return;
+      canvas.width = nW; canvas.height = nH;
       canvas.style.width = W+'px'; canvas.style.height = H+'px';
     };
     resize();
@@ -214,15 +216,15 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying }) {
 
       /* gradient with alpha fade at edges */
       const grad = ctx.createLinearGradient(0, 0, W, 0);
-      const FADE = 0.04;
-      grad.addColorStop(0,               'rgba(0,0,0,0)');
-      grad.addColorStop(FADE,            p > FADE+0.01 ? '#b2b2b2' : 'rgba(255,255,255,0.16)');
-      if (p > FADE+0.01 && p < 1-FADE-0.01) {
-        grad.addColorStop(Math.max(FADE+0.001, p-0.001), '#b2b2b2');
-        grad.addColorStop(Math.min(1-FADE-0.001, p+0.001), 'rgba(255,255,255,0.16)');
+      const FADE = 0.04, TRANS = 0.018;
+      grad.addColorStop(0, 'rgba(0,0,0,0)');
+      grad.addColorStop(FADE, p > FADE + TRANS ? '#b2b2b2' : 'rgba(255,255,255,0.16)');
+      if (p > FADE + TRANS && p < 1 - FADE - TRANS) {
+        grad.addColorStop(Math.max(FADE + 0.001, p - TRANS), '#b2b2b2');
+        grad.addColorStop(Math.min(1 - FADE - 0.001, p + TRANS), 'rgba(255,255,255,0.16)');
       }
-      grad.addColorStop(1-FADE,          'rgba(255,255,255,0.16)');
-      grad.addColorStop(1,               'rgba(0,0,0,0)');
+      grad.addColorStop(1 - FADE, 'rgba(255,255,255,0.16)');
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
 
       ctx.beginPath();
       pts.forEach(({x,y}, i) => i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y));
@@ -253,15 +255,19 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying }) {
     return () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
   }, [onSeek]);
 
+  const timeStyle = {
+    fontSize: 10, fontVariantNumeric: 'tabular-nums',
+    color: 'rgba(255,255,255,0.22)', letterSpacing: '0.02em',
+    userSelect: 'none', flexShrink: 0,
+  };
   return (
-    <div style={{width:'100%'}}>
-      <div ref={wrapRef} style={{width:'100%', cursor:'pointer'}}
+    <div style={{width:'100%', display:'flex', alignItems:'center', gap:9}}>
+      <span style={timeStyle}>{fmt(elapsed)}</span>
+      <div ref={wrapRef} style={{flex:1, cursor:'pointer'}}
         onMouseDown={e => { dragging.current = true; onSeek(getVal(e)); }}>
         <canvas ref={canvasRef} style={{display:'block'}}/>
       </div>
-      <div style={{display:'flex', justifyContent:'space-between', marginTop:8, fontSize:10.5, color:'rgba(255,255,255,0.2)'}}>
-        <span>{fmt(elapsed)}</span><span>{fmt(total)}</span>
-      </div>
+      <span style={timeStyle}>-{fmt(total - elapsed)}</span>
     </div>
   );
 }
@@ -374,7 +380,7 @@ function ThinVolumeSlider({ volume, onChange }) {
   }, [getVal]);
 
   return (
-    <div ref={wrapRef} style={{flex:1, cursor:'ns-resize', display:'flex', alignItems:'stretch'}}
+    <div ref={wrapRef} style={{flex:1, minHeight:0, cursor:'ns-resize', display:'flex', alignItems:'stretch'}}
       onMouseDown={e => { dragging.current = true; volActual.current = getVal(e); }}>
       <canvas ref={canvasRef} style={{display:'block'}}/>
     </div>
@@ -683,17 +689,19 @@ function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer }) {
 
 /* ── CrossfadeSlider ─────────────────────────────────────────────────────── */
 function CrossfadeSlider({ value, onChange }) {
-  const trackRef = useRef(null);
-  const dragging = useRef(false);
+  const trackRef    = useRef(null);
+  const dragging    = useRef(false);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
 
-  const calcVal = (e) => {
+  const calcVal = (clientX) => {
     const rect = trackRef.current.getBoundingClientRect();
-    const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const x = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
     return Math.round(x * 12);
   };
 
   useEffect(() => {
-    const move = (e) => { if (dragging.current) onChange(calcVal(e)); };
+    const move = (e) => { if (dragging.current) onChangeRef.current(calcVal(e.clientX)); };
     const up   = ()  => { dragging.current = false; };
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up);
@@ -704,16 +712,17 @@ function CrossfadeSlider({ value, onChange }) {
 
   return (
     <div style={{display:'flex', alignItems:'center', gap:12}}>
-      <div ref={trackRef} style={{width:130, height:20, display:'flex', alignItems:'center', cursor:'pointer', position:'relative'}}
-        onMouseDown={e=>{ dragging.current=true; onChange(calcVal(e)); e.preventDefault(); }}>
-        <div style={{width:'100%', height:3, borderRadius:2, background:'rgba(255,255,255,0.1)', position:'relative', overflow:'visible'}}>
+      <div ref={trackRef}
+        style={{width:130, height:20, display:'flex', alignItems:'center', cursor:'ew-resize', position:'relative', userSelect:'none'}}
+        onMouseDown={e=>{ dragging.current=true; onChangeRef.current(calcVal(e.clientX)); e.preventDefault(); }}>
+        <div style={{width:'100%', height:3, borderRadius:2, background:'rgba(255,255,255,0.1)', position:'relative'}}>
           <div style={{
             position:'absolute', left:0, top:0, height:'100%', borderRadius:2,
             width:`${pct}%`, background:'#9b7dff',
           }}/>
           <div style={{
             position:'absolute', top:'50%', left:`${pct}%`,
-            transform:'translate(-50%,-50%)',
+            transform:'translate(-50%,-50%)', pointerEvents:'none',
             width:13, height:13, borderRadius:'50%',
             background:'#fff', boxShadow:'0 1px 5px rgba(0,0,0,0.5)',
             border:'2px solid rgba(155,125,255,0.6)',
@@ -1073,10 +1082,12 @@ function App() {
           display:'flex', alignItems:'center', justifyContent:'center',
         }}>
           <div style={{
-            width:300, display:'flex', flexDirection:'column',
+            width:'min(calc(100% - 64px), calc(100vh - 320px))',
+            maxWidth:480, minWidth:220,
+            display:'flex', flexDirection:'column',
             alignItems:'center', gap:0,
           }}>
-            <div id="player-album-art" style={{width:260, marginBottom:22, opacity: ((hero && !heroExiting) || reverseHero) ? 0 : 1}}>
+            <div id="player-album-art" style={{width:'100%', marginBottom:22, opacity: ((hero && !heroExiting) || reverseHero) ? 0 : 1}}>
               <AlbumArt track={track} isPlaying={isPlaying}/>
             </div>
             <div style={{textAlign:'center', marginBottom:18, width:'100%'}}>
