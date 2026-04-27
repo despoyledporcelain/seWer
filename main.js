@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron')
 const path = require('path')
 const fs   = require('fs')
+const mm   = require('music-metadata')
 
 let win
 
@@ -74,6 +75,15 @@ ipcMain.handle('scan-music-folder', (_, folderPath) => {
     const title  = parts.length >= 2 ? parts.slice(1).join(' - ').trim() : base
     return { id: i + 1, title, artist, path: p, color: hashColor(base), duration: 0 }
   })
+})
+
+ipcMain.handle('get-cover-art', async (_, filePath) => {
+  try {
+    const meta = await mm.parseFile(filePath, { skipCovers: false })
+    const pic  = meta.common.picture?.[0]
+    if (!pic) return null
+    return `data:${pic.format};base64,${Buffer.from(pic.data).toString('base64')}`
+  } catch { return null }
 })
 
 ipcMain.handle('load-settings', () => loadSettings())

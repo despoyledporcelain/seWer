@@ -403,24 +403,30 @@ function AlbumArt({ track, isPlaying }) {
         border:'1px solid rgba(255,255,255,0.06)',
         display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden',
       }}>
-        <svg width="100%" height="100%" viewBox="0 0 300 300" preserveAspectRatio="xMidYMid slice" style={{position:'absolute',inset:0}}>
-          <defs>
-            <radialGradient id={`rg${track.id}`} cx="38%" cy="32%" r="75%">
-              <stop offset="0%" stopColor={track.color} stopOpacity="0.65"/>
-              <stop offset="100%" stopColor="#040408" stopOpacity="1"/>
-            </radialGradient>
-          </defs>
-          <rect width="300" height="300" fill={`url(#rg${track.id})`}/>
-          {[68,105,138].map(r => (
-            <circle key={r} cx="150" cy="150" r={r} fill="none"
-              stroke={`rgba(255,255,255,${r===68?0.06:r===105?0.035:0.02})`} strokeWidth="1"/>
-          ))}
-        </svg>
-        <div style={{
-          position:'relative', zIndex:1, width:38, height:38, borderRadius:'50%',
-          border:`1.5px solid ${track.color}77`, boxShadow:`0 0 16px ${track.color}44`,
-          animation: isPlaying ? 'spin 9s linear infinite' : 'none',
-        }}/>
+        {track.coverUrl ? (
+          <img src={track.coverUrl} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}/>
+        ) : (
+          <>
+            <svg width="100%" height="100%" viewBox="0 0 300 300" preserveAspectRatio="xMidYMid slice" style={{position:'absolute',inset:0}}>
+              <defs>
+                <radialGradient id={`rg${track.id}`} cx="38%" cy="32%" r="75%">
+                  <stop offset="0%" stopColor={track.color} stopOpacity="0.65"/>
+                  <stop offset="100%" stopColor="#040408" stopOpacity="1"/>
+                </radialGradient>
+              </defs>
+              <rect width="300" height="300" fill={`url(#rg${track.id})`}/>
+              {[68,105,138].map(r => (
+                <circle key={r} cx="150" cy="150" r={r} fill="none"
+                  stroke={`rgba(255,255,255,${r===68?0.06:r===105?0.035:0.02})`} strokeWidth="1"/>
+              ))}
+            </svg>
+            <div style={{
+              position:'relative', zIndex:1, width:38, height:38, borderRadius:'50%',
+              border:`1.5px solid ${track.color}77`, boxShadow:`0 0 16px ${track.color}44`,
+              animation: isPlaying ? 'spin 9s linear infinite' : 'none',
+            }}/>
+          </>
+        )}
       </div>
     </div>
   );
@@ -513,8 +519,12 @@ function TrackRow({ track, isActive, onClick }) {
         background:`linear-gradient(135deg, ${track.color}44, #101014)`,
         border:'1px solid rgba(255,255,255,0.05)',
         display:'flex', alignItems:'center', justifyContent:'center',
+        overflow:'hidden', position:'relative',
       }}>
-        <svg width="9" height="9" fill={isActive?'var(--accent)':'rgba(255,255,255,0.28)'} viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>
+        {track.coverUrl
+          ? <img src={track.coverUrl} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}/>
+          : <svg width="9" height="9" fill={isActive?'var(--accent)':'rgba(255,255,255,0.28)'} viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>
+        }
       </div>
       <div style={{flex:1, overflow:'hidden'}}>
         <div style={{fontSize:12.5, fontWeight:500,
@@ -549,21 +559,27 @@ function HomeCard({ track, onClick, artRef, artHidden }) {
         display:'flex', alignItems:'center', justifyContent:'center',
         overflow:'hidden',
       }}>
-        <svg width="100%" height="100%" viewBox="0 0 200 200" preserveAspectRatio="xMidYMid slice" style={{position:'absolute',inset:0}}>
-          <defs>
-            <radialGradient id={`hg${track.id}`} cx="40%" cy="35%" r="70%">
-              <stop offset="0%" stopColor={track.color} stopOpacity="0.7"/>
-              <stop offset="100%" stopColor="#060609" stopOpacity="1"/>
-            </radialGradient>
-          </defs>
-          <rect width="200" height="200" fill={`url(#hg${track.id})`}/>
-          <circle cx="100" cy="100" r="45" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="1"/>
-          <circle cx="100" cy="100" r="70" fill="none" stroke="rgba(255,255,255,0.035)" strokeWidth="1"/>
-        </svg>
-        <div style={{
-          position:'relative', zIndex:1, width:26, height:26, borderRadius:'50%',
-          border:`1.5px solid ${track.color}88`, boxShadow:`0 0 10px ${track.color}44`,
-        }}/>
+        {track.coverUrl ? (
+          <img src={track.coverUrl} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}/>
+        ) : (
+          <>
+            <svg width="100%" height="100%" viewBox="0 0 200 200" preserveAspectRatio="xMidYMid slice" style={{position:'absolute',inset:0}}>
+              <defs>
+                <radialGradient id={`hg${track.id}`} cx="40%" cy="35%" r="70%">
+                  <stop offset="0%" stopColor={track.color} stopOpacity="0.7"/>
+                  <stop offset="100%" stopColor="#060609" stopOpacity="1"/>
+                </radialGradient>
+              </defs>
+              <rect width="200" height="200" fill={`url(#hg${track.id})`}/>
+              <circle cx="100" cy="100" r="45" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="1"/>
+              <circle cx="100" cy="100" r="70" fill="none" stroke="rgba(255,255,255,0.035)" strokeWidth="1"/>
+            </svg>
+            <div style={{
+              position:'relative', zIndex:1, width:26, height:26, borderRadius:'50%',
+              border:`1.5px solid ${track.color}88`, boxShadow:`0 0 10px ${track.color}44`,
+            }}/>
+          </>
+        )}
         <div style={{
           position:'absolute', inset:0, background:'rgba(0,0,0,0.32)',
           display:'flex', alignItems:'center', justifyContent:'center',
@@ -622,23 +638,29 @@ function HeroClone({ hero, exiting, reverse = false }) {
         border:'1px solid rgba(255,255,255,0.06)',
         display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden',
       }}>
-        <svg width="100%" height="100%" viewBox="0 0 300 300" preserveAspectRatio="xMidYMid slice" style={{position:'absolute',inset:0}}>
-          <defs>
-            <radialGradient id={gid} cx="38%" cy="32%" r="75%">
-              <stop offset="0%" stopColor={hero.track.color} stopOpacity="0.65"/>
-              <stop offset="100%" stopColor="#040408" stopOpacity="1"/>
-            </radialGradient>
-          </defs>
-          <rect width="300" height="300" fill={`url(#${gid})`}/>
-          {[68,105,138].map(r => (
-            <circle key={r} cx="150" cy="150" r={r} fill="none"
-              stroke={`rgba(255,255,255,${r===68?0.06:r===105?0.035:0.02})`} strokeWidth="1"/>
-          ))}
-        </svg>
-        <div style={{
-          position:'relative', zIndex:1, width:38, height:38, borderRadius:'50%',
-          border:`1.5px solid ${hero.track.color}77`, boxShadow:`0 0 16px ${hero.track.color}44`,
-        }}/>
+        {hero.track.coverUrl ? (
+          <img src={hero.track.coverUrl} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}/>
+        ) : (
+          <>
+            <svg width="100%" height="100%" viewBox="0 0 300 300" preserveAspectRatio="xMidYMid slice" style={{position:'absolute',inset:0}}>
+              <defs>
+                <radialGradient id={gid} cx="38%" cy="32%" r="75%">
+                  <stop offset="0%" stopColor={hero.track.color} stopOpacity="0.65"/>
+                  <stop offset="100%" stopColor="#040408" stopOpacity="1"/>
+                </radialGradient>
+              </defs>
+              <rect width="300" height="300" fill={`url(#${gid})`}/>
+              {[68,105,138].map(r => (
+                <circle key={r} cx="150" cy="150" r={r} fill="none"
+                  stroke={`rgba(255,255,255,${r===68?0.06:r===105?0.035:0.02})`} strokeWidth="1"/>
+              ))}
+            </svg>
+            <div style={{
+              position:'relative', zIndex:1, width:38, height:38, borderRadius:'50%',
+              border:`1.5px solid ${hero.track.color}77`, boxShadow:`0 0 16px ${hero.track.color}44`,
+            }}/>
+          </>
+        )}
       </div>
     </div>,
     document.body
@@ -950,7 +972,10 @@ function App() {
           setSettings(s => ({ ...s, ...saved }));
           if (saved.musicFolder) {
             const local = await window.electronAPI.scanMusicFolder(saved.musicFolder);
-            if (local.length > 0) setTracks(local);
+            if (local.length > 0) {
+              setTracks(local);
+              loadCovers(local);
+            }
           }
         }
       } catch {}
@@ -1040,6 +1065,16 @@ function App() {
     if (audio?.duration) audio.currentTime = v * audio.duration;
   }, []);
 
+  async function loadCovers(tracksArr) {
+    await Promise.all(tracksArr.map(async (t) => {
+      if (!t.path) return;
+      try {
+        const coverUrl = await window.electronAPI.getCoverArt(t.path);
+        if (coverUrl) setTracks(prev => prev.map(p => p.id === t.id ? { ...p, coverUrl } : p));
+      } catch {}
+    }));
+  }
+
   const handleScanTracks = useCallback(async (folder) => {
     try {
       const local = await window.electronAPI.scanMusicFolder(folder);
@@ -1048,6 +1083,7 @@ function App() {
         setTrackIdx(0);
         setIsPlaying(false);
         setProgress(0);
+        loadCovers(local);
       }
     } catch {}
   }, []);
