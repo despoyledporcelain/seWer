@@ -116,7 +116,7 @@ function fmt(s) {
 }
 
 /* ── Magnet spring hook ──────────────────────────────────────────────────── */
-function useMagnet(strength = 0.25) {
+function useMagnet(strength = 0.25, { spring = 0.10, damping = 0.74, clamp = 12 } = {}) {
   const ref       = useRef(null);
   const [xy, setXY] = useState({x:0, y:0});
   const raf       = useRef(null);
@@ -124,7 +124,7 @@ function useMagnet(strength = 0.25) {
   const vel       = useRef({x:0, y:0});
   const target    = useRef({x:0, y:0});
   const isHovered = useRef(false);
-  const SPRING = 0.10, DAMPING = 0.74, CLAMP = 12;
+  const SPRING = spring, DAMPING = damping, CLAMP = clamp;
 
   const onMove = useCallback((e) => {
     const el = ref.current; if (!el) return;
@@ -448,8 +448,8 @@ function AlbumArt({ track, isPlaying }) {
 }
 
 /* ── MagBtn ──────────────────────────────────────────────────────────────── */
-function MagBtn({ onClick, active, children, size=52 }) {
-  const { ref, xy, onMove, onLeave } = useMagnet(0.28);
+function MagBtn({ onClick, active, children, size=52, physics }) {
+  const { ref, xy, onMove, onLeave } = useMagnet(0.28, physics || {});
   const [pressed, setPressed] = useState(false);
   return (
     <button ref={ref} onClick={onClick}
@@ -470,29 +470,34 @@ function MagBtn({ onClick, active, children, size=52 }) {
 }
 
 /* ── PlayBtn ─────────────────────────────────────────────────────────────── */
-function PlayBtn({ isPlaying, onToggle }) {
-  const { ref, xy, onMove, onLeave } = useMagnet(0.18);
+function PlayBtn({ isPlaying, onToggle, physics }) {
+  const { ref, xy, onMove, onLeave } = useMagnet(0.18, physics || {});
   const [pressed, setPressed] = useState(false);
   return (
     <button ref={ref} onClick={onToggle}
       onMouseMove={onMove} onMouseLeave={onLeave}
       onMouseDown={() => setPressed(true)} onMouseUp={() => setPressed(false)}
       style={{
-        width:82, height:82, borderRadius:'50%', border:'none',
-        background: isPlaying ? 'rgba(178,178,178,0.12)' : 'rgba(255,255,255,0.055)',
+        width:66, height:66, borderRadius:'50%', border:'none',
+        background: isPlaying ? 'rgba(178,178,178,0.11)' : 'rgba(255,255,255,0.05)',
         color:'var(--text)',
         display:'flex', alignItems:'center', justifyContent:'center',
         cursor:'pointer', flexShrink:0,
-        transform:`translate(${xy.x}px,${xy.y}px) scale(${pressed?0.88:1})`,
+        transform:`translate(${xy.x}px,${xy.y}px) scale(${pressed?0.89:1})`,
         transition: pressed ? 'transform 0.09s ease' : 'background 0.3s ease, box-shadow 0.3s ease',
         boxShadow: isPlaying
-          ? '0 0 28px rgba(178,178,178,0.12), inset 0 0 0 1px rgba(178,178,178,0.22)'
+          ? '0 0 22px rgba(178,178,178,0.1), inset 0 0 0 1px rgba(178,178,178,0.18)'
           : 'inset 0 0 0 1px rgba(255,255,255,0.07)',
         willChange:'transform',
       }}>
       {isPlaying
-        ? <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" rx="1.5"/><rect x="14" y="4" width="4" height="16" rx="1.5"/></svg>
-        : <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24" style={{marginLeft:2}}><polygon points="5,3 19,12 5,21"/></svg>
+        ? <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24">
+            <rect x="5" y="4" width="4.5" height="16" rx="2.25"/>
+            <rect x="14.5" y="4" width="4.5" height="16" rx="2.25"/>
+          </svg>
+        : <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24" style={{marginLeft:2}}>
+            <path d="M5 3.5 19.5 12 5 20.5z"/>
+          </svg>
       }
     </button>
   );
@@ -987,7 +992,7 @@ function App() {
   const [isPlaying,     setIsPlaying]     = useState(false);
   const [progress,      setProgress]      = useState(0);
   const [shuffle,       setShuffle]       = useState(false);
-  const [repeat,        setRepeat]        = useState(false);
+  const [repeat,        setRepeat]        = useState('off');
   const [navActive,     setNavActive]     = useState('home');
   const [search,        setSearch]        = useState('');
   const [volume,        setVolume]        = useState(0.7);
@@ -1101,14 +1106,22 @@ function App() {
   }, []);
 
   function handleNext() {
-    if (repeat) {
+    if (repeat === 'one') {
       const audio = audioRef.current;
       if (audio) { audio.currentTime = 0; audio.play().catch(() => {}); }
       setProgress(0); return;
     }
-    setTrackIdx(i => shuffle
-      ? (() => { let n; do { n = Math.floor(Math.random()*tracks.length); } while (n === i && tracks.length > 1); return n; })()
-      : (i + 1) % tracks.length);
+    if (shuffle) {
+      setTrackIdx(i => { let n; do { n = Math.floor(Math.random()*tracks.length); } while (n === i && tracks.length > 1); return n; });
+      setProgress(0); return;
+    }
+    const next = trackIdx + 1;
+    if (next >= tracks.length) {
+      if (repeat === 'all') { setTrackIdx(0); }
+      else { setIsPlaying(false); }
+    } else {
+      setTrackIdx(next);
+    }
     setProgress(0);
   }
   handleNextRef.current = handleNext;
@@ -1248,7 +1261,7 @@ function App() {
           setReverseHero({
             track: tracks[trackIdx],
             targetRect: { left: par.left, top: par.top, size: par.width },
-            startRect:  { left: cardRect.left, top: endTop, width: cardRect.width, height: cardRect.height },
+            startRect:  { left: cardRect.left - 28, top: endTop, width: cardRect.width, height: cardRect.height },
           });
           setTimeout(() => setReverseHeroExiting(true), 300);
           setTimeout(() => { setReverseHero(null); setReverseHeroExiting(false); }, 420);
@@ -1300,7 +1313,10 @@ function App() {
             position:'absolute', inset:0,
             overflowY:'auto', padding:'32px 36px',
             opacity: homeVisible ? 1 : 0,
-            transition:'opacity 0.08s ease',
+            transform: homeVisible ? 'translateX(0)' : 'translateX(28px)',
+            transition: homeVisible
+              ? 'opacity 0.32s ease 0.08s, transform 0.48s cubic-bezier(0.22,1,0.36,1) 0.08s'
+              : 'opacity 0.14s ease, transform 0.18s ease',
             pointerEvents: homeVisible ? 'auto' : 'none',
           }}>
             <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:24}}>
@@ -1349,8 +1365,11 @@ function App() {
           borderRight: libCollapsed ? 'none' : '1px solid var(--border)',
           background:'rgba(255,255,255,0.014)',
           zIndex:9, overflow:'hidden',
-          transform: playerVisible ? 'translateX(0)' : 'translateX(-14px)',
-          transition:'transform 0.35s ease, width 0.44s cubic-bezier(0.4,0,0.2,1), border 0.44s ease',
+          opacity: playerVisible ? 1 : 0,
+          transform: playerVisible ? 'translateX(0)' : 'translateX(-28px)',
+          transition: playerVisible
+            ? 'opacity 0.32s ease 0.08s, transform 0.48s cubic-bezier(0.22,1,0.36,1) 0.08s, width 0.44s cubic-bezier(0.4,0,0.2,1), border 0.44s ease'
+            : 'opacity 0.14s ease, transform 0.18s ease, width 0.44s cubic-bezier(0.4,0,0.2,1), border 0.44s ease',
         }}>
           <div style={{padding:'12px 10px 8px', flexShrink:0}}>
             <div style={{
@@ -1443,35 +1462,48 @@ function App() {
               <WaveProgressBar progress={progress} elapsed={elapsed} total={track.duration || 0}
                 onSeek={handleSeek} isPlaying={isPlaying}/>
             </div>
+            {(()=>{ const P = { spring:0.055, damping:0.84, clamp:10 }; return (
             <div style={{display:'flex', alignItems:'center', gap:8, justifyContent:'center'}}>
-              <MagBtn onClick={()=>setShuffle(s=>!s)} active={shuffle} size={48}>
-                <svg width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                  <polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/>
-                  <polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/>
-                  <line x1="4" y1="4" x2="9" y2="9"/>
+              <MagBtn onClick={()=>setShuffle(s=>!s)} active={shuffle} size={48} physics={P}>
+                <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+                  <path d="M3 17h2.5C7.5 17 9.5 15.5 12 12s4.5-5 6.5-5H21"/>
+                  <polyline points="18 5 21 7 18 9"/>
+                  <path d="M3 7h2.5C7.5 7 9 8.3 10.8 10.4"/>
+                  <path d="M13.2 13.6C15 15.7 16.5 17 18.5 17H21"/>
+                  <polyline points="18 15 21 17 18 19"/>
                 </svg>
               </MagBtn>
-              <MagBtn onClick={handlePrev} size={54}>
-                <svg width="22" height="22" fill="currentColor" viewBox="0 0 24 24"><polygon points="19,20 9,12 19,4"/><rect x="5" y="4" width="3" height="16" rx="1"/></svg>
+              <MagBtn onClick={handlePrev} size={54} physics={P}>
+                <svg width="21" height="21" fill="currentColor" viewBox="0 0 24 24">
+                  <rect x="4" y="4.5" width="3.5" height="15" rx="1.75"/>
+                  <path d="M9.5 12 19 5.5v13z"/>
+                </svg>
               </MagBtn>
-              <PlayBtn isPlaying={isPlaying} onToggle={()=>setIsPlaying(p=>!p)}/>
-              <MagBtn onClick={handleNext} size={54}>
-                <svg width="22" height="22" fill="currentColor" viewBox="0 0 24 24"><polygon points="5,4 15,12 5,20"/><rect x="16" y="4" width="3" height="16" rx="1"/></svg>
+              <PlayBtn isPlaying={isPlaying} onToggle={()=>setIsPlaying(p=>!p)} physics={P}/>
+              <MagBtn onClick={handleNext} size={54} physics={P}>
+                <svg width="21" height="21" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M14.5 12 5 5.5v13z"/>
+                  <rect x="16.5" y="4.5" width="3.5" height="15" rx="1.75"/>
+                </svg>
               </MagBtn>
-              <MagBtn onClick={()=>setRepeat(r=>!r)} active={repeat} size={48}>
-                <div style={{position:'relative'}}>
-                  <svg width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                    <polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>
-                    <polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+              <MagBtn onClick={()=>setRepeat(r=>r==='off'?'all':r==='all'?'one':'off')} active={repeat!=='off'} size={48} physics={P}>
+                <div style={{position:'relative', display:'flex', alignItems:'center', justifyContent:'center'}}>
+                  <svg width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+                    <path d="M17 2l4 4-4 4"/>
+                    <path d="M3 11V9a5 5 0 0 1 5-5h13"/>
+                    <path d="M7 22l-4-4 4-4"/>
+                    <path d="M21 13v2a5 5 0 0 1-5 5H3"/>
                   </svg>
-                  {repeat && <span style={{
-                    position:'absolute', top:'50%', left:'50%',
-                    transform:'translate(-50%,-50%)', fontSize:7, fontWeight:700,
-                    color:'var(--accent)', lineHeight:1,
+                  {repeat==='one' && <span style={{
+                    position:'absolute', top:-6, right:-8,
+                    background:'var(--accent)', color:'#07070a',
+                    fontSize:7.5, fontWeight:700, lineHeight:1,
+                    padding:'2px 4px', borderRadius:4,
                   }}>1</span>}
                 </div>
               </MagBtn>
             </div>
+            ); })()}
           </div>
         </div>
 
