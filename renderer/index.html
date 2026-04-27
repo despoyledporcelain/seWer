@@ -607,29 +607,39 @@ function HeroClone({ hero, exiting, reverse = false }) {
       width: size, height: size,
       borderRadius: 20,
       zIndex:960, pointerEvents:'none', overflow:'hidden',
-      background:`linear-gradient(145deg, ${hero.track.color}50, #060609)`,
-      border:'1px solid rgba(255,255,255,0.06)',
       transformOrigin:'center center',
       transform,
       opacity: exiting ? 0 : 1,
       transition: ready ? 'transform 0.34s cubic-bezier(0.4,0,0.2,1), opacity 0.12s ease' : 'none',
     }}>
-      <svg width="100%" height="100%" viewBox="0 0 200 200" preserveAspectRatio="xMidYMid slice" style={{position:'absolute',inset:0}}>
-        <defs>
-          <radialGradient id={gid} cx="40%" cy="35%" r="70%">
-            <stop offset="0%" stopColor={hero.track.color} stopOpacity="0.7"/>
-            <stop offset="100%" stopColor="#060609" stopOpacity="1"/>
-          </radialGradient>
-        </defs>
-        <rect width="200" height="200" fill={`url(#${gid})`}/>
-        <circle cx="100" cy="100" r="45" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="1"/>
-        <circle cx="100" cy="100" r="70" fill="none" stroke="rgba(255,255,255,0.035)" strokeWidth="1"/>
-      </svg>
       <div style={{
-        position:'absolute', zIndex:1, width:26, height:26, borderRadius:'50%',
-        top:'50%', left:'50%', transform:'translate(-50%,-50%)',
-        border:`1.5px solid ${hero.track.color}88`, boxShadow:`0 0 10px ${hero.track.color}44`,
+        position:'absolute', inset:-40, borderRadius:'50%', background:hero.track.color,
+        filter:'blur(56px)', opacity:0.24,
       }}/>
+      <div style={{
+        position:'absolute', inset:0, borderRadius:20,
+        background:`linear-gradient(148deg, ${hero.track.color}20 0%, #040408 100%)`,
+        border:'1px solid rgba(255,255,255,0.06)',
+        display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden',
+      }}>
+        <svg width="100%" height="100%" viewBox="0 0 300 300" preserveAspectRatio="xMidYMid slice" style={{position:'absolute',inset:0}}>
+          <defs>
+            <radialGradient id={gid} cx="38%" cy="32%" r="75%">
+              <stop offset="0%" stopColor={hero.track.color} stopOpacity="0.65"/>
+              <stop offset="100%" stopColor="#040408" stopOpacity="1"/>
+            </radialGradient>
+          </defs>
+          <rect width="300" height="300" fill={`url(#${gid})`}/>
+          {[68,105,138].map(r => (
+            <circle key={r} cx="150" cy="150" r={r} fill="none"
+              stroke={`rgba(255,255,255,${r===68?0.06:r===105?0.035:0.02})`} strokeWidth="1"/>
+          ))}
+        </svg>
+        <div style={{
+          position:'relative', zIndex:1, width:38, height:38, borderRadius:'50%',
+          border:`1.5px solid ${hero.track.color}77`, boxShadow:`0 0 16px ${hero.track.color}44`,
+        }}/>
+      </div>
     </div>,
     document.body
   );
@@ -902,8 +912,9 @@ function App() {
     startWithWindows:false, minimizeToTray:false,
   });
 
-  const artRefs = useRef({});
-  const track   = TRACKS[trackIdx];
+  const artRefs     = useRef({});
+  const playerArtRef = useRef(null);
+  const track        = TRACKS[trackIdx];
 
   useEffect(() => {
     if (!isPlaying) return;
@@ -937,17 +948,11 @@ function App() {
     }
     const artEl = artRefs.current[idx];
     const startRect = artEl ? artEl.getBoundingClientRect() : { left:0, top:0, width:0, height:0 };
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const artSize = 260;
-    const sideW = 58, libW = libCollapsed ? 0 : 260, volW = 28;
-    const availW = vw - sideW - libW - volW;
-    const targetLeft = sideW + libW + (availW - artSize) / 2;
-    const playerContentH = 526;
-    const targetTop = 28 + Math.max(20, (vh - 28 - playerContentH) / 2);
+    const par = playerArtRef.current?.getBoundingClientRect();
+    const targetRect = par ? { left: par.left, top: par.top, size: par.width } : { left: 0, top: 0, size: 260 };
 
     setTrackIdx(idx); setProgress(0); setIsPlaying(true);
-    setHero({ track: TRACKS[idx], startRect, targetRect:{ left:targetLeft, top:targetTop, size:artSize } });
+    setHero({ track: TRACKS[idx], startRect, targetRect });
     setHomeVisible(false);
     setPlayerVisible(true);
     setView('player');
@@ -968,18 +973,12 @@ function App() {
     if (id === 'home') {
       if (view === 'player') {
         const artEl = artRefs.current[trackIdx];
-        if (artEl) {
+        const par = playerArtRef.current?.getBoundingClientRect();
+        if (artEl && par) {
           const endRect = artEl.getBoundingClientRect();
-          const vw = window.innerWidth, vh = window.innerHeight;
-          const artSize = 260;
-          const sideW = 58, lW = libCollapsed ? 0 : 260, volW = 28;
-          const availW = vw - sideW - lW - volW;
-          const startLeft = sideW + lW + (availW - artSize) / 2;
-          const playerContentH = 526;
-          const startTop = 28 + Math.max(20, (vh - 28 - playerContentH) / 2);
           setReverseHero({
             track: TRACKS[trackIdx],
-            targetRect: { left: startLeft, top: startTop, size: artSize },
+            targetRect: { left: par.left, top: par.top, size: par.width },
             startRect:  { left: endRect.left, top: endRect.top, width: endRect.width, height: endRect.height },
           });
           setTimeout(() => setReverseHeroExiting(true), 300);
@@ -997,6 +996,15 @@ function App() {
       if (view === 'home') setHomeVisible(false);
       setTimeout(() => setView('settings'), view === 'home' ? 240 : 300);
     } else if (view === 'home') {
+      const artEl = artRefs.current[trackIdx];
+      const par = playerArtRef.current?.getBoundingClientRect();
+      if (artEl && par) {
+        const startRect = artEl.getBoundingClientRect();
+        const targetRect = { left: par.left, top: par.top, size: par.width };
+        setHero({ track: TRACKS[trackIdx], startRect, targetRect });
+        setTimeout(() => setHeroExiting(true), 300);
+        setTimeout(() => { setHero(null); setHeroExiting(false); }, 420);
+      }
       setHomeVisible(false);
       setPlayerVisible(true);
       setView('player');
@@ -1087,7 +1095,7 @@ function App() {
             display:'flex', flexDirection:'column',
             alignItems:'center', gap:0,
           }}>
-            <div id="player-album-art" style={{width:'100%', marginBottom:22, opacity: ((hero && !heroExiting) || reverseHero) ? 0 : 1}}>
+            <div id="player-album-art" ref={playerArtRef} style={{width:'100%', marginBottom:22, opacity: ((hero && !heroExiting) || reverseHero) ? 0 : 1}}>
               <AlbumArt track={track} isPlaying={isPlaying}/>
             </div>
             <div style={{textAlign:'center', marginBottom:18, width:'100%'}}>
