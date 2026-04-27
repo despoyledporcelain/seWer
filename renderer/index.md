@@ -1,6 +1,6 @@
 # карта renderer/index.html
 
-весь ui — один файл ~1276 строк. jsx компилируется babel standalone в браузере.
+весь ui — один файл ~1310 строк. jsx компилируется babel standalone в браузере.
 
 ## структура файла
 
@@ -8,7 +8,7 @@
 |-----------|------------------------------------------------------------|
 | 1–68      | `<head>`: cdn-скрипты, css (`:root` vars, анимации, titlebar, scrollbar) |
 | 70–82     | `#titlebar` html: кнопки minimize/maximize/close через `window.electronAPI` |
-| 85–1273   | `<script type="text/babel">`: весь react                   |
+| 85–1309   | `<script type="text/babel">`: весь react                   |
 
 ## css-переменные (строка 14)
 
@@ -22,7 +22,7 @@
 ## данные
 
 **строки 88–97** — `DEMO_TRACKS`: статичный массив 8 объектов `{id, title, artist, duration (сек), color (hex)}` — используется как fallback пока не выбрана локальная папка  
-**строки 99–102** — `fmt(s)` → строка `M:SS`
+**строка 99** — `fmt(s)` → строка `M:SS`
 
 ## компоненты (по порядку в файле)
 
@@ -39,53 +39,56 @@ canvas-волна H=52. beat-эффект: случайный импульс п�
 пропсы: `{volume [0–1], onChange(v)}`  
 canvas TW=28px, вертикальный. drag вверх = больше. onChange вызывается только на mouseUp. анимирует толщину трека (2→4px) и ручку (3.5→6px) при нажатии.
 
-### `AlbumArt` — строки 391–427
+### `AlbumArt` — строки 391–434
 пропсы: `{track, isPlaying}`  
-размытый blur-blob фона (track.color), svg-кольца, spinning disc (animation: spin 9s). breathe на blob при isPlaying.
+если `track.coverUrl` — показывает `<img>` (objectFit:cover). иначе: размытый blur-blob фона (track.color), svg-кольца, spinning disc (animation: spin 9s). breathe на blob при isPlaying.
 
-### `MagBtn` — строки 430–449
+### `MagBtn` — строки 436–455
 пропсы: `{onClick, active, children, size=52}`  
 круглая кнопка с useMagnet(0.28). цвет: active → `--accent`, иначе rgba(255,255,255,0.38). scale(0.83) при нажатии.
 
-### `PlayBtn` — строки 452–478
+### `PlayBtn` — строки 458–484
 пропсы: `{isPlaying, onToggle}`  
 большая кнопка 82px, useMagnet(0.18). svg play/pause inline.
 
-### `NavIcon` — строки 481–499
+### `NavIcon` — строки 487–505
 пропсы: `{icon, label, active, onClick, size=38}`  
 кнопка сайдбара 38px, useMagnet(0.22). active → bg rgba(178,178,178,0.11).
 
-### `TrackRow` — строки 502–528
+### `TrackRow` — строки 508–538
 пропсы: `{track, isActive, onClick}`  
-строка библиотеки: миниатюра 34px + title/artist + duration. hover-фон.
+строка библиотеки: миниатюра 34px + title/artist + duration. hover-фон.  
+миниатюра: если `track.coverUrl` — `<img>`, иначе svg-треугольник play.
 
-### `HomeCard` — строки 531–582
+### `HomeCard` — строки 541–598
 пропсы: `{track, onClick, artRef, artHidden}`  
-карточка сетки. useMagnet(0.18), scale(1.03) при hover. `artRef` — ref на div-обложку (нужен для HeroClone). `artHidden` — скрывает обложку во время reverse-hero анимации. overlay-play при hover.
+карточка сетки. useMagnet(0.18), scale(1.03) при hover. `artRef` — ref на div-обложку (нужен для HeroClone). `artHidden` — скрывает обложку во время reverse-hero анимации. overlay-play при hover.  
+если `track.coverUrl` — `<img>` вместо svg-градиента.
 
-### `HeroClone` — строки 585–646
+### `HeroClone` — строки 601–668
 пропсы: `{hero: {track, startRect, targetRect: {left,top,size}}, exiting, reverse=false}`  
 ReactDOM.createPortal → document.body. CSS transition 340ms cubic-bezier.  
 `reverse=false` (home→player): стартует с позиции карточки, летит к AlbumArt.  
 `reverse=true` (player→home): стартует с AlbumArt, летит к карточке.  
-`exiting` → opacity:0 (fadeout перед удалением).
+`exiting` → opacity:0 (fadeout перед удалением).  
+если `hero.track.coverUrl` — показывает `<img>` вместо svg-заглушки.
 
-### `Sidebar` — строки 649–698
+### `Sidebar` — строки 671–720
 пропсы: `{navActive, onNav, libCollapsed, onToggleLib, inPlayer}`  
 левая панель 58px. иконки: home/library/liked/search + settings внизу. все через NavIcon.  
 если `inPlayer=true` — показывает кнопку свернуть/развернуть библиотеку (scaleX анимация).
 
-### `CrossfadeSlider` — строки 701–747
+### `CrossfadeSlider` — строки 723–769
 пропсы: `{value [0–12], onChange(v)}`  
 горизонтальный слайдер кроссфейда 0–12 сек. кастомный drag. используется только внутри SettingsView.
 
-### `SettingsView` — строки 750–912
+### `SettingsView` — строки 772–934
 пропсы: `{settings, onSettings, visible, onScanTracks}`  
 макет: левая навигация 214px (секции: playback/system/about) + правый контент с карточками.  
 внутренние компоненты: `Toggle`, `Row`, `Card`. локальный стейт `sec` — активная секция.  
 **секция system** содержит карточку "Локальная музыка" с кнопкой "Выбрать" — вызывает `window.electronAPI.selectMusicFolder()`, сохраняет путь в `settings.musicFolder`, вызывает `onScanTracks(folder)`.
 
-### `App` — строки 915–1271
+### `App` — строки 937–1307
 
 **state:**
 ```
@@ -124,13 +127,14 @@ handleNextRef  null — актуальная ссылка на handleNext (чт�
 - `[volume]`: `audio.volume = volume`
 
 **useEffect-ы (данные):**
-- монтирование: `loadSettings()` → восстанавливает settings + сканирует musicFolder если сохранена
+- монтирование: `loadSettings()` → восстанавливает settings + сканирует musicFolder если сохранена + вызывает `loadCovers`
 - `[settings]`: `saveSettings(settings)` при каждом изменении
 
 **ключевые функции:**
 - `handleNext()` / `handlePrev()` — с учётом shuffle/repeat, сбрасывают `audio.currentTime`
 - `handleSeek(v)` — `setProgress(v)` + `audio.currentTime = v * audio.duration`
-- `handleScanTracks(folder)` — `scanMusicFolder(folder)` → setTracks, сброс trackIdx/progress
+- `loadCovers(tracksArr)` — строка 1068: параллельно вызывает `getCoverArt(t.path)` для каждого трека с `path`, обновляет `tracks` state через `setTracks` по мере готовности
+- `handleScanTracks(folder)` — строка 1078: `scanMusicFolder(folder)` → setTracks, сброс trackIdx/progress, вызов `loadCovers`
 - `selectTrack(idx)` — запускает hero-анимацию (home→player), через 300мс heroExiting, через 420мс чистит hero
 - `handleNav(id)` — переключение view, reverse-hero при player→home
 
@@ -140,7 +144,7 @@ Sidebar(58px) | LibraryPanel(260px, скрывается при libCollapsed) | 
 ```
 все view (`home`, `player`, `settings`) всегда в DOM, видимость через opacity + pointerEvents.
 
-### рендер (строка 1273)
+### рендер (строка 1309)
 ```js
 ReactDOM.createRoot(document.getElementById('root')).render(<App/>)
 ```

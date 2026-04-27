@@ -11,6 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **electron** — desktop-приложение (frame: false, кастомный тайтлбар)
 - **html/css/react** — ui через cdn (react 18 + babel standalone, без сборщика)
 - **space grotesk** — шрифт (google fonts)
+- **music-metadata v6** — чтение тегов аудиофайлов в main process (CJS-совместимая версия)
 
 ## структура
 
@@ -45,6 +46,7 @@ npm run build      # сборка .exe через electron-builder (NSIS)
 - `window.electronAPI.{minimize,maximize,close}` → `ipcMain.on('win-*')`
 - `window.electronAPI.selectMusicFolder()` → `dialog.showOpenDialog` (возвращает path или null)
 - `window.electronAPI.scanMusicFolder(folder)` → рекурсивный обход, возвращает `[{id,title,artist,path,color,duration}]`
+- `window.electronAPI.getCoverArt(filePath)` → читает теги через `music-metadata`, возвращает data URL (`data:image/...;base64,...`) или null
 - `window.electronAPI.loadSettings()` / `saveSettings(data)` → JSON в `%AppData%\seWer\settings.json`
 
 все invoke-методы асинхронные (Promise).
@@ -53,11 +55,11 @@ npm run build      # сборка .exe через electron-builder (NSIS)
 - `useMagnet(strength)` — hook: spring-физика смещения кнопок к курсору (rAF)
 - `WaveProgressBar` — canvas-волна с beat-анимацией, drag для seek
 - `ThinVolumeSlider` — вертикальный canvas-слайдер (28px), drag вверх/вниз
-- `AlbumArt` — обложка с blur-blob, spinning disc, breathe-анимацией
+- `AlbumArt` — если `track.coverUrl`: `<img>`, иначе blur-blob + svg-кольца + spinning disc
 - `CrossfadeSlider` — горизонтальный слайдер 0–12 сек для настроек кроссфейда
-- `HomeCard` — карточка трека в сетке (useMagnet, hero-ref)
-- `TrackRow` — строка в боковой библиотеке
-- `HeroClone` — portal-клон обложки для анимации перехода
+- `HomeCard` — карточка трека в сетке (useMagnet, hero-ref); если `track.coverUrl`: `<img>` вместо svg-градиента
+- `TrackRow` — строка в боковой библиотеке; если `track.coverUrl`: `<img>` в миниатюре 34px
+- `HeroClone` — portal-клон обложки для анимации перехода; если `hero.track.coverUrl`: `<img>`
 - `Sidebar` — левая панель навигации 58px
 - `SettingsView` — настройки (playback / system / about)
 - `App` — корневой компонент, весь state и аудио-логика
@@ -70,7 +72,7 @@ npm run build      # сборка .exe через electron-builder (NSIS)
 
 переход home → player и обратно: hero-clone анимация (обложка летит между карточкой и плеером)
 
-**данные треков**: `DEMO_TRACKS` — 8 заглушек `{id, title, artist, duration, color}`, используются если папка с музыкой не выбрана. локальные треки дополнительно содержат поле `path` (абсолютный путь к файлу).
+**данные треков**: `DEMO_TRACKS` — 8 заглушек `{id, title, artist, duration, color}`, используются если папка с музыкой не выбрана. локальные треки дополнительно содержат поле `path` (абсолютный путь к файлу). после скана асинхронно добавляется `coverUrl` (data URL обложки или отсутствует) — через `loadCovers()`.
 
 **аудио**: HTML5 `Audio` объект создаётся в `App` при монтировании. src — `file:///` URL из `track.path`. `timeupdate` → progress, `ended` → handleNext, `loadedmetadata` → обновляет `track.duration` в state.
 

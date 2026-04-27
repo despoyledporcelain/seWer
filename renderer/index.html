@@ -158,8 +158,9 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying }) {
   const playRef   = useRef(isPlaying);
   const beatRef   = useRef(0);
   const beatTgt   = useRef(0);
-  const dragging  = useRef(false);
-  const startTime = useRef(null);
+  const dragging   = useRef(false);
+  const startTime  = useRef(null);
+  const pendingSize = useRef(null);
   const H = 52;
 
   useEffect(() => { progRef.current = progress; }, [progress]);
@@ -169,18 +170,22 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying }) {
     const canvas = canvasRef.current, wrap = wrapRef.current;
     if (!canvas || !wrap) return;
     const dpr = window.devicePixelRatio || 1;
+    // initial size — canvas style controlled by CSS (width:100%)
+    canvas.width  = Math.round(wrap.clientWidth * dpr);
+    canvas.height = Math.round(H * dpr);
     const resize = () => {
-      const W = wrap.clientWidth;
-      const nW = Math.round(W*dpr), nH = Math.round(H*dpr);
-      if (canvas.width === nW && canvas.height === nH) return;
-      canvas.width = nW; canvas.height = nH;
-      canvas.style.width = W+'px'; canvas.style.height = H+'px';
+      const nW = Math.round(wrap.clientWidth * dpr), nH = Math.round(H * dpr);
+      if (canvas.width !== nW || canvas.height !== nH) pendingSize.current = { w: nW, h: nH };
     };
-    resize();
     const ro = new ResizeObserver(resize);
     ro.observe(wrap);
 
     const draw = (now) => {
+      if (pendingSize.current) {
+        canvas.width  = pendingSize.current.w;
+        canvas.height = pendingSize.current.h;
+        pendingSize.current = null;
+      }
       if (!startTime.current) startTime.current = now;
       const t = (now - startTime.current) * 0.001;
 
@@ -192,7 +197,7 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying }) {
       const W = canvas.width, HH = canvas.height;
       ctx.clearRect(0, 0, W, HH);
 
-      dispProg.current += (progRef.current - dispProg.current) * 0.05;
+      dispProg.current += (progRef.current - dispProg.current) * 0.12;
       const p = dispProg.current;
       const beat = beatRef.current;
       const cy = HH*0.5;
@@ -263,9 +268,9 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying }) {
   return (
     <div style={{width:'100%', display:'flex', alignItems:'center', gap:9}}>
       <span style={timeStyle}>{fmt(elapsed)}</span>
-      <div ref={wrapRef} style={{flex:1, cursor:'pointer'}}
+      <div ref={wrapRef} style={{flex:1, minWidth:0, overflow:'hidden', cursor:'pointer'}}
         onMouseDown={e => { dragging.current = true; onSeek(getVal(e)); }}>
-        <canvas ref={canvasRef} style={{display:'block'}}/>
+        <canvas ref={canvasRef} style={{display:'block', width:'100%', height:H+'px'}}/>
       </div>
       <span style={timeStyle}>-{fmt(total - elapsed)}</span>
     </div>
