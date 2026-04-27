@@ -77,12 +77,14 @@ ipcMain.handle('scan-music-folder', async (_, folderPath) => {
       const ext  = path.extname(p)
       const base = path.basename(p, ext)
       const parts = base.split(' - ')
-      const artist = parts.length >= 2 ? parts[0].trim() : 'Неизвестно'
-      const title  = parts.length >= 2 ? parts.slice(1).join(' - ').trim() : base
+      let artist = parts.length >= 2 ? parts[0].trim() : 'Неизвестно'
+      let title  = parts.length >= 2 ? parts.slice(1).join(' - ').trim() : base
       let duration = 0
       try {
         const meta = await mm.parseFile(p, { skipCovers: true })
         duration = Math.floor(meta.format.duration || 0)
+        if (meta.common.title)  title  = meta.common.title
+        if (meta.common.artist) artist = meta.common.artist
       } catch {}
       results[i] = { id: i + 1, title, artist, path: p, color: hashColor(base), duration }
     }
