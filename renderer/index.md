@@ -61,35 +61,37 @@ canvas TW=28px, вертикальный. drag вверх = больше. onChan
 
 ### `TrackRow` — строки 528–560
 пропсы: `{track, isActive, onClick}`  
-строка библиотеки: миниатюра 34px + title/artist + duration. высота фиксированная ~50px.
+строка библиотеки: миниатюра 34px + title/artist + duration. высота фиксированная ~50px.  
+фон active убран — его рисует пилл в `VirtualTrackList`. `position:relative, zIndex:1` чтобы быть поверх пилла.
 
-### `VirtualTrackList` — строки 561–593
+### `VirtualTrackList` — строки 561–604
 пропсы: `{items, activeId, onClickItem}`  
-виртуализированный список: рендерит только видимые строки + 4 буфера. ROW_H=50.
+виртуализированный список: рендерит только видимые строки + 4 буфера. ROW_H=50.  
+содержит абсолютно позиционированный «пилл» — `top: activeIdx * ROW_H + 2`, CSS transition `0.42s cubic-bezier(0.22,1,0.36,1)`. при смене трека плавно съезжает к новой строке.
 
-### `HomeCard` — строки 594–653
+### `HomeCard` — строки 605–664
 пропсы: `{track, onClick, artRef, artHidden}`  
 карточка сетки. useMagnet(0.18). `artRef` — ref на div-обложку (для HeroClone). `artHidden` — скрывает обложку во время reverse-hero.
 
-### `HeroClone` — строки 654–723
+### `HeroClone` — строки 665–734
 пропсы: `{hero: {track, startRect, targetRect: {left,top,size}}, exiting, reverse=false}`  
 ReactDOM.createPortal → document.body. CSS transition 340ms.  
 `reverse=false` (home→player): стартует с карточки, летит к AlbumArt.  
 `reverse=true` (player→home): стартует с AlbumArt, летит к карточке.
 
-### `Sidebar` — строки 724–773
+### `Sidebar` — строки 735–784
 пропсы: `{navActive, onNav, libCollapsed, onToggleLib, inPlayer}`  
 левая панель 58px. две кнопки навигации: **Треки** (id:`home`) и **Плеер** (id:`library`) + настройки внизу.
 
-### `CrossfadeSlider` — строки 774–822
+### `CrossfadeSlider` — строки 785–833
 пропсы: `{value [0–12], onChange(v)}`  
 горизонтальный слайдер кроссфейда 0–12 сек.
 
-### `SettingsView` — строки 823–987
+### `SettingsView` — строки 834–998
 пропсы: `{settings, onSettings, visible, onScanTracks}`  
 секции: playback / system / about.
 
-### `App` — строки 988–1527
+### `App` — строки 999–1538
 
 **state:**
 ```
@@ -177,7 +179,7 @@ Sidebar(58px) | LibraryPanel(260px) | CenterPlayer(flex:1) | VolumeSlider(28px)
 - `'all'` — повторяет список по кругу
 - `'one'` — зацикливает текущий трек; иконка показывает пилл "1" в правом верхнем углу
 
-### рендер (строка 1528)
+### рендер (строка 1539)
 ```js
 ReactDOM.createRoot(document.getElementById('root')).render(<App/>)
 ```
