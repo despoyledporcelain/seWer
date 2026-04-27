@@ -16,11 +16,13 @@
     "electronVersion": "41.3.0",
     "electronDist": "node_modules/electron/dist",
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "assets/icon.png"
     },
     "files": [
       "main.js",
       "renderer/**",
+      "assets/**",
       "package.json"
     ]
   },
