@@ -9,4 +9,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getCoverArt:       (filePath) => ipcRenderer.invoke('get-cover-art', filePath),
   loadSettings:      ()       => ipcRenderer.invoke('load-settings'),
   saveSettings:      (data)   => ipcRenderer.invoke('save-settings', data),
+  onMediaPlayPause:  (cb) => ipcRenderer.on('media-play-pause', () => cb()),
+  onMediaNext:       (cb) => ipcRenderer.on('media-next',       () => cb()),
+  onMediaPrev:       (cb) => ipcRenderer.on('media-prev',       () => cb()),
 })

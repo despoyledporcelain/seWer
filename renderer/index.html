@@ -85,6 +85,20 @@
 <script type="text/babel">
 const { useState, useEffect, useRef, useCallback } = React;
 
+function smoothScroll(el, targetTop, duration) {
+  const startTop = el.scrollTop;
+  const delta    = targetTop - startTop;
+  if (!delta) return;
+  const t0 = performance.now();
+  function ease(x) { return x < 0.5 ? 2*x*x : 1 - Math.pow(-2*x + 2, 2)/2; }
+  function tick(now) {
+    const p = Math.min((now - t0) / duration, 1);
+    el.scrollTop = startTop + delta * ease(p);
+    if (p < 1) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
 const DEMO_TRACKS = [
   { id:1, title:"Dissolve",       artist:"Nocturnal",   duration:214, color:"#7c5cbf" },
   { id:2, title:"Phase Shift",    artist:"Aeterna",     duration:187, color:"#4e72b8" },
@@ -708,10 +722,8 @@ function HeroClone({ hero, exiting, reverse = false }) {
 /* ── Sidebar ─────────────────────────────────────────────────────────────── */
 function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer }) {
   const NAV = [
-    { id:"home",    label:"Главная",    icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><path d="M3 9.5L12 3l9 6.5V21H3V9.5z"/></svg> },
-    { id:"library", label:"Библиотека", icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.2"/><rect x="14" y="3" width="7" height="7" rx="1.2"/><rect x="3" y="14" width="7" height="7" rx="1.2"/><rect x="14" y="14" width="7" height="7" rx="1.2"/></svg> },
-    { id:"liked",   label:"Любимое",   icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z"/></svg> },
-    { id:"search",  label:"Поиск",     icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg> },
+    { id:"home",    label:"Треки",  icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg> },
+    { id:"library", label:"Плеер",  icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" viewBox="0 0 24 24"><line x1="4" y1="20" x2="4" y2="13"/><line x1="9" y1="20" x2="9" y2="4"/><line x1="14" y1="20" x2="14" y2="8"/><line x1="19" y1="20" x2="19" y2="14"/></svg> },
   ];
   return (
     <div style={{
@@ -998,8 +1010,10 @@ function App() {
   const artRefs       = useRef({});
   const playerArtRef  = useRef(null);
   const audioRef      = useRef(null);
-  const handleNextRef = useRef(null);
-  const isPlayingRef  = useRef(false);
+  const handleNextRef  = useRef(null);
+  const handlePrevRef  = useRef(null);
+  const isPlayingRef   = useRef(false);
+  const homeScrollRef  = useRef(null);
   isPlayingRef.current = isPlaying;
   const track = tracks[trackIdx] || tracks[0];
 
@@ -1077,6 +1091,15 @@ function App() {
     if (audioRef.current) audioRef.current.volume = volume;
   }, [volume]);
 
+  /* медиаклавиши */
+  useEffect(() => {
+    const api = window.electronAPI;
+    if (!api?.onMediaPlayPause) return;
+    api.onMediaPlayPause(() => setIsPlaying(p => !p));
+    api.onMediaNext(() => handleNextRef.current?.());
+    api.onMediaPrev(() => handlePrevRef.current?.());
+  }, []);
+
   function handleNext() {
     if (repeat) {
       const audio = audioRef.current;
@@ -1099,6 +1122,7 @@ function App() {
     setTrackIdx(i => (i - 1 + tracks.length) % tracks.length);
     setProgress(0);
   }
+  handlePrevRef.current = handlePrev;
 
   const handleSeek = useCallback((v) => {
     setProgress(v);
@@ -1182,11 +1206,26 @@ function App() {
         const artEl = artRefs.current[trackIdx];
         const par = playerArtRef.current?.getBoundingClientRect();
         if (artEl && par) {
-          const endRect = artEl.getBoundingClientRect();
+          const cardRect  = artEl.getBoundingClientRect();
+          const scrollEl  = homeScrollRef.current;
+          let endTop = cardRect.top;
+
+          if (scrollEl) {
+            const box     = scrollEl.getBoundingClientRect();
+            const visible = cardRect.top >= box.top && cardRect.bottom <= box.bottom;
+            if (!visible) {
+              const cardOffsetInScroll = cardRect.top - box.top + scrollEl.scrollTop;
+              const targetTop = Math.max(0, cardOffsetInScroll - box.height / 2 + cardRect.height / 2);
+              const delta     = targetTop - scrollEl.scrollTop;
+              endTop = cardRect.top - delta;
+              smoothScroll(scrollEl, targetTop, 340);
+            }
+          }
+
           setReverseHero({
             track: tracks[trackIdx],
             targetRect: { left: par.left, top: par.top, size: par.width },
-            startRect:  { left: endRect.left, top: endRect.top, width: endRect.width, height: endRect.height },
+            startRect:  { left: cardRect.left, top: endTop, width: cardRect.width, height: cardRect.height },
           });
           setTimeout(() => setReverseHeroExiting(true), 300);
           setTimeout(() => { setReverseHero(null); setReverseHeroExiting(false); }, 420);
@@ -1234,7 +1273,7 @@ function App() {
       <div style={{position:'relative', flex:1, height:'100%', overflow:'hidden'}}>
 
         {(
-          <div style={{
+          <div ref={homeScrollRef} style={{
             position:'absolute', inset:0,
             overflowY:'auto', padding:'32px 36px',
             opacity: homeVisible ? 1 : 0,

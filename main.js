@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, globalShortcut } = require('electron')
 const path = require('path')
 const fs   = require('fs')
 const mm   = require('music-metadata')
@@ -105,7 +105,14 @@ ipcMain.handle('get-cover-art', async (_, filePath) => {
 ipcMain.handle('load-settings', () => loadSettings())
 ipcMain.handle('save-settings', (_, data) => saveSettings(data))
 
-app.whenReady().then(createWindow)
+app.whenReady().then(() => {
+  createWindow()
+  globalShortcut.register('MediaPlayPause',     () => win?.webContents.send('media-play-pause'))
+  globalShortcut.register('MediaNextTrack',     () => win?.webContents.send('media-next'))
+  globalShortcut.register('MediaPreviousTrack', () => win?.webContents.send('media-prev'))
+})
+
+app.on('will-quit', () => globalShortcut.unregisterAll())
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
