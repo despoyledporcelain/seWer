@@ -19,7 +19,7 @@ C:\seWer\
 ├── main.js              # electron main process
 ├── renderer/
 │   ├── index.html       # весь ui (react + стили)
-│   └── preload.js       # contextBridge: minimize/maximize/close
+│   └── preload.js       # contextBridge: window/minimize/maximize/close + invoke-методы для файлов и настроек
 ├── package.json
 └── .gitignore
 ```
@@ -39,17 +39,28 @@ npm run build      # сборка .exe через electron-builder (NSIS)
 
 ## архитектура ui
 
-весь код рендерера — один файл `renderer/index.html` (~900 строк): стили, jsx-компоненты, логика — всё вместе. babel компилирует jsx в браузере (`type="text/babel"`).
+весь код рендерера — один файл `renderer/index.html` (~1276 строк): стили, jsx-компоненты, логика — всё вместе. babel компилирует jsx в браузере (`type="text/babel"`).
 
-**ipc-мост** (`preload.js`): `window.electronAPI.{minimize,maximize,close}` → `ipcMain.on('win-*')` в `main.js`.
+**ipc-мост** (`preload.js`):
+- `window.electronAPI.{minimize,maximize,close}` → `ipcMain.on('win-*')`
+- `window.electronAPI.selectMusicFolder()` → `dialog.showOpenDialog` (возвращает path или null)
+- `window.electronAPI.scanMusicFolder(folder)` → рекурсивный обход, возвращает `[{id,title,artist,path,color,duration}]`
+- `window.electronAPI.loadSettings()` / `saveSettings(data)` → JSON в `%AppData%\seWer\settings.json`
+
+все invoke-методы асинхронные (Promise).
 
 **react-компоненты:**
 - `useMagnet(strength)` — hook: spring-физика смещения кнопок к курсору (rAF)
 - `WaveProgressBar` — canvas-волна с beat-анимацией, drag для seek
 - `ThinVolumeSlider` — вертикальный canvas-слайдер (28px), drag вверх/вниз
-- `HomeView` — сетка карточек треков
-- `PlayerView` — боковая библиотека + центральный плеер
-- `App` — переключение view + circle-reveal анимация через `clipPath`
+- `AlbumArt` — обложка с blur-blob, spinning disc, breathe-анимацией
+- `CrossfadeSlider` — горизонтальный слайдер 0–12 сек для настроек кроссфейда
+- `HomeCard` — карточка трека в сетке (useMagnet, hero-ref)
+- `TrackRow` — строка в боковой библиотеке
+- `HeroClone` — portal-клон обложки для анимации перехода
+- `Sidebar` — левая панель навигации 58px
+- `SettingsView` — настройки (playback / system / about)
+- `App` — корневой компонент, весь state и аудио-логика
 
 полная карта с номерами строк → [`renderer/index.md`](renderer/index.md)
 
@@ -59,7 +70,9 @@ npm run build      # сборка .exe через electron-builder (NSIS)
 
 переход home → player и обратно: hero-clone анимация (обложка летит между карточкой и плеером)
 
-**заглушки**: `TRACKS` — статичный массив 8 треков `{id, title, artist, duration, color}`.
+**данные треков**: `DEMO_TRACKS` — 8 заглушек `{id, title, artist, duration, color}`, используются если папка с музыкой не выбрана. локальные треки дополнительно содержат поле `path` (абсолютный путь к файлу).
+
+**аудио**: HTML5 `Audio` объект создаётся в `App` при монтировании. src — `file:///` URL из `track.path`. `timeupdate` → progress, `ended` → handleNext, `loadedmetadata` → обновляет `track.duration` в state.
 
 ## дизайн
 
@@ -87,8 +100,8 @@ npm run build      # сборка .exe через electron-builder (NSIS)
 ## план разработки
 
 - [x] часть 1 — ui/фронтенд (статичный, заглушки)
-- [ ] часть 2 — парсинг soundcloud (страницы)
-- [ ] часть 3 — аудио движок
+- [~] часть 2 — парсинг soundcloud (страницы)
+- [~] часть 3 — аудио движок (локальные файлы готовы; soundcloud — нет)
 - [ ] часть 4 — интеграция
 
 ## гитхаб

@@ -85,7 +85,7 @@
 <script type="text/babel">
 const { useState, useEffect, useRef, useCallback } = React;
 
-const TRACKS = [
+const DEMO_TRACKS = [
   { id:1, title:"Dissolve",       artist:"Nocturnal",   duration:214, color:"#7c5cbf" },
   { id:2, title:"Phase Shift",    artist:"Aeterna",     duration:187, color:"#4e72b8" },
   { id:3, title:"Нулевой этаж",   artist:"Ploho",       duration:253, color:"#b84e5a" },
@@ -747,7 +747,7 @@ function CrossfadeSlider({ value, onChange }) {
 }
 
 /* ── SettingsView ─────────────────────────────────────────────────────────── */
-function SettingsView({ settings, onSettings, visible }) {
+function SettingsView({ settings, onSettings, visible, onScanTracks }) {
   const set = (k, v) => onSettings({ ...settings, [k]: v });
   const [sec, setSec] = useState('playback');
 
@@ -830,6 +830,28 @@ function SettingsView({ settings, onSettings, visible }) {
           }}>Очистить</div>
         </Row>
       </Card>
+      <Card title="Локальная музыка">
+        <Row label="Папка с музыкой"
+          sub={settings.musicFolder
+            ? settings.musicFolder.length > 42
+              ? '...' + settings.musicFolder.slice(-42)
+              : settings.musicFolder
+            : 'Не выбрана'}
+          last>
+          <div
+            onClick={async () => {
+              const folder = await window.electronAPI.selectMusicFolder();
+              if (folder) { set('musicFolder', folder); onScanTracks(folder); }
+            }}
+            style={{
+              fontSize:12, color:'rgba(255,255,255,0.5)', cursor:'pointer',
+              background:'rgba(255,255,255,0.055)', border:'1px solid rgba(255,255,255,0.09)',
+              borderRadius:7, padding:'5px 14px', flexShrink:0,
+              transition:'background 0.15s',
+            }}
+          >Выбрать</div>
+        </Row>
+      </Card>
     </>),
     about: (
       <Card>
@@ -892,6 +914,7 @@ function SettingsView({ settings, onSettings, visible }) {
 /* ── App ─────────────────────────────────────────────────────────────────── */
 function App() {
   const [view,          setView]          = useState('home');
+  const [tracks,        setTracks]        = useState(DEMO_TRACKS);
   const [trackIdx,      setTrackIdx]      = useState(0);
   const [isPlaying,     setIsPlaying]     = useState(false);
   const [progress,      setProgress]      = useState(0);
@@ -909,37 +932,125 @@ function App() {
   const [libCollapsed,  setLibCollapsed]  = useState(false);
   const [settings,      setSettings]      = useState({
     autoplay:false, crossfade:0, defaultRepeat:false,
-    startWithWindows:false, minimizeToTray:false,
+    startWithWindows:false, minimizeToTray:false, musicFolder:'',
   });
 
-  const artRefs     = useRef({});
+  const artRefs      = useRef({});
   const playerArtRef = useRef(null);
-  const track        = TRACKS[trackIdx];
+  const audioRef     = useRef(null);
+  const handleNextRef = useRef(null);
+  const track = tracks[trackIdx] || tracks[0];
 
+  /* загружаем настройки и треки при старте */
   useEffect(() => {
-    if (!isPlaying) return;
-    const id = setInterval(() => {
-      setProgress(p => {
-        const next = p + 1/track.duration*0.25;
-        if (next >= 1) { handleNext(); return 0; }
-        return next;
-      });
-    }, 250);
-    return () => clearInterval(id);
-  }, [isPlaying, trackIdx, repeat]);
+    (async () => {
+      try {
+        const saved = await window.electronAPI.loadSettings();
+        if (saved && Object.keys(saved).length) {
+          setSettings(s => ({ ...s, ...saved }));
+          if (saved.musicFolder) {
+            const local = await window.electronAPI.scanMusicFolder(saved.musicFolder);
+            if (local.length > 0) setTracks(local);
+          }
+        }
+      } catch {}
+    })();
+  }, []);
+
+  /* сохраняем настройки при изменении */
+  useEffect(() => {
+    try { window.electronAPI.saveSettings(settings); } catch {}
+  }, [settings]);
+
+  /* инициализация Audio */
+  useEffect(() => {
+    const audio = new Audio();
+    audio.volume = volume;
+    audioRef.current = audio;
+
+    const onTime  = () => { if (audio.duration) setProgress(audio.currentTime / audio.duration); };
+    const onEnded = () => handleNextRef.current?.();
+    audio.addEventListener('timeupdate', onTime);
+    audio.addEventListener('ended',      onEnded);
+
+    return () => {
+      audio.removeEventListener('timeupdate', onTime);
+      audio.removeEventListener('ended',      onEnded);
+      audio.pause();
+      audio.src = '';
+    };
+  }, []);
+
+  /* смена трека — обновляем src */
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !track) return;
+    if (track.path) {
+      audio.src = 'file:///' + track.path.replace(/\\/g, '/');
+      audio.load();
+      audio.addEventListener('loadedmetadata', () => {
+        const dur = Math.floor(audio.duration);
+        if (dur) setTracks(prev => prev.map((t, i) => i === trackIdx ? { ...t, duration: dur } : t));
+      }, { once: true });
+    } else {
+      audio.src = '';
+    }
+    setProgress(0);
+  }, [trackIdx]);
+
+  /* play / pause */
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (isPlaying) audio.play().catch(() => setIsPlaying(false));
+    else audio.pause();
+  }, [isPlaying]);
+
+  /* громкость */
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = volume;
+  }, [volume]);
 
   function handleNext() {
-    if (repeat) { setProgress(0); return; }
+    if (repeat) {
+      const audio = audioRef.current;
+      if (audio) { audio.currentTime = 0; audio.play().catch(() => {}); }
+      setProgress(0); return;
+    }
     setTrackIdx(i => shuffle
-      ? (() => { let n; do { n=Math.floor(Math.random()*TRACKS.length); } while(n===i); return n; })()
-      : (i+1)%TRACKS.length);
+      ? (() => { let n; do { n = Math.floor(Math.random()*tracks.length); } while (n === i && tracks.length > 1); return n; })()
+      : (i + 1) % tracks.length);
     setProgress(0);
   }
+  handleNextRef.current = handleNext;
+
   function handlePrev() {
-    if (progress > 0.05) { setProgress(0); return; }
-    setTrackIdx(i => (i-1+TRACKS.length)%TRACKS.length);
+    if (progress > 0.05) {
+      setProgress(0);
+      if (audioRef.current) audioRef.current.currentTime = 0;
+      return;
+    }
+    setTrackIdx(i => (i - 1 + tracks.length) % tracks.length);
     setProgress(0);
   }
+
+  const handleSeek = useCallback((v) => {
+    setProgress(v);
+    const audio = audioRef.current;
+    if (audio?.duration) audio.currentTime = v * audio.duration;
+  }, []);
+
+  const handleScanTracks = useCallback(async (folder) => {
+    try {
+      const local = await window.electronAPI.scanMusicFolder(folder);
+      if (local.length > 0) {
+        setTracks(local);
+        setTrackIdx(0);
+        setIsPlaying(false);
+        setProgress(0);
+      }
+    } catch {}
+  }, []);
 
   function selectTrack(idx) {
     if (view === 'player') {
@@ -952,7 +1063,7 @@ function App() {
     const targetRect = par ? { left: par.left, top: par.top, size: par.width } : { left: 0, top: 0, size: 260 };
 
     setTrackIdx(idx); setProgress(0); setIsPlaying(true);
-    setHero({ track: TRACKS[idx], startRect, targetRect });
+    setHero({ track: tracks[idx], startRect, targetRect });
     setHomeVisible(false);
     setPlayerVisible(true);
     setView('player');
@@ -962,11 +1073,11 @@ function App() {
     setTimeout(() => { setHero(null); setHeroExiting(false); }, 420);
   }
 
-  const filtered = TRACKS.filter(t =>
+  const filtered = tracks.filter(t =>
     t.title.toLowerCase().includes(search.toLowerCase()) ||
     t.artist.toLowerCase().includes(search.toLowerCase())
   );
-  const elapsed = Math.floor(progress * track.duration);
+  const elapsed = Math.floor(progress * (track?.duration || 0));
 
   const handleNav = (id) => {
     setNavActive(id);
@@ -977,7 +1088,7 @@ function App() {
         if (artEl && par) {
           const endRect = artEl.getBoundingClientRect();
           setReverseHero({
-            track: TRACKS[trackIdx],
+            track: tracks[trackIdx],
             targetRect: { left: par.left, top: par.top, size: par.width },
             startRect:  { left: endRect.left, top: endRect.top, width: endRect.width, height: endRect.height },
           });
@@ -1001,7 +1112,7 @@ function App() {
       if (artEl && par) {
         const startRect = artEl.getBoundingClientRect();
         const targetRect = { left: par.left, top: par.top, size: par.width };
-        setHero({ track: TRACKS[trackIdx], startRect, targetRect });
+        setHero({ track: tracks[trackIdx], startRect, targetRect });
         setTimeout(() => setHeroExiting(true), 300);
         setTimeout(() => { setHero(null); setHeroExiting(false); }, 420);
       }
@@ -1013,6 +1124,8 @@ function App() {
       setView('player');
     }
   };
+
+  if (!track) return null;
 
   return (
     <div style={{display:'flex', width:'100%', height:'100%', overflow:'hidden'}}>
@@ -1035,7 +1148,7 @@ function App() {
             <div style={{fontSize:12, fontWeight:500, color:'rgba(255,255,255,0.22)',
               letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:24}}>Все треки</div>
             <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(128px, 1fr))', gap:18}}>
-              {TRACKS.map((t,i) => (
+              {tracks.map((t,i) => (
                 <HomeCard key={t.id} track={t}
                   artRef={el => artRefs.current[i] = el}
                   onClick={() => selectTrack(i)}
@@ -1079,7 +1192,7 @@ function App() {
           <div style={{flex:1, overflowY:'auto', padding:'2px 6px 10px'}}>
             {filtered.map(t => (
               <TrackRow key={t.id} track={t} isActive={t.id===track.id}
-                onClick={()=>{ setTrackIdx(TRACKS.indexOf(t)); setProgress(0); setIsPlaying(true); }}/>
+                onClick={()=>{ setTrackIdx(tracks.indexOf(t)); setProgress(0); setIsPlaying(true); }}/>
             ))}
           </div>
         </div>
@@ -1104,8 +1217,8 @@ function App() {
               <div style={{fontSize:12, color:'rgba(255,255,255,0.28)', marginTop:4}}>{track.artist}</div>
             </div>
             <div style={{width:'100%', marginBottom:20}}>
-              <WaveProgressBar progress={progress} elapsed={elapsed} total={track.duration}
-                onSeek={v=>setProgress(v)} isPlaying={isPlaying}/>
+              <WaveProgressBar progress={progress} elapsed={elapsed} total={track.duration || 0}
+                onSeek={handleSeek} isPlaying={isPlaying}/>
             </div>
             <div style={{display:'flex', alignItems:'center', gap:8, justifyContent:'center'}}>
               <MagBtn onClick={()=>setShuffle(s=>!s)} active={shuffle} size={48}>
@@ -1150,7 +1263,7 @@ function App() {
           </div>
         )}
 
-        <SettingsView settings={settings} onSettings={setSettings} visible={view==='settings'}/>
+        <SettingsView settings={settings} onSettings={setSettings} visible={view==='settings'} onScanTracks={handleScanTracks}/>
 
       </div>
     </div>
