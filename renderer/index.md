@@ -1,6 +1,6 @@
 # карта renderer/index.html
 
-весь ui — один файл ~1310 строк. jsx компилируется babel standalone в браузере.
+весь ui — один файл ~1531 строк. jsx компилируется babel standalone в браузере.
 
 ## структура файла
 
@@ -8,7 +8,7 @@
 |-----------|------------------------------------------------------------|
 | 1–68      | `<head>`: cdn-скрипты, css (`:root` vars, анимации, titlebar, scrollbar) |
 | 70–82     | `#titlebar` html: кнопки minimize/maximize/close через `window.electronAPI` |
-| 85–1309   | `<script type="text/babel">`: весь react                   |
+| 85–1528   | `<script type="text/babel">`: весь react                   |
 
 ## css-переменные (строка 14)
 
@@ -17,88 +17,89 @@
 --text: #ededf4   --accent: #b2b2b2   --titlebar-h: 28px
 ```
 
+глобально: `*, *::before, *::after { user-select: none }` — текст не выделяется.
+
 анимации: `breathe` (масштаб+opacity), `spin` (360°)
 
-## данные
+## утилиты
 
-**строки 88–97** — `DEMO_TRACKS`: статичный массив 8 объектов `{id, title, artist, duration (сек), color (hex)}` — используется как fallback пока не выбрана локальная папка  
-**строка 99** — `fmt(s)` → строка `M:SS`
+**строка 86** — деструктура: `{ useState, useEffect, useRef, useCallback, useMemo }`  
+**строка 88** — `smoothScroll(el, targetTop, duration)` — плавный скролл с easing `easeInOutQuad`  
+**строка 102** — `DEMO_TRACKS`: статичный массив 8 объектов `{id, title, artist, duration (сек), color (hex)}`  
+**строка 113** — `fmt(s)` → строка `M:SS`
 
 ## компоненты (по порядку в файле)
 
-### `useMagnet(strength=0.25)` — строки 105–149
+### `useMagnet(strength=0.25, { spring=0.10, damping=0.74, clamp=12 }={})` — строки 119–163
 hook. возвращает `{ref, xy, onMove, onLeave}`.  
-применение: `ref` на элемент, `onMouseMove={onMove}`, `onMouseLeave={onLeave}`, `transform: translate(${xy.x}px,${xy.y}px)`.  
-физика: SPRING=0.10, DAMPING=0.74, CLAMP=12px. rAF-петля всегда крутится.
+физика: spring/damping/clamp настраиваемые через второй аргумент. rAF-петля всегда крутится.  
+player-кнопки используют `{ spring:0.055, damping:0.84, clamp:10 }` — мягче и инертнее.
 
-### `WaveProgressBar` — строки 152–273
+### `WaveProgressBar` — строки 166–290
 пропсы: `{progress [0–1], elapsed, total, onSeek(v), isPlaying}`  
-canvas-волна H=52. beat-эффект: случайный импульс при isPlaying, затухает. drag по всей ширине → onSeek. onSeek вызывается и при drag (mousemove), и при click.
+canvas-волна H=52. плавная анимация без случайных beat-спайков. drag по всей ширине → onSeek.
 
-### `ThinVolumeSlider` — строки 276–388
+### `ThinVolumeSlider` — строки 291–405
 пропсы: `{volume [0–1], onChange(v)}`  
-canvas TW=28px, вертикальный. drag вверх = больше. onChange вызывается только на mouseUp. анимирует толщину трека (2→4px) и ручку (3.5→6px) при нажатии.
+canvas TW=28px, вертикальный. drag вверх = больше. onChange вызывается в реальном времени на каждом mousemove.
 
-### `AlbumArt` — строки 391–434
+### `AlbumArt` — строки 406–450
 пропсы: `{track, isPlaying}`  
-если `track.coverUrl` — показывает `<img>` (objectFit:cover). иначе: размытый blur-blob фона (track.color), svg-кольца, spinning disc (animation: spin 9s). breathe на blob при isPlaying.
+если `track.coverUrl` — показывает `<img>`. иначе: blur-blob, svg-кольца, spinning disc.
 
-### `MagBtn` — строки 436–455
-пропсы: `{onClick, active, children, size=52}`  
-круглая кнопка с useMagnet(0.28). цвет: active → `--accent`, иначе rgba(255,255,255,0.38). scale(0.83) при нажатии.
+### `MagBtn` — строки 451–471
+пропсы: `{onClick, active, children, size=52, physics}`  
+круглая кнопка с useMagnet(0.28, physics).
 
-### `PlayBtn` — строки 458–484
-пропсы: `{isPlaying, onToggle}`  
-большая кнопка 82px, useMagnet(0.18). svg play/pause inline.
+### `PlayBtn` — строки 473–499
+пропсы: `{isPlaying, onToggle, physics}`  
+кнопка 66px, useMagnet(0.18, physics). pause: два скруглённых бара (rx=2.25). play: треугольник path.
 
-### `NavIcon` — строки 487–505
+### `NavIcon` — строки 507–527
 пропсы: `{icon, label, active, onClick, size=38}`  
-кнопка сайдбара 38px, useMagnet(0.22). active → bg rgba(178,178,178,0.11).
+кнопка сайдбара 38px, useMagnet(0.22).
 
-### `TrackRow` — строки 508–538
+### `TrackRow` — строки 528–560
 пропсы: `{track, isActive, onClick}`  
-строка библиотеки: миниатюра 34px + title/artist + duration. hover-фон.  
-миниатюра: если `track.coverUrl` — `<img>`, иначе svg-треугольник play.
+строка библиотеки: миниатюра 34px + title/artist + duration. высота фиксированная ~50px.
 
-### `HomeCard` — строки 541–598
+### `VirtualTrackList` — строки 561–593
+пропсы: `{items, activeId, onClickItem}`  
+виртуализированный список: рендерит только видимые строки + 4 буфера. ROW_H=50.
+
+### `HomeCard` — строки 594–653
 пропсы: `{track, onClick, artRef, artHidden}`  
-карточка сетки. useMagnet(0.18), scale(1.03) при hover. `artRef` — ref на div-обложку (нужен для HeroClone). `artHidden` — скрывает обложку во время reverse-hero анимации. overlay-play при hover.  
-если `track.coverUrl` — `<img>` вместо svg-градиента.
+карточка сетки. useMagnet(0.18). `artRef` — ref на div-обложку (для HeroClone). `artHidden` — скрывает обложку во время reverse-hero.
 
-### `HeroClone` — строки 601–668
+### `HeroClone` — строки 654–723
 пропсы: `{hero: {track, startRect, targetRect: {left,top,size}}, exiting, reverse=false}`  
-ReactDOM.createPortal → document.body. CSS transition 340ms cubic-bezier.  
-`reverse=false` (home→player): стартует с позиции карточки, летит к AlbumArt.  
-`reverse=true` (player→home): стартует с AlbumArt, летит к карточке.  
-`exiting` → opacity:0 (fadeout перед удалением).  
-если `hero.track.coverUrl` — показывает `<img>` вместо svg-заглушки.
+ReactDOM.createPortal → document.body. CSS transition 340ms.  
+`reverse=false` (home→player): стартует с карточки, летит к AlbumArt.  
+`reverse=true` (player→home): стартует с AlbumArt, летит к карточке.
 
-### `Sidebar` — строки 671–720
+### `Sidebar` — строки 724–773
 пропсы: `{navActive, onNav, libCollapsed, onToggleLib, inPlayer}`  
-левая панель 58px. иконки: home/library/liked/search + settings внизу. все через NavIcon.  
-если `inPlayer=true` — показывает кнопку свернуть/развернуть библиотеку (scaleX анимация).
+левая панель 58px. две кнопки навигации: **Треки** (id:`home`) и **Плеер** (id:`library`) + настройки внизу.
 
-### `CrossfadeSlider` — строки 723–769
+### `CrossfadeSlider` — строки 774–822
 пропсы: `{value [0–12], onChange(v)}`  
-горизонтальный слайдер кроссфейда 0–12 сек. кастомный drag. используется только внутри SettingsView.
+горизонтальный слайдер кроссфейда 0–12 сек.
 
-### `SettingsView` — строки 772–934
+### `SettingsView` — строки 823–987
 пропсы: `{settings, onSettings, visible, onScanTracks}`  
-макет: левая навигация 214px (секции: playback/system/about) + правый контент с карточками.  
-внутренние компоненты: `Toggle`, `Row`, `Card`. локальный стейт `sec` — активная секция.  
-**секция system** содержит карточку "Локальная музыка" с кнопкой "Выбрать" — вызывает `window.electronAPI.selectMusicFolder()`, сохраняет путь в `settings.musicFolder`, вызывает `onScanTracks(folder)`.
+секции: playback / system / about.
 
-### `App` — строки 937–1307
+### `App` — строки 988–1527
 
 **state:**
 ```
 view             'home'|'player'|'settings'
-tracks           DEMO_TRACKS | локальные треки из папки
+tracks           DEMO_TRACKS | локальные треки
 trackIdx         0
 isPlaying        false
-progress         0–1  (из audio.currentTime / audio.duration)
+progress         0–1
 shuffle          false
-repeat           false
+repeat           'off'|'all'|'one'
 navActive        'home'
 search           ''
 volume           0.7
@@ -110,41 +111,73 @@ reverseHero      null | {track, startRect, targetRect}
 reverseHeroExiting false
 libCollapsed     false
 settings         {autoplay, crossfade, defaultRepeat, startWithWindows, minimizeToTray, musicFolder}
+sort             'added'|'artist'|'title'|'duration'
+editingTitle     false
+editValue        ''
 ```
 
 **refs:**
 ```
-artRefs        {}   — ref на каждую HomeCard обложку (по индексу)
-playerArtRef   null — ref на AlbumArt в PlayerView (для расчёта targetRect)
+artRefs        {}   — ref на каждую HomeCard обложку (по origIdx в tracks)
+playerArtRef   null — ref на AlbumArt в PlayerView
 audioRef       null — HTML5 Audio объект
-handleNextRef  null — актуальная ссылка на handleNext (чтобы onEnded не был stale)
+handleNextRef  null — актуальная ссылка на handleNext
+handlePrevRef  null — актуальная ссылка на handlePrev
+isPlayingRef   bool — синхронизируется inline в теле компонента
+homeScrollRef  null — ref на скролл-контейнер домашнего грида
+editCancelRef  bool — флаг отмены редактирования (Escape)
 ```
 
 **useEffect-ы (аудио):**
 - монтирование: создаёт `new Audio()`, вешает `timeupdate` → setProgress, `ended` → handleNextRef
-- `[trackIdx]`: обновляет `audio.src = 'file:///...'`, `audio.load()`, слушает `loadedmetadata` → обновляет `track.duration` в tracks
+- `[trackIdx, track?.path]`: обновляет `audio.src`, `audio.load()`, `loadedmetadata` → duration; если `isPlayingRef.current` — сразу `audio.play()`
 - `[isPlaying]`: `audio.play()` / `audio.pause()`
 - `[volume]`: `audio.volume = volume`
+- `[]` медиаклавиши: `onMediaPlayPause/Next/Prev` через `window.electronAPI`
 
 **useEffect-ы (данные):**
-- монтирование: `loadSettings()` → восстанавливает settings + сканирует musicFolder если сохранена + вызывает `loadCovers`
-- `[settings]`: `saveSettings(settings)` при каждом изменении
+- монтирование: `loadSettings()` → восстанавливает settings + сканирует musicFolder + `loadCovers`
+- `[settings]`: `saveSettings(settings)`
+- `[trackIdx]`: сбрасывает `editingTitle` в false
 
 **ключевые функции:**
-- `handleNext()` / `handlePrev()` — с учётом shuffle/repeat, сбрасывают `audio.currentTime`
-- `handleSeek(v)` — `setProgress(v)` + `audio.currentTime = v * audio.duration`
-- `loadCovers(tracksArr)` — строка 1068: параллельно вызывает `getCoverArt(t.path)` для каждого трека с `path`, обновляет `tracks` state через `setTracks` по мере готовности
-- `handleScanTracks(folder)` — строка 1078: `scanMusicFolder(folder)` → setTracks, сброс trackIdx/progress, вызов `loadCovers`
-- `selectTrack(idx)` — запускает hero-анимацию (home→player), через 300мс heroExiting, через 420мс чистит hero
-- `handleNav(id)` — переключение view, reverse-hero при player→home
+- `handleNext()` — строка 1108: repeat='one'→ loop; shuffle→ random; конец списка: repeat='all'→ start, repeat='off'→ stop
+- `handlePrev()` — строка 1129: если progress>5% → rewind, иначе предыдущий трек
+- `handleSeek(v)` — строка 1140
+- `commitEdit()` — строка 1148: сохраняет отредактированное название в tracks state
+- `loadCovers(tracksArr)` — строка 1155: 16 воркеров параллельно, flush каждые 16 готовых обложек
+- `handleScanTracks(folder)` — строка 1184
+- `selectTrack(idx)` — строка 1197: hero-анимация home→player
+- `sortedTracks` — строка 1218: useMemo, сортирует tracks по sort state
+- `trackIdxMap` — строка 1226: useMemo, Map id→origIdx для O(1) lookup
+- `filtered` — строка 1232: sortedTracks фильтрованные по search
+- `handleNav(id)` — строка 1238: смена view; при player→home запускает smoothScroll + корректирует startRect на -28px (компенсация translateX home-контейнера)
 
 **layout:**
 ```
-Sidebar(58px) | LibraryPanel(260px, скрывается при libCollapsed) | CenterPlayer(flex:1) | VolumeSlider(28px)
+Sidebar(58px) | LibraryPanel(260px) | CenterPlayer(flex:1) | VolumeSlider(28px)
 ```
-все view (`home`, `player`, `settings`) всегда в DOM, видимость через opacity + pointerEvents.
 
-### рендер (строка 1309)
+**анимации переходов:**
+- home→player: home-контейнер уходит вправо (`translateX(28px)`), library panel въезжает слева (`translateX(-28px)`) с задержкой 80мс, title/artist блок fade+slide снизу с задержкой 120мс
+- player→home: home-контейнер въезжает справа (`translateX(28px)`→0) с задержкой 80мс
+- HeroClone летит 340мс; при reverse startRect.left скорректирован на -28px
+
+**редактирование названия:**
+- shift+click на title в плеере → `editingTitle=true`, появляется frosted контейнер с `<input>`
+- Enter/blur → `commitEdit()` сохраняет; Escape → отмена (`editCancelRef=true`)
+
+**сортировка треков:**
+- кнопки над home-гридом: по дате / артисту / названию / длине
+- `sortedTracks` используется и в home-гриде и в sidebar (через `filtered`)
+- `artRefs` индексируются по origIdx (позиция в несортированном `tracks`) — hero-анимация не ломается
+
+**repeat (3 состояния):**
+- `'off'` — играет список, стоп в конце
+- `'all'` — повторяет список по кругу
+- `'one'` — зацикливает текущий трек; иконка показывает пилл "1" в правом верхнем углу
+
+### рендер (строка 1528)
 ```js
 ReactDOM.createRoot(document.getElementById('root')).render(<App/>)
 ```

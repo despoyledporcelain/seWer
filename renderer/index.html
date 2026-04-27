@@ -531,8 +531,8 @@ function TrackRow({ track, isActive, onClick }) {
     <div onClick={onClick} onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
       style={{
         display:'flex', alignItems:'center', gap:10, padding:'8px 10px', borderRadius:9,
-        background: isActive ? 'rgba(178,178,178,0.09)' : hov ? 'rgba(255,255,255,0.03)' : 'none',
-        cursor:'pointer', transition:'background 0.15s ease',
+        background: !isActive && hov ? 'rgba(255,255,255,0.03)' : 'none',
+        cursor:'pointer', transition:'background 0.15s ease', position:'relative', zIndex:1,
       }}>
       <div style={{
         width:34, height:34, borderRadius:7, flexShrink:0,
@@ -577,10 +577,21 @@ function VirtualTrackList({ items, activeId, onClickItem }) {
   const start = Math.max(0, Math.floor(scrollTop / ROW_H) - BUFFER);
   const end   = Math.min(items.length, Math.ceil((scrollTop + viewH) / ROW_H) + BUFFER);
 
+  const activeIdx = items.findIndex(t => t.id === activeId);
+
   return (
-    <div ref={ref} style={{flex:1, overflowY:'auto', padding:'2px 6px 10px'}}
+    <div ref={ref} style={{flex:1, overflowY:'auto', padding:'2px 6px 10px', position:'relative'}}
       onScroll={e => setScrollTop(e.currentTarget.scrollTop)}>
-      <div style={{paddingTop: start * ROW_H, paddingBottom: (items.length - end) * ROW_H}}>
+      {activeIdx >= 0 && (
+        <div style={{
+          position:'absolute', pointerEvents:'none',
+          top: activeIdx * ROW_H + 2, left:6, right:6, height: ROW_H - 2,
+          borderRadius:9, background:'rgba(178,178,178,0.09)',
+          transition:'top 0.42s cubic-bezier(0.22,1,0.36,1)',
+          zIndex:0,
+        }}/>
+      )}
+      <div style={{paddingTop: start * ROW_H, paddingBottom: (items.length - end) * ROW_H, position:'relative', zIndex:1}}>
         {items.slice(start, end).map(t => (
           <TrackRow key={t.id} track={t} isActive={t.id === activeId}
             onClick={() => onClickItem(t)}/>
