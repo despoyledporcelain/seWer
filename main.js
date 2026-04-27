@@ -65,16 +65,30 @@ ipcMain.handle('dialog-select-folder', async () => {
   return canceled ? null : filePaths[0]
 })
 
-ipcMain.handle('scan-music-folder', (_, folderPath) => {
+ipcMain.handle('scan-music-folder', async (_, folderPath) => {
   if (!folderPath) return []
-  return scanDir(folderPath).map((p, i) => {
-    const ext   = path.extname(p)
-    const base  = path.basename(p, ext)
-    const parts = base.split(' - ')
-    const artist = parts.length >= 2 ? parts[0].trim() : 'Неизвестно'
-    const title  = parts.length >= 2 ? parts.slice(1).join(' - ').trim() : base
-    return { id: i + 1, title, artist, path: p, color: hashColor(base), duration: 0 }
-  })
+  const files = scanDir(folderPath)
+  const results = new Array(files.length)
+  let next = 0
+  async function worker() {
+    while (next < files.length) {
+      const i = next++
+      const p    = files[i]
+      const ext  = path.extname(p)
+      const base = path.basename(p, ext)
+      const parts = base.split(' - ')
+      const artist = parts.length >= 2 ? parts[0].trim() : 'Неизвестно'
+      const title  = parts.length >= 2 ? parts.slice(1).join(' - ').trim() : base
+      let duration = 0
+      try {
+        const meta = await mm.parseFile(p, { skipCovers: true })
+        duration = Math.floor(meta.format.duration || 0)
+      } catch {}
+      results[i] = { id: i + 1, title, artist, path: p, color: hashColor(base), duration }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(16, files.length) }, worker))
+  return results
 })
 
 ipcMain.handle('get-cover-art', async (_, filePath) => {

@@ -542,6 +542,39 @@ function TrackRow({ track, isActive, onClick }) {
   );
 }
 
+/* ── VirtualTrackList ────────────────────────────────────────────────────── */
+function VirtualTrackList({ items, activeId, onClickItem }) {
+  const ROW_H  = 50;
+  const BUFFER = 4;
+  const ref    = useRef(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewH,     setViewH]     = useState(500);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    setViewH(el.clientHeight);
+    const ro = new ResizeObserver(() => setViewH(el.clientHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const start = Math.max(0, Math.floor(scrollTop / ROW_H) - BUFFER);
+  const end   = Math.min(items.length, Math.ceil((scrollTop + viewH) / ROW_H) + BUFFER);
+
+  return (
+    <div ref={ref} style={{flex:1, overflowY:'auto', padding:'2px 6px 10px'}}
+      onScroll={e => setScrollTop(e.currentTarget.scrollTop)}>
+      <div style={{paddingTop: start * ROW_H, paddingBottom: (items.length - end) * ROW_H}}>
+        {items.slice(start, end).map(t => (
+          <TrackRow key={t.id} track={t} isActive={t.id === activeId}
+            onClick={() => onClickItem(t)}/>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* ── HomeCard ────────────────────────────────────────────────────────────── */
 function HomeCard({ track, onClick, artRef, artHidden }) {
   const [hov, setHov] = useState(false);
@@ -962,10 +995,12 @@ function App() {
     startWithWindows:false, minimizeToTray:false, musicFolder:'',
   });
 
-  const artRefs      = useRef({});
-  const playerArtRef = useRef(null);
-  const audioRef     = useRef(null);
+  const artRefs       = useRef({});
+  const playerArtRef  = useRef(null);
+  const audioRef      = useRef(null);
   const handleNextRef = useRef(null);
+  const isPlayingRef  = useRef(false);
+  isPlayingRef.current = isPlaying;
   const track = tracks[trackIdx] || tracks[0];
 
   /* загружаем настройки и треки при старте */
@@ -1022,11 +1057,12 @@ function App() {
         const dur = Math.floor(audio.duration);
         if (dur) setTracks(prev => prev.map((t, i) => i === trackIdx ? { ...t, duration: dur } : t));
       }, { once: true });
+      if (isPlayingRef.current) audio.play().catch(() => setIsPlaying(false));
     } else {
       audio.src = '';
     }
     setProgress(0);
-  }, [trackIdx]);
+  }, [trackIdx, track?.path]);
 
   /* play / pause */
   useEffect(() => {
@@ -1071,13 +1107,32 @@ function App() {
   }, []);
 
   async function loadCovers(tracksArr) {
-    await Promise.all(tracksArr.map(async (t) => {
-      if (!t.path) return;
-      try {
-        const coverUrl = await window.electronAPI.getCoverArt(t.path);
-        if (coverUrl) setTracks(prev => prev.map(p => p.id === t.id ? { ...p, coverUrl } : p));
-      } catch {}
-    }));
+    const pending = tracksArr.filter(t => t.path);
+    if (!pending.length) return;
+    let next = 0;
+    const acc = {};
+    let newSinceFlush = 0;
+
+    const flush = () => {
+      if (!newSinceFlush) return;
+      newSinceFlush = 0;
+      const snap = { ...acc };
+      setTracks(prev => prev.map(t => snap[t.id] ? { ...t, coverUrl: snap[t.id] } : t));
+    };
+
+    async function worker() {
+      while (next < pending.length) {
+        const t = pending[next++];
+        try {
+          const url = await window.electronAPI.getCoverArt(t.path);
+          if (url) { acc[t.id] = url; newSinceFlush++; }
+        } catch {}
+        if (newSinceFlush >= 16) flush();
+      }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(16, pending.length) }, worker));
+    flush();
   }
 
   const handleScanTracks = useCallback(async (folder) => {
@@ -1230,12 +1285,11 @@ function App() {
                         color:'rgba(255,255,255,0.6)', fontSize:11.5, fontFamily:'Space Grotesk,sans-serif'}}/>
             </div>
           </div>
-          <div style={{flex:1, overflowY:'auto', padding:'2px 6px 10px'}}>
-            {filtered.map(t => (
-              <TrackRow key={t.id} track={t} isActive={t.id===track.id}
-                onClick={()=>{ setTrackIdx(tracks.indexOf(t)); setProgress(0); setIsPlaying(true); }}/>
-            ))}
-          </div>
+          <VirtualTrackList
+            items={filtered}
+            activeId={track.id}
+            onClickItem={t => { setTrackIdx(tracks.indexOf(t)); setProgress(0); setIsPlaying(true); }}
+          />
         </div>
 
         {/* center player */}
