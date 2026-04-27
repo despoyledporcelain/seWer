@@ -10,7 +10,7 @@
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
 <style>
-  *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
+  *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; user-select:none; }
   :root {
     --bg:          #07070a;
     --border:      rgba(255,255,255,0.055);
@@ -83,7 +83,7 @@
 
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useEffect, useRef, useCallback } = React;
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
 function smoothScroll(el, targetTop, duration) {
   const startTop = el.scrollTop;
@@ -203,17 +203,13 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying }) {
       if (!startTime.current) startTime.current = now;
       const t = (now - startTime.current) * 0.001;
 
-      if (playRef.current && Math.random() < 0.015) beatTgt.current = 0.4 + Math.random()*0.5;
-      beatTgt.current *= 0.90;
-      beatRef.current += (beatTgt.current - beatRef.current) * 0.12;
-
       const ctx = canvas.getContext('2d');
       const W = canvas.width, HH = canvas.height;
       ctx.clearRect(0, 0, W, HH);
 
       dispProg.current += (progRef.current - dispProg.current) * 0.12;
       const p = dispProg.current;
-      const beat = beatRef.current;
+      const beat = 0;
       const cy = HH*0.5;
       const freq = 0.020/dpr, freq2 = 0.038/dpr;
 
@@ -387,11 +383,11 @@ function ThinVolumeSlider({ volume, onChange }) {
     const onMove = (e) => {
       if (!dragging.current) return;
       volActual.current = getVal(e);
+      onChangeCb.current(volActual.current);
     };
     const onUp = () => {
       if (!dragging.current) return;
       dragging.current = false;
-      onChangeCb.current(volDisp.current);
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup',   onUp);
@@ -1006,6 +1002,10 @@ function App() {
     autoplay:false, crossfade:0, defaultRepeat:false,
     startWithWindows:false, minimizeToTray:false, musicFolder:'',
   });
+  const [sort,         setSort]         = useState('added');
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [editValue,    setEditValue]    = useState('');
+  const editCancelRef  = useRef(false);
 
   const artRefs       = useRef({});
   const playerArtRef  = useRef(null);
@@ -1130,6 +1130,15 @@ function App() {
     if (audio?.duration) audio.currentTime = v * audio.duration;
   }, []);
 
+  useEffect(() => { setEditingTitle(false); }, [trackIdx]);
+
+  const commitEdit = () => {
+    if (editValue.trim()) {
+      setTracks(prev => prev.map((t, i) => i === trackIdx ? { ...t, title: editValue.trim() } : t));
+    }
+    setEditingTitle(false);
+  };
+
   async function loadCovers(tracksArr) {
     const pending = tracksArr.filter(t => t.path);
     if (!pending.length) return;
@@ -1193,7 +1202,21 @@ function App() {
     setTimeout(() => { setHero(null); setHeroExiting(false); }, 420);
   }
 
-  const filtered = tracks.filter(t =>
+  const sortedTracks = useMemo(() => {
+    const arr = [...tracks];
+    if (sort === 'artist')   arr.sort((a, b) => a.artist.localeCompare(b.artist) || a.title.localeCompare(b.title));
+    else if (sort === 'title')    arr.sort((a, b) => a.title.localeCompare(b.title));
+    else if (sort === 'duration') arr.sort((a, b) => (b.duration || 0) - (a.duration || 0));
+    return arr;
+  }, [tracks, sort]);
+
+  const trackIdxMap = useMemo(() => {
+    const m = new Map();
+    tracks.forEach((t, i) => m.set(t.id, i));
+    return m;
+  }, [tracks]);
+
+  const filtered = sortedTracks.filter(t =>
     t.title.toLowerCase().includes(search.toLowerCase()) ||
     t.artist.toLowerCase().includes(search.toLowerCase())
   );
@@ -1280,15 +1303,33 @@ function App() {
             transition:'opacity 0.08s ease',
             pointerEvents: homeVisible ? 'auto' : 'none',
           }}>
-            <div style={{fontSize:12, fontWeight:500, color:'rgba(255,255,255,0.22)',
-              letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:24}}>Все треки</div>
+            <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:24}}>
+              <div style={{fontSize:12, fontWeight:500, color:'rgba(255,255,255,0.22)',
+                letterSpacing:'0.06em', textTransform:'uppercase'}}>Все треки</div>
+              <div style={{display:'flex', gap:3}}>
+                {[['added','по дате'],['artist','по артисту'],['title','по названию'],['duration','по длине']].map(([k,label]) => (
+                  <button key={k} onClick={() => setSort(k)} style={{
+                    background: sort===k ? 'rgba(255,255,255,0.07)' : 'none',
+                    border: '1px solid ' + (sort===k ? 'rgba(255,255,255,0.09)' : 'transparent'),
+                    borderRadius:6, padding:'3px 9px',
+                    fontSize:10, fontWeight:500, letterSpacing:'0.05em', textTransform:'uppercase',
+                    color: sort===k ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.2)',
+                    cursor:'pointer', fontFamily:'Space Grotesk,sans-serif',
+                    transition:'color 0.15s, background 0.15s, border-color 0.15s',
+                  }}>{label}</button>
+                ))}
+              </div>
+            </div>
             <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(128px, 1fr))', gap:18}}>
-              {tracks.map((t,i) => (
-                <HomeCard key={t.id} track={t}
-                  artRef={el => artRefs.current[i] = el}
-                  onClick={() => selectTrack(i)}
-                  artHidden={reverseHero && !reverseHeroExiting && i === trackIdx}/>
-              ))}
+              {sortedTracks.map((t) => {
+                const origIdx = trackIdxMap.get(t.id);
+                return (
+                  <HomeCard key={t.id} track={t}
+                    artRef={el => artRefs.current[origIdx] = el}
+                    onClick={() => selectTrack(origIdx)}
+                    artHidden={reverseHero && !reverseHeroExiting && t.id === track.id}/>
+                );
+              })}
             </div>
           </div>
         )}
@@ -1345,10 +1386,58 @@ function App() {
             <div id="player-album-art" ref={playerArtRef} style={{width:'100%', marginBottom:22, opacity: ((hero && !heroExiting) || reverseHero) ? 0 : 1}}>
               <AlbumArt track={track} isPlaying={isPlaying}/>
             </div>
-            <div style={{textAlign:'center', marginBottom:18, width:'100%'}}>
-              <div style={{fontSize:22, fontWeight:600, letterSpacing:'-0.022em',
-                whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{track.title}</div>
-              <div style={{fontSize:12, color:'rgba(255,255,255,0.28)', marginTop:4}}>{track.artist}</div>
+            <div style={{
+              textAlign:'center', marginBottom:18, width:'100%',
+              transform: playerVisible ? 'translateY(0)' : 'translateY(10px)',
+              transition: playerVisible
+                ? 'transform 0.48s cubic-bezier(0.22,1,0.36,1) 0.12s'
+                : 'transform 0.15s ease',
+            }}>
+              {editingTitle ? (
+                <div style={{display:'flex', justifyContent:'center', width:'100%'}}>
+                  <div style={{
+                    display:'inline-flex', alignItems:'center',
+                    background:'rgba(255,255,255,0.055)',
+                    border:'1px solid rgba(255,255,255,0.11)',
+                    borderRadius:11, padding:'7px 18px',
+                    boxShadow:'0 4px 28px rgba(0,0,0,0.45)',
+                    maxWidth:'100%',
+                  }}>
+                    <input
+                      autoFocus
+                      value={editValue}
+                      onChange={e => setEditValue(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter')  { editCancelRef.current = false; commitEdit(); }
+                        if (e.key === 'Escape') { editCancelRef.current = true;  setEditingTitle(false); }
+                      }}
+                      onBlur={() => { if (!editCancelRef.current) commitEdit(); editCancelRef.current = false; }}
+                      style={{
+                        background:'none', border:'none', outline:'none',
+                        fontSize:22, fontWeight:600, letterSpacing:'-0.022em',
+                        color:'#ededf4', textAlign:'center',
+                        fontFamily:'Space Grotesk,sans-serif',
+                        width: Math.max(80, editValue.length * 13) + 'px',
+                        maxWidth:'100%',
+                      }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div
+                  onClick={e => { if (e.shiftKey) { editCancelRef.current = false; setEditValue(track.title); setEditingTitle(true); } }}
+                  style={{
+                    fontSize:22, fontWeight:600, letterSpacing:'-0.022em',
+                    whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis',
+                    opacity: playerVisible ? 1 : 0,
+                    transition: playerVisible ? 'opacity 0.36s ease 0.12s' : 'opacity 0.1s ease',
+                  }}>{track.title}</div>
+              )}
+              <div style={{
+                fontSize:12, color:'rgba(255,255,255,0.28)', marginTop:4,
+                opacity: playerVisible ? 1 : 0,
+                transition: playerVisible ? 'opacity 0.36s ease 0.2s' : 'opacity 0.1s ease',
+              }}>{track.artist}</div>
             </div>
             <div style={{width:'100%', marginBottom:20}}>
               <WaveProgressBar progress={progress} elapsed={elapsed} total={track.duration || 0}
