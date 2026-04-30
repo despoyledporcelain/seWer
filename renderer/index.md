@@ -7,7 +7,7 @@
 | строки    | что                                                        |
 |-----------|------------------------------------------------------------|
 | 1–68      | `<head>`: cdn-скрипты, css (`:root` vars, анимации, titlebar, scrollbar) |
-| 70–82     | `#titlebar` html: кнопки minimize/maximize/close через `window.electronAPI` |
+| 69–83     | `#app-shell` + `#titlebar` html: wrapper с border-radius + кнопки minimize/maximize/close |
 | 85–1528   | `<script type="text/babel">`: весь react                   |
 
 ## css-переменные (строка 14)
@@ -117,6 +117,9 @@ sort             'added'|'artist'|'title'|'duration'
 editingTitle     false
 editValue        ''
 ```
+`settings.customTitles` — `{ [path]: title }` — кастомные названия треков, хранятся в settings.json
+```
+```
 
 **refs:**
 ```
@@ -167,7 +170,8 @@ Sidebar(58px) | LibraryPanel(260px) | CenterPlayer(flex:1) | VolumeSlider(28px)
 
 **редактирование названия:**
 - shift+click на title в плеере → `editingTitle=true`, появляется frosted контейнер с `<input>`
-- Enter/blur → `commitEdit()` сохраняет; Escape → отмена (`editCancelRef=true`)
+- Enter/blur → `commitEdit()` сохраняет в `tracks` state и в `settings.customTitles[track.path]`; Escape → отмена (`editCancelRef=true`)
+- при старте и пересканировании кастомные названия применяются из `settings.customTitles` поверх исходных
 
 **сортировка треков:**
 - кнопки над home-гридом: по дате / артисту / названию / длине
