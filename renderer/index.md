@@ -1,14 +1,14 @@
 # карта renderer/index.html
 
-весь ui — один файл ~1531 строк. jsx компилируется babel standalone в браузере.
+весь ui — один файл ~1540 строк. jsx компилируется babel standalone в браузере.
 
 ## структура файла
 
 | строки    | что                                                        |
 |-----------|------------------------------------------------------------|
-| 1–68      | `<head>`: cdn-скрипты, css (`:root` vars, анимации, titlebar, scrollbar) |
-| 69–83     | `#app-shell` + `#titlebar` html: wrapper с border-radius + кнопки minimize/maximize/close |
-| 85–1528   | `<script type="text/babel">`: весь react                   |
+| 1–66      | `<head>`: cdn-скрипты, css (`:root` vars, `#app-shell`, titlebar, scrollbar) |
+| 67–83     | `#app-shell` + `#titlebar` html: wrapper с border-radius + кнопки minimize/maximize/close |
+| 84–1540   | `<script type="text/babel">`: весь react                   |
 
 ## css-переменные (строка 14)
 
@@ -16,6 +16,8 @@
 --bg: #07070a   --border: rgba(255,255,255,0.055)
 --text: #ededf4   --accent: #b2b2b2   --titlebar-h: 28px
 ```
+
+**`#app-shell`** — `position:fixed; inset:0; border-radius:12px; overflow:hidden; display:flex; flex-direction:column` — единственный визуальный контейнер окна; режет все дочерние элементы по скруглению. `#titlebar` — flex-child внутри него (не fixed).
 
 глобально: `*, *::before, *::after { user-select: none }` — текст не выделяется.
 
@@ -112,25 +114,24 @@ heroExiting      false
 reverseHero      null | {track, startRect, targetRect}
 reverseHeroExiting false
 libCollapsed     false
-settings         {autoplay, crossfade, defaultRepeat, startWithWindows, minimizeToTray, musicFolder}
+settings         {autoplay, crossfade, defaultRepeat, startWithWindows, minimizeToTray, musicFolder, customTitles}
 sort             'added'|'artist'|'title'|'duration'
 editingTitle     false
 editValue        ''
 ```
 `settings.customTitles` — `{ [path]: title }` — кастомные названия треков, хранятся в settings.json
-```
-```
 
 **refs:**
 ```
-artRefs        {}   — ref на каждую HomeCard обложку (по origIdx в tracks)
-playerArtRef   null — ref на AlbumArt в PlayerView
-audioRef       null — HTML5 Audio объект
-handleNextRef  null — актуальная ссылка на handleNext
-handlePrevRef  null — актуальная ссылка на handlePrev
-isPlayingRef   bool — синхронизируется inline в теле компонента
-homeScrollRef  null — ref на скролл-контейнер домашнего грида
-editCancelRef  bool — флаг отмены редактирования (Escape)
+artRefs          {}   — ref на каждую HomeCard обложку (по origIdx в tracks)
+playerArtRef     null — ref на AlbumArt в PlayerView
+audioRef         null — HTML5 Audio объект
+handleNextRef    null — актуальная ссылка на handleNext
+handlePrevRef    null — актуальная ссылка на handlePrev
+isPlayingRef     bool — синхронизируется inline в теле компонента
+homeScrollRef    null — ref на скролл-контейнер домашнего грида
+editCancelRef    bool — флаг отмены редактирования (Escape)
+customTitlesRef  {}   — синхронизируется с settings.customTitles; используется в handleScanTracks
 ```
 
 **useEffect-ы (аудио):**
@@ -149,9 +150,9 @@ editCancelRef  bool — флаг отмены редактирования (Esca
 - `handleNext()` — строка 1108: repeat='one'→ loop; shuffle→ random; конец списка: repeat='all'→ start, repeat='off'→ stop
 - `handlePrev()` — строка 1129: если progress>5% → rewind, иначе предыдущий трек
 - `handleSeek(v)` — строка 1140
-- `commitEdit()` — строка 1148: сохраняет отредактированное название в tracks state
-- `loadCovers(tracksArr)` — строка 1155: 16 воркеров параллельно, flush каждые 16 готовых обложек
-- `handleScanTracks(folder)` — строка 1184
+- `commitEdit()` — строка 1163: сохраняет название в `tracks` state и в `settings.customTitles[track.path]`
+- `loadCovers(tracksArr)` — строка 1172: 16 воркеров параллельно, flush каждые 16 готовых обложек
+- `handleScanTracks(folder)` — строка 1201: сканирует папку, применяет `customTitlesRef.current` поверх исходных названий
 - `selectTrack(idx)` — строка 1197: hero-анимация home→player
 - `sortedTracks` — строка 1218: useMemo, сортирует tracks по sort state
 - `trackIdxMap` — строка 1226: useMemo, Map id→origIdx для O(1) lookup
