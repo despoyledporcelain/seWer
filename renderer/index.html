@@ -1265,26 +1265,23 @@ function App() {
         const artEl = artRefs.current[trackIdx];
         const par = playerArtRef.current?.getBoundingClientRect();
         if (artEl && par) {
-          const cardRect  = artEl.getBoundingClientRect();
-          const scrollEl  = homeScrollRef.current;
-          let endTop = cardRect.top;
-
+          const scrollEl = homeScrollRef.current;
           if (scrollEl) {
             const box     = scrollEl.getBoundingClientRect();
-            const visible = cardRect.top >= box.top && cardRect.bottom <= box.bottom;
+            const cr      = artEl.getBoundingClientRect();
+            const visible = cr.top >= box.top && cr.bottom <= box.bottom;
             if (!visible) {
-              const cardOffsetInScroll = cardRect.top - box.top + scrollEl.scrollTop;
-              const targetTop = Math.max(0, cardOffsetInScroll - box.height / 2 + cardRect.height / 2);
-              const delta     = targetTop - scrollEl.scrollTop;
-              endTop = cardRect.top - delta;
-              smoothScroll(scrollEl, targetTop, 340);
+              const cardOffsetInScroll = cr.top - box.top + scrollEl.scrollTop;
+              const targetTop = Math.max(0, cardOffsetInScroll - box.height / 2 + cr.height / 2);
+              scrollEl.scrollTop = targetTop;
             }
           }
 
+          const cardRect = artEl.getBoundingClientRect();
           setReverseHero({
             track: tracks[trackIdx],
             targetRect: { left: par.left, top: par.top, size: par.width },
-            startRect:  { left: cardRect.left - 28, top: endTop, width: cardRect.width, height: cardRect.height },
+            startRect:  { left: cardRect.left - 28, top: cardRect.top, width: cardRect.width, height: cardRect.height },
           });
           setTimeout(() => setReverseHeroExiting(true), 340);
           setTimeout(() => { setReverseHero(null); setReverseHeroExiting(false); }, 460);
