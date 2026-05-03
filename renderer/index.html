@@ -67,6 +67,7 @@
   ::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.07); border-radius:2px; }
   input::placeholder { color:rgba(255,255,255,0.2); }
   input { caret-color:var(--accent); }
+  input::selection { background:rgba(255,255,255,0.18); color:inherit; }
   input[type=number]::-webkit-inner-spin-button,
   input[type=number]::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
   input[type=number] { -moz-appearance:textfield; }
@@ -394,45 +395,24 @@ function ThinVolumeSlider({ volume, onChange }) {
 
 /* ── Album Art ───────────────────────────────────────────────────────────── */
 function AlbumArt({ track, isPlaying }) {
-  return (
-    <div style={{position:'relative', width:'100%', aspectRatio:'1', borderRadius:20, overflow:'hidden'}}>
-      <div style={{
-        position:'absolute', inset:-40, borderRadius:'50%', background:track.color,
-        filter:'blur(56px)', opacity: isPlaying ? 0.48 : 0.24,
-        transition:'opacity 1.4s ease',
-        animation: isPlaying ? 'breathe 3.5s ease-in-out infinite' : 'none',
-      }}/>
-      <div style={{
-        position:'absolute', inset:0, borderRadius:20,
-        background:`linear-gradient(148deg, ${track.color}20 0%, #040408 100%)`,
-        border:'1px solid rgba(255,255,255,0.06)',
-        display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden',
-      }}>
-        {track.coverUrl ? (
-          <img src={track.coverUrl} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}/>
-        ) : (
-          <>
-            <svg width="100%" height="100%" viewBox="0 0 300 300" preserveAspectRatio="xMidYMid slice" style={{position:'absolute',inset:0}}>
-              <defs>
-                <radialGradient id={`rg${track.id}`} cx="38%" cy="32%" r="75%">
-                  <stop offset="0%" stopColor={track.color} stopOpacity="0.65"/>
-                  <stop offset="100%" stopColor="#040408" stopOpacity="1"/>
-                </radialGradient>
-              </defs>
-              <rect width="300" height="300" fill={`url(#rg${track.id})`}/>
-              {[68,105,138].map(r => (
-                <circle key={r} cx="150" cy="150" r={r} fill="none"
-                  stroke={`rgba(255,255,255,${r===68?0.06:r===105?0.035:0.02})`} strokeWidth="1"/>
-              ))}
-            </svg>
-            <div style={{
-              position:'relative', zIndex:1, width:38, height:38, borderRadius:'50%',
-              border:`1.5px solid ${track.color}77`, boxShadow:`0 0 16px ${track.color}44`,
-              animation: isPlaying ? 'spin 9s linear infinite' : 'none',
-            }}/>
-          </>
-        )}
+  if (track.coverUrl) {
+    return (
+      <div style={{position:'relative',width:'100%',aspectRatio:'1',borderRadius:20,overflow:'hidden'}}>
+        <img src={track.coverUrl} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}/>
       </div>
+    );
+  }
+  return (
+    <div style={{
+      position:'relative',width:'100%',aspectRatio:'1',borderRadius:20,overflow:'hidden',
+      background:'#111116',border:'1px solid rgba(255,255,255,0.06)',
+      display:'flex',alignItems:'center',justifyContent:'center',
+    }}>
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
+        <path d="M9 18V5l12-2v13" stroke="rgba(255,255,255,0.13)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        <circle cx="6" cy="18" r="3" stroke="rgba(255,255,255,0.13)" strokeWidth="1.5"/>
+        <circle cx="18" cy="16" r="3" stroke="rgba(255,255,255,0.13)" strokeWidth="1.5"/>
+      </svg>
     </div>
   );
 }
@@ -516,14 +496,14 @@ function TrackRow({ track, isActive, onClick }) {
       }}>
       <div style={{
         width:34, height:34, borderRadius:7, flexShrink:0,
-        background:`linear-gradient(135deg, ${track.color}44, #101014)`,
+        background:'#111116',
         border:'1px solid rgba(255,255,255,0.05)',
         display:'flex', alignItems:'center', justifyContent:'center',
         overflow:'hidden', position:'relative',
       }}>
         {track.coverUrl
           ? <img src={track.coverUrl} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}/>
-          : <svg width="9" height="9" fill={isActive?'var(--accent)':'rgba(255,255,255,0.28)'} viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>
+          : <svg width="9" height="9" fill={isActive?'var(--accent)':'rgba(255,255,255,0.2)'} viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>
         }
       </div>
       <div style={{flex:1, overflow:'hidden'}}>
@@ -538,7 +518,7 @@ function TrackRow({ track, isActive, onClick }) {
 }
 
 /* ── VirtualTrackList ────────────────────────────────────────────────────── */
-function VirtualTrackList({ items, activeId, onClickItem }) {
+function VirtualTrackList({ items, activeId, onClickItem, scrollToActive }) {
   const ROW_H  = 50;
   const BUFFER = 4;
   const ref    = useRef(null);
@@ -553,6 +533,16 @@ function VirtualTrackList({ items, activeId, onClickItem }) {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (!scrollToActive || !ref.current) return;
+    const idx = items.findIndex(t => t.id === activeId);
+    if (idx < 0) return;
+    const el = ref.current;
+    const target = Math.max(0, idx * ROW_H - el.clientHeight / 2 + ROW_H / 2);
+    el.scrollTop = target;
+    setScrollTop(target);
+  }, [scrollToActive]);
 
   const start = Math.max(0, Math.floor(scrollTop / ROW_H) - BUFFER);
   const end   = Math.min(items.length, Math.ceil((scrollTop + viewH) / ROW_H) + BUFFER);
@@ -595,7 +585,7 @@ function HomeCard({ track, onClick, artRef, artHidden }) {
       <div ref={artRef} style={{
         opacity: artHidden ? 0 : 1,
         width:'100%', aspectRatio:'1', position:'relative',
-        background:`linear-gradient(145deg, ${track.color}50, #060609)`,
+        background:'#111116',
         border:'1px solid rgba(255,255,255,0.06)',
         display:'flex', alignItems:'center', justifyContent:'center',
         overflow:'hidden',
@@ -603,23 +593,11 @@ function HomeCard({ track, onClick, artRef, artHidden }) {
         {track.coverUrl ? (
           <img src={track.coverUrl} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}/>
         ) : (
-          <>
-            <svg width="100%" height="100%" viewBox="0 0 200 200" preserveAspectRatio="xMidYMid slice" style={{position:'absolute',inset:0}}>
-              <defs>
-                <radialGradient id={`hg${track.id}`} cx="40%" cy="35%" r="70%">
-                  <stop offset="0%" stopColor={track.color} stopOpacity="0.7"/>
-                  <stop offset="100%" stopColor="#060609" stopOpacity="1"/>
-                </radialGradient>
-              </defs>
-              <rect width="200" height="200" fill={`url(#hg${track.id})`}/>
-              <circle cx="100" cy="100" r="45" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="1"/>
-              <circle cx="100" cy="100" r="70" fill="none" stroke="rgba(255,255,255,0.035)" strokeWidth="1"/>
-            </svg>
-            <div style={{
-              position:'relative', zIndex:1, width:26, height:26, borderRadius:'50%',
-              border:`1.5px solid ${track.color}88`, boxShadow:`0 0 10px ${track.color}44`,
-            }}/>
-          </>
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+            <path d="M9 18V5l12-2v13" stroke="rgba(255,255,255,0.13)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            <circle cx="6" cy="18" r="3" stroke="rgba(255,255,255,0.13)" strokeWidth="1.5"/>
+            <circle cx="18" cy="16" r="3" stroke="rgba(255,255,255,0.13)" strokeWidth="1.5"/>
+          </svg>
         )}
         <div style={{
           position:'absolute', inset:0, background:'rgba(0,0,0,0.32)',
@@ -652,7 +630,6 @@ function HeroClone({ hero, exiting, reverse = false }) {
     requestAnimationFrame(() => requestAnimationFrame(() => setReady(true)));
   }, []);
 
-  const gid = `hc${reverse ? 'r' : 'f'}${hero.track.id}`;
   const transform = ready
     ? (reverse ? `translate(${dx}px,${dy}px) scale(${sc})` : 'translate(0,0) scale(1)')
     : (reverse ? 'translate(0,0) scale(1)' : `translate(${dx}px,${dy}px) scale(${sc})`);
@@ -670,37 +647,19 @@ function HeroClone({ hero, exiting, reverse = false }) {
       transition: ready ? 'transform 0.34s cubic-bezier(0.4,0,0.2,1), opacity 0.12s ease' : 'none',
     }}>
       <div style={{
-        position:'absolute', inset:-40, borderRadius:'50%', background:hero.track.color,
-        filter:'blur(56px)', opacity:0.24,
-      }}/>
-      <div style={{
         position:'absolute', inset:0, borderRadius:20,
-        background:`linear-gradient(148deg, ${hero.track.color}20 0%, #040408 100%)`,
+        background:'#111116',
         border:'1px solid rgba(255,255,255,0.06)',
         display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden',
       }}>
         {hero.track.coverUrl ? (
           <img src={hero.track.coverUrl} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}/>
         ) : (
-          <>
-            <svg width="100%" height="100%" viewBox="0 0 300 300" preserveAspectRatio="xMidYMid slice" style={{position:'absolute',inset:0}}>
-              <defs>
-                <radialGradient id={gid} cx="38%" cy="32%" r="75%">
-                  <stop offset="0%" stopColor={hero.track.color} stopOpacity="0.65"/>
-                  <stop offset="100%" stopColor="#040408" stopOpacity="1"/>
-                </radialGradient>
-              </defs>
-              <rect width="300" height="300" fill={`url(#${gid})`}/>
-              {[68,105,138].map(r => (
-                <circle key={r} cx="150" cy="150" r={r} fill="none"
-                  stroke={`rgba(255,255,255,${r===68?0.06:r===105?0.035:0.02})`} strokeWidth="1"/>
-              ))}
-            </svg>
-            <div style={{
-              position:'relative', zIndex:1, width:38, height:38, borderRadius:'50%',
-              border:`1.5px solid ${hero.track.color}77`, boxShadow:`0 0 16px ${hero.track.color}44`,
-            }}/>
-          </>
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
+            <path d="M9 18V5l12-2v13" stroke="rgba(255,255,255,0.13)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            <circle cx="6" cy="18" r="3" stroke="rgba(255,255,255,0.13)" strokeWidth="1.5"/>
+            <circle cx="18" cy="16" r="3" stroke="rgba(255,255,255,0.13)" strokeWidth="1.5"/>
+          </svg>
         )}
       </div>
     </div>,
@@ -719,44 +678,54 @@ function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth
     <div style={{
       width:58, height:'100%', flexShrink:0,
       display:'flex', flexDirection:'column', alignItems:'center',
-      paddingTop:18, paddingBottom:22, gap:6,
+      paddingTop:8, paddingBottom:18,
       borderRight:'1px solid var(--border)',
       background:'rgba(255,255,255,0.012)', zIndex:10,
     }}>
-      <div ref={profileRef} style={{
-        width:40, height:40, borderRadius:'50%',
-        background:'rgba(178,178,178,0.08)', border:'1px solid rgba(178,178,178,0.15)',
-        display:'flex', alignItems:'center', justifyContent:'center',
-        cursor:'pointer', color:'var(--accent)', marginBottom:12, flexShrink:0,
-        overflow:'hidden',
-      }}>
-        {scAuth?.avatarUrl
-          ? <img src={scAuth.avatarUrl} style={{width:'100%',height:'100%',objectFit:'cover'}}/>
-          : <svg width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.6" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-        }
-      </div>
-      {NAV.map(n => (
-        <NavIcon key={n.id} icon={n.icon} label={n.label} active={navActive===n.id} onClick={()=>onNav(n.id)}/>
-      ))}
-      <div style={{flex:1}}/>
-      {inPlayer && (<>
-        <div style={{
-          width:32, height:1, flexShrink:0,
-          background:'rgba(255,255,255,0.07)', margin:'2px 0',
-        }}/>
-        <div style={{
-          width:32, height:32, borderRadius:8, flexShrink:0, cursor:'pointer',
+      {/* верхняя группа: аватар + nav + collapse */}
+      <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:6}}>
+        <div ref={profileRef} style={{
+          width:40, height:40, borderRadius:'50%',
+          background:'rgba(178,178,178,0.08)', border:'1px solid rgba(178,178,178,0.15)',
           display:'flex', alignItems:'center', justifyContent:'center',
-          background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.06)',
-          color:'rgba(255,255,255,0.4)',
-          transition:'transform 0.44s cubic-bezier(0.4,0,0.2,1)',
-          transform: libCollapsed ? 'scaleX(-1)' : 'scaleX(1)',
-        }} onClick={onToggleLib}>
-          <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-            <polyline points="15 18 9 12 15 6"/>
-          </svg>
+          cursor:'pointer', color:'var(--accent)', marginBottom:4, flexShrink:0,
+          overflow:'hidden',
+        }}>
+          {scAuth?.avatarUrl
+            ? <img src={scAuth.avatarUrl} style={{width:'100%',height:'100%',objectFit:'cover'}}/>
+            : <svg width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.6" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+          }
         </div>
-      </>)}
+        {NAV.map(n => (
+          <NavIcon key={n.id} icon={n.icon} label={n.label} active={navActive===n.id} onClick={()=>onNav(n.id)}/>
+        ))}
+        <div style={{
+          display:'flex', flexDirection:'column', alignItems:'center',
+          overflow:'hidden',
+          maxHeight: inPlayer ? 48 : 0,
+          opacity: inPlayer ? 1 : 0,
+          transform: inPlayer ? 'translateY(0)' : 'translateY(-4px)',
+          pointerEvents: inPlayer ? 'auto' : 'none',
+          transition:'max-height 0.22s cubic-bezier(0.4,0,0.2,1), opacity 0.18s ease, transform 0.2s ease',
+        }}>
+          <div style={{width:28, height:1, background:'rgba(255,255,255,0.07)', margin:'6px 0 4px'}}/>
+          <div style={{
+            width:32, height:32, borderRadius:8, flexShrink:0, cursor:'pointer',
+            display:'flex', alignItems:'center', justifyContent:'center',
+            background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.06)',
+            color:'rgba(255,255,255,0.4)',
+          }} onClick={onToggleLib}>
+            <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"
+              style={{transition:'transform 0.26s cubic-bezier(0.4,0,0.2,1)', transform: libCollapsed ? 'rotate(180deg)' : 'rotate(0deg)'}}>
+              <polyline points="15 18 9 12 15 6"/>
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <div style={{flex:1}}/>
+
+      {/* настройки одни внизу */}
       <NavIcon label="Настройки" active={navActive==='settings'} onClick={()=>onNav('settings')}
         icon={<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>}/>
     </div>
@@ -794,14 +763,14 @@ function CrossfadeSlider({ value, onChange }) {
         <div style={{width:'100%', height:3, borderRadius:2, background:'rgba(255,255,255,0.1)', position:'relative'}}>
           <div style={{
             position:'absolute', left:0, top:0, height:'100%', borderRadius:2,
-            width:`${pct}%`, background:'#9b7dff',
+            width:`${pct}%`, background:'rgba(255,255,255,0.45)',
           }}/>
           <div style={{
             position:'absolute', top:'50%', left:`${pct}%`,
             transform:'translate(-50%,-50%)', pointerEvents:'none',
             width:13, height:13, borderRadius:'50%',
             background:'#fff', boxShadow:'0 1px 5px rgba(0,0,0,0.5)',
-            border:'2px solid rgba(155,125,255,0.6)',
+            border:'2px solid rgba(255,255,255,0.35)',
           }}/>
         </div>
       </div>
@@ -816,13 +785,24 @@ function CrossfadeSlider({ value, onChange }) {
 function SettingsView({ settings, onSettings, visible, onScanTracks }) {
   const set = (k, v) => onSettings({ ...settings, [k]: v });
   const [sec, setSec] = useState('playback');
+  const secRefs  = useRef({});
+  const [pill, setPill] = useState({ top:0, height:0 });
+
+  useLayoutEffect(() => {
+    const el = secRefs.current[sec];
+    if (!el) return;
+    const parent = el.parentElement;
+    const pr = parent.getBoundingClientRect();
+    const er = el.getBoundingClientRect();
+    setPill({ top: er.top - pr.top, height: er.height });
+  }, [sec]);
 
   const Toggle = ({ k }) => {
     const on = !!settings[k];
     return (
       <div style={{
         width:38, height:22, borderRadius:11, cursor:'pointer', flexShrink:0,
-        background: on ? '#9b7dff' : 'rgba(255,255,255,0.1)',
+        background: on ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.1)',
         position:'relative', transition:'background 0.22s ease',
       }} onClick={()=>set(k, !on)}>
         <div style={{
@@ -970,14 +950,21 @@ function SettingsView({ settings, onSettings, visible, onScanTracks }) {
           fontSize:19, fontWeight:600, letterSpacing:'-0.025em',
           color:'rgba(255,255,255,0.85)', marginBottom:26, paddingLeft:10,
         }}>Настройки</div>
-        <div style={{display:'flex', flexDirection:'column', gap:2}}>
+        <div style={{display:'flex', flexDirection:'column', gap:2, position:'relative'}}>
+          <div style={{
+            position:'absolute', left:0, right:0, borderRadius:9, pointerEvents:'none',
+            background:'rgba(255,255,255,0.07)',
+            top: pill.top, height: pill.height,
+            transition:'top 0.24s cubic-bezier(0.4,0,0.2,1), height 0.24s cubic-bezier(0.4,0,0.2,1)',
+          }}/>
           {SECS.map(s => (
-            <div key={s.id} style={{
+            <div key={s.id} ref={el => secRefs.current[s.id] = el} style={{
               display:'flex', alignItems:'center', gap:10,
               padding:'9px 12px', borderRadius:9, cursor:'pointer',
-              background: sec===s.id ? 'rgba(155,125,255,0.14)' : 'transparent',
-              color: sec===s.id ? '#9b7dff' : 'rgba(255,255,255,0.4)',
-              transition:'background 0.15s, color 0.15s',
+              background:'transparent',
+              color: sec===s.id ? 'rgba(255,255,255,0.82)' : 'rgba(255,255,255,0.38)',
+              transition:'color 0.18s',
+              position:'relative', zIndex:1,
             }} onClick={()=>setSec(s.id)}>
               {s.icon}
               <span style={{fontSize:13, fontWeight: sec===s.id ? 500 : 400}}>{s.label}</span>
@@ -1143,6 +1130,8 @@ function App() {
   const [scError,       setScError]       = useState(null);
   const [scPlayingTrack, setScPlayingTrack] = useState(null);
   const [scPlayingIdx,   setScPlayingIdx]   = useState(-1);
+  const [libScrollTrigger, setLibScrollTrigger] = useState(0);
+  const [searchFocused,    setSearchFocused]    = useState(false);
   const editCancelRef  = useRef(false);
 
   const customTitlesRef = useRef({});
@@ -1162,6 +1151,9 @@ function App() {
   const sidebarProfileRef = useRef(null);
   const scTracksRef       = useRef([]);
   const scAuthRef         = useRef(null);
+  const prevSearchRef     = useRef('');
+  const homeSearchRef     = useRef(null);
+  const libSearchRef      = useRef(null);
   scTracksRef.current = scTracks;
   scAuthRef.current   = settings.soundcloudAuth;
   isPlayingRef.current = isPlaying;
@@ -1253,6 +1245,20 @@ function App() {
     api.onMediaPrev(() => handlePrevRef.current?.());
   }, []);
 
+  /* ctrl+f → фокус на поиск */
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.ctrlKey && (e.key === 'f' || e.key === 'а')) {
+        e.preventDefault();
+        const ref = view === 'player' ? libSearchRef : homeSearchRef;
+        ref.current?.focus();
+        ref.current?.select();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [view]);
+
   function handleNext() {
     if (repeat === 'one') {
       const audio = audioRef.current;
@@ -1305,6 +1311,13 @@ function App() {
   }, []);
 
   useEffect(() => { setEditingTitle(false); }, [trackIdx]);
+
+  useEffect(() => {
+    if (prevSearchRef.current && !search && scPlayingTrack) {
+      setLibScrollTrigger(v => v + 1);
+    }
+    prevSearchRef.current = search;
+  }, [search]);
 
   const commitEdit = () => {
     const trimmed = editValue.trim();
@@ -1621,30 +1634,34 @@ function App() {
               <div style={{fontSize:12, fontWeight:500, color:'rgba(255,255,255,0.22)',
                 letterSpacing:'0.06em', textTransform:'uppercase', flexShrink:0}}>Все треки</div>
               <div style={{
-                display:'flex', alignItems:'center', gap:7,
-                background:'rgba(255,255,255,0.045)', border:'1px solid rgba(255,255,255,0.07)',
-                borderRadius:8, padding:'4px 10px', flex:1, maxWidth:220,
-                transition:'border-color 0.15s',
+                display:'flex', alignItems:'center', gap:9,
+                background: searchFocused ? 'rgba(255,255,255,0.065)' : 'rgba(255,255,255,0.04)',
+                border: `1px solid ${searchFocused ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.08)'}`,
+                borderRadius:11, padding:'7px 13px', flex:1, maxWidth:240,
+                transition:'border-color 0.18s, background 0.18s',
               }}>
-                <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.2"
-                  viewBox="0 0 24 24" style={{color:'rgba(255,255,255,0.2)', flexShrink:0}}>
+                <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2"
+                  viewBox="0 0 24 24" style={{color: searchFocused ? 'rgba(255,255,255,0.38)' : 'rgba(255,255,255,0.22)', flexShrink:0, transition:'color 0.18s'}}>
                   <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
                 </svg>
                 <input
+                  ref={homeSearchRef}
                   type="text"
                   placeholder="поиск..."
                   value={search}
                   onChange={e => setSearch(e.target.value)}
+                  onFocus={() => setSearchFocused(true)}
+                  onBlur={() => setSearchFocused(false)}
                   style={{
                     background:'transparent', border:'none', outline:'none',
-                    color:'rgba(255,255,255,0.65)', fontSize:12,
-                    width:'100%', userSelect:'text',
+                    color:'rgba(255,255,255,0.78)', fontSize:12.5,
+                    width:'100%', userSelect:'text', fontFamily:'inherit',
                   }}
                 />
                 {search && (
                   <div onClick={() => setSearch('')} style={{
-                    color:'rgba(255,255,255,0.2)', cursor:'pointer', flexShrink:0,
-                    fontSize:14, lineHeight:1, transition:'color 0.15s',
+                    color:'rgba(255,255,255,0.28)', cursor:'pointer', flexShrink:0,
+                    fontSize:15, lineHeight:1, transition:'color 0.15s',
                   }}>×</div>
                 )}
               </div>
@@ -1699,15 +1716,31 @@ function App() {
         }}>
           <div style={{padding:'12px 10px 8px', flexShrink:0}}>
             <div style={{
-              display:'flex', alignItems:'center', gap:7,
-              background:'rgba(255,255,255,0.03)',
-              border:'1px solid rgba(255,255,255,0.04)',
-              borderRadius:8, padding:'6px 10px',
+              display:'flex', alignItems:'center', gap:9,
+              background: searchFocused ? 'rgba(255,255,255,0.065)' : 'rgba(255,255,255,0.04)',
+              border: `1px solid ${searchFocused ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.07)'}`,
+              borderRadius:11, padding:'9px 13px',
+              transition:'border-color 0.18s, background 0.18s',
             }}>
-              <svg width="11" height="11" fill="none" stroke="rgba(255,255,255,0.22)" strokeWidth="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg>
-              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Поиск..."
+              <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2"
+                viewBox="0 0 24 24" style={{color: searchFocused ? 'rgba(255,255,255,0.38)' : 'rgba(255,255,255,0.22)', flexShrink:0, transition:'color 0.18s'}}>
+                <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+              </svg>
+              <input
+                ref={libSearchRef}
+                value={search}
+                onChange={e=>setSearch(e.target.value)}
+                onFocus={() => setSearchFocused(true)}
+                onBlur={() => setSearchFocused(false)}
+                placeholder="поиск..."
                 style={{flex:1, background:'none', border:'none', outline:'none',
-                        color:'rgba(255,255,255,0.6)', fontSize:11.5, fontFamily:'Space Grotesk,sans-serif'}}/>
+                        color:'rgba(255,255,255,0.78)', fontSize:12.5, fontFamily:'inherit'}}/>
+              {search && (
+                <div onClick={() => setSearch('')} style={{
+                  color:'rgba(255,255,255,0.28)', cursor:'pointer', flexShrink:0,
+                  fontSize:15, lineHeight:1, transition:'color 0.15s',
+                }}>×</div>
+              )}
             </div>
           </div>
           <VirtualTrackList
@@ -1718,6 +1751,7 @@ function App() {
             onClickItem={scPlayingTrack
               ? t => handleScTrackClick(t, scTracksRef.current.indexOf(t))
               : t => { setScPlayingTrack(null); setTrackIdx(tracks.indexOf(t)); setProgress(0); setIsPlaying(true); }}
+            scrollToActive={scPlayingTrack ? libScrollTrigger : 0}
           />
         </div>
 
