@@ -93,7 +93,7 @@
 <div id="root"></div>
 </div>
 <script type="text/babel">
-const { useState, useEffect, useRef, useCallback, useMemo } = React;
+const { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } = React;
 
 function smoothScroll(el, targetTop, duration) {
   const startTop = el.scrollTop;
