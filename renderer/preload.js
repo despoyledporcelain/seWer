@@ -5,7 +5,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   maximize:          () => ipcRenderer.send('win-maximize'),
   close:             () => ipcRenderer.send('win-close'),
   selectMusicFolder: ()       => ipcRenderer.invoke('dialog-select-folder'),
-  scanMusicFolder:   (folder) => ipcRenderer.invoke('scan-music-folder', folder),
+  scanMusicFolder:   (folder, minDuration) => ipcRenderer.invoke('scan-music-folder', folder, minDuration),
   getCoverArt:       (filePath) => ipcRenderer.invoke('get-cover-art', filePath),
   loadSettings:      ()       => ipcRenderer.invoke('load-settings'),
   saveSettings:      (data)   => ipcRenderer.invoke('save-settings', data),

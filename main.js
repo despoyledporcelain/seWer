@@ -66,7 +66,7 @@ ipcMain.handle('dialog-select-folder', async () => {
   return canceled ? null : filePaths[0]
 })
 
-ipcMain.handle('scan-music-folder', async (_, folderPath) => {
+ipcMain.handle('scan-music-folder', async (_, folderPath, minDuration = 30) => {
   if (!folderPath) return []
   const files = scanDir(folderPath)
   const results = new Array(files.length)
@@ -87,11 +87,12 @@ ipcMain.handle('scan-music-folder', async (_, folderPath) => {
         if (meta.common.title)  title  = meta.common.title
         if (meta.common.artist) artist = meta.common.artist
       } catch {}
+      if (duration < minDuration) { results[i] = null; return }
       results[i] = { id: i + 1, title, artist, path: p, color: hashColor(base), duration }
     }
   }
   await Promise.all(Array.from({ length: Math.min(16, files.length) }, worker))
-  return results
+  return results.filter(Boolean)
 })
 
 ipcMain.handle('get-cover-art', async (_, filePath) => {
