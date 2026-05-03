@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, globalShortcut } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, globalShortcut, nativeImage } = require('electron')
 const path = require('path')
 const fs   = require('fs')
 const mm   = require('music-metadata')
@@ -36,6 +36,11 @@ function saveSettings(data) {
 }
 
 function createWindow() {
+  const svgPath = path.join(__dirname, 'assets', 'icon.svg')
+  const icon = nativeImage.createFromDataURL(
+    'data:image/svg+xml;base64,' + Buffer.from(fs.readFileSync(svgPath)).toString('base64')
+  )
+
   win = new BrowserWindow({
     width: 900,
     height: 620,
@@ -43,7 +48,7 @@ function createWindow() {
     minHeight: 500,
     frame: false,
     transparent: true,
-    icon: path.join(__dirname, 'assets', 'icon.png'),
+    icon,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
