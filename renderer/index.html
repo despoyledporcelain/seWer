@@ -124,52 +124,6 @@ function fmt(s) {
   return `${m}:${sec.toString().padStart(2,'0')}`;
 }
 
-/* ── Magnet spring hook ──────────────────────────────────────────────────── */
-function useMagnet(strength = 0.25, { spring = 0.10, damping = 0.74, clamp = 12 } = {}) {
-  const ref       = useRef(null);
-  const [xy, setXY] = useState({x:0, y:0});
-  const raf       = useRef(null);
-  const pos       = useRef({x:0, y:0});
-  const vel       = useRef({x:0, y:0});
-  const target    = useRef({x:0, y:0});
-  const isHovered = useRef(false);
-  const SPRING = spring, DAMPING = damping, CLAMP = clamp;
-
-  const onMove = useCallback((e) => {
-    const el = ref.current; if (!el) return;
-    isHovered.current = true;
-    const r = el.getBoundingClientRect();
-    const dx = (e.clientX - (r.left + r.width/2))  * strength;
-    const dy = (e.clientY - (r.top  + r.height/2)) * strength;
-    target.current = { x: Math.max(-CLAMP, Math.min(CLAMP, dx)), y: Math.max(-CLAMP, Math.min(CLAMP, dy)) };
-  }, [strength]);
-
-  const onLeave = useCallback(() => {
-    isHovered.current = false;
-    target.current = {x:0, y:0};
-  }, []);
-
-  useEffect(() => {
-    const loop = () => {
-      const { x:cx, y:cy } = pos.current;
-      const { x:tx, y:ty } = target.current;
-      const { x:vx, y:vy } = vel.current;
-      const nvx = (vx + (tx-cx)*SPRING)*DAMPING;
-      const nvy = (vy + (ty-cy)*SPRING)*DAMPING;
-      const nx = cx+nvx, ny = cy+nvy;
-      pos.current = {x:nx, y:ny};
-      vel.current = {x:nvx, y:nvy};
-      const moving = Math.abs(nx)>0.003||Math.abs(ny)>0.003||Math.abs(nvx)>0.003||Math.abs(nvy)>0.003;
-      if (moving || isHovered.current) setXY({x:nx, y:ny});
-      else setXY(p => (p.x===0&&p.y===0)?p:{x:0,y:0});
-      raf.current = requestAnimationFrame(loop);
-    };
-    raf.current = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf.current);
-  }, []);
-
-  return { ref, xy, onMove, onLeave };
-}
 
 /* ── Wave Progress Bar ───────────────────────────────────────────────────── */
 function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying }) {
@@ -457,21 +411,18 @@ function AlbumArt({ track, isPlaying }) {
 }
 
 /* ── MagBtn ──────────────────────────────────────────────────────────────── */
-function MagBtn({ onClick, active, children, size=52, physics }) {
-  const { ref, xy, onMove, onLeave } = useMagnet(0.28, physics || {});
+function MagBtn({ onClick, active, children, size=52 }) {
   const [pressed, setPressed] = useState(false);
   return (
-    <button ref={ref} onClick={onClick}
-      onMouseMove={onMove} onMouseLeave={onLeave}
+    <button onClick={onClick}
       onMouseDown={() => setPressed(true)} onMouseUp={() => setPressed(false)}
       style={{
         width:size, height:size, borderRadius:'50%', border:'none', background:'none',
         color: active ? 'var(--accent)' : 'rgba(255,255,255,0.38)',
         display:'flex', alignItems:'center', justifyContent:'center',
         cursor:'pointer', flexShrink:0,
-        transform:`translate(${xy.x}px,${xy.y}px) scale(${pressed?0.83:1})`,
+        transform:`scale(${pressed?0.83:1})`,
         transition: pressed ? 'transform 0.08s ease' : 'color 0.2s ease',
-        willChange:'transform',
       }}>
       {children}
     </button>
@@ -479,12 +430,10 @@ function MagBtn({ onClick, active, children, size=52, physics }) {
 }
 
 /* ── PlayBtn ─────────────────────────────────────────────────────────────── */
-function PlayBtn({ isPlaying, onToggle, physics }) {
-  const { ref, xy, onMove, onLeave } = useMagnet(0.18, physics || {});
+function PlayBtn({ isPlaying, onToggle }) {
   const [pressed, setPressed] = useState(false);
   return (
-    <button ref={ref} onClick={onToggle}
-      onMouseMove={onMove} onMouseLeave={onLeave}
+    <button onClick={onToggle}
       onMouseDown={() => setPressed(true)} onMouseUp={() => setPressed(false)}
       style={{
         width:66, height:66, borderRadius:'50%', border:'none',
@@ -492,12 +441,11 @@ function PlayBtn({ isPlaying, onToggle, physics }) {
         color:'var(--text)',
         display:'flex', alignItems:'center', justifyContent:'center',
         cursor:'pointer', flexShrink:0,
-        transform:`translate(${xy.x}px,${xy.y}px) scale(${pressed?0.89:1})`,
+        transform:`scale(${pressed?0.89:1})`,
         transition: pressed ? 'transform 0.09s ease' : 'background 0.3s ease, box-shadow 0.3s ease',
         boxShadow: isPlaying
           ? '0 0 22px rgba(178,178,178,0.1), inset 0 0 0 1px rgba(178,178,178,0.18)'
           : 'inset 0 0 0 1px rgba(255,255,255,0.07)',
-        willChange:'transform',
       }}>
       {isPlaying
         ? <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24">
@@ -514,19 +462,15 @@ function PlayBtn({ isPlaying, onToggle, physics }) {
 
 /* ── NavIcon ─────────────────────────────────────────────────────────────── */
 function NavIcon({ icon, label, active, onClick, size=38 }) {
-  const { ref, xy, onMove, onLeave } = useMagnet(0.22);
   return (
-    <button ref={ref} onClick={onClick} title={label}
-      onMouseMove={onMove} onMouseLeave={onLeave}
+    <button onClick={onClick} title={label}
       style={{
         width:size, height:size, borderRadius:11, border:'none',
         background: active ? 'rgba(178,178,178,0.11)' : 'none',
         color: active ? 'var(--accent)' : 'rgba(255,255,255,0.24)',
         display:'flex', alignItems:'center', justifyContent:'center',
         cursor:'pointer', flexShrink:0,
-        transform:`translate(${xy.x}px,${xy.y}px)`,
         transition:'color 0.18s ease, background 0.18s ease',
-        willChange:'transform',
       }}>
       {icon}
     </button>
@@ -613,16 +557,13 @@ function VirtualTrackList({ items, activeId, onClickItem }) {
 /* ── HomeCard ────────────────────────────────────────────────────────────── */
 function HomeCard({ track, onClick, artRef, artHidden }) {
   const [hov, setHov] = useState(false);
-  const { ref, xy, onMove, onLeave } = useMagnet(0.18);
   return (
-    <div ref={ref} onClick={onClick}
-      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>{setHov(false);onLeave();}}
-      onMouseMove={onMove}
+    <div onClick={onClick}
+      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
       style={{
         borderRadius:16, overflow:'hidden', cursor:'pointer',
-        transform:`translate(${xy.x}px,${xy.y}px) scale(${hov?1.03:1})`,
+        transform:`scale(${hov?1.03:1})`,
         transition:'transform 0.35s cubic-bezier(0.34,1.56,0.64,1)',
-        willChange:'transform',
       }}>
       <div ref={artRef} style={{
         opacity: artHidden ? 0 : 1,
@@ -1375,10 +1316,38 @@ function App() {
               : 'opacity 0.14s ease, transform 0.18s ease',
             pointerEvents: homeVisible ? 'auto' : 'none',
           }}>
-            <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:24}}>
+            <div style={{display:'flex', alignItems:'center', gap:16, marginBottom:24}}>
               <div style={{fontSize:12, fontWeight:500, color:'rgba(255,255,255,0.22)',
-                letterSpacing:'0.06em', textTransform:'uppercase'}}>Все треки</div>
-              <div style={{display:'flex', gap:3}}>
+                letterSpacing:'0.06em', textTransform:'uppercase', flexShrink:0}}>Все треки</div>
+              <div style={{
+                display:'flex', alignItems:'center', gap:7,
+                background:'rgba(255,255,255,0.045)', border:'1px solid rgba(255,255,255,0.07)',
+                borderRadius:8, padding:'4px 10px', flex:1, maxWidth:220,
+                transition:'border-color 0.15s',
+              }}>
+                <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.2"
+                  viewBox="0 0 24 24" style={{color:'rgba(255,255,255,0.2)', flexShrink:0}}>
+                  <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+                </svg>
+                <input
+                  type="text"
+                  placeholder="поиск..."
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  style={{
+                    background:'transparent', border:'none', outline:'none',
+                    color:'rgba(255,255,255,0.65)', fontSize:12,
+                    width:'100%', userSelect:'text',
+                  }}
+                />
+                {search && (
+                  <div onClick={() => setSearch('')} style={{
+                    color:'rgba(255,255,255,0.2)', cursor:'pointer', flexShrink:0,
+                    fontSize:14, lineHeight:1, transition:'color 0.15s',
+                  }}>×</div>
+                )}
+              </div>
+              <div style={{display:'flex', gap:3, marginLeft:'auto'}}>
                 {[['added','по дате'],['artist','по артисту'],['title','по названию'],['duration','по длине']].map(([k,label]) => (
                   <button key={k} onClick={() => setSort(k)} style={{
                     background: sort===k ? 'rgba(255,255,255,0.07)' : 'none',
@@ -1386,14 +1355,14 @@ function App() {
                     borderRadius:6, padding:'3px 9px',
                     fontSize:10, fontWeight:500, letterSpacing:'0.05em', textTransform:'uppercase',
                     color: sort===k ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.2)',
-                    cursor:'pointer', fontFamily:'Space Grotesk,sans-serif',
+                    cursor:'pointer', fontFamily:'inherit',
                     transition:'color 0.15s, background 0.15s, border-color 0.15s',
                   }}>{label}</button>
                 ))}
               </div>
             </div>
             <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(128px, 1fr))', gap:18}}>
-              {sortedTracks.map((t) => {
+              {filtered.map((t) => {
                 const origIdx = trackIdxMap.get(t.id);
                 return (
                   <HomeCard key={t.id} track={t}
