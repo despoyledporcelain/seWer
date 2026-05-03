@@ -124,6 +124,33 @@ function fmt(s) {
   return `${m}:${sec.toString().padStart(2,'0')}`;
 }
 
+function SoundCloudIcon({ size = 16, fill = 'currentColor' }) {
+  return (
+    <svg width={size} height={size} viewBox="-271 345.8 256 111.2" fill={fill}>
+      <path d="M-238.4,398.1c-0.8,0-1.4,0.6-1.5,1.5l-2.3,28l2.3,27.1c0.1,0.8,0.7,1.5,1.5,1.5c0.8,0,1.4-0.6,1.5-1.5l2.6-27.1l-2.6-28C-237,398.7-237.7,398.1-238.4,398.1z"/>
+      <path d="M-228.2,399.9c-0.9,0-1.7,0.7-1.7,1.7l-2.1,26l2.1,27.3c0.1,1,0.8,1.7,1.7,1.7c0.9,0,1.6-0.7,1.7-1.7l2.4-27.3l-2.4-26C-226.6,400.6-227.3,399.9-228.2,399.9z"/>
+      <path d="M-258.6,403.5c-0.5,0-1,0.4-1.1,1l-2.5,23l2.5,22.5c0.1,0.6,0.5,1,1.1,1c0.5,0,1-0.4,1.1-1l2.9-22.5l-2.9-23C-257.7,404-258.1,403.5-258.6,403.5z"/>
+      <path d="M-268.1,412.3c-0.5,0-1,0.4-1,1l-1.9,14.3l1.9,14c0.1,0.6,0.5,1,1,1s0.9-0.4,1-1l2.2-14l-2.2-14.2C-267.2,412.8-267.6,412.3-268.1,412.3z"/>
+      <path d="M-207.5,373.5c-1.2,0-2.1,0.9-2.2,2.1l-1.9,52l1.9,27.2c0.1,1.2,1,2.1,2.2,2.1s2.1-0.9,2.2-2.1l2.1-27.2l-2.1-52C-205.4,374.4-206.4,373.5-207.5,373.5z"/>
+      <path d="M-248.6,399c-0.7,0-1.2,0.5-1.3,1.3l-2.4,27.3l2.4,26.3c0.1,0.7,0.6,1.3,1.3,1.3c0.7,0,1.2-0.5,1.3-1.2l2.7-26.3l-2.7-27.3C-247.4,399.6-247.9,399-248.6,399z"/>
+      <path d="M-217.9,383.4c-1,0-1.9,0.8-1.9,1.9l-2,42.3l2,27.3c0.1,1.1,0.9,1.9,1.9,1.9s1.9-0.8,1.9-1.9l2.3-27.3l-2.3-42.3C-216,384.2-216.9,383.4-217.9,383.4z"/>
+      <path d="M-154.4,359.3c-1.8,0-3.2,1.4-3.2,3.2l-1.2,65l1.2,26.1c0,1.8,1.5,3.2,3.2,3.2c1.8,0,3.2-1.5,3.2-3.2l1.4-26.1l-1.4-65C-151.1,360.8-152.6,359.3-154.4,359.3z"/>
+      <path d="M-197.1,368.9c-1.3,0-2.3,1-2.4,2.4l-1.8,56.3l1.8,26.9c0,1.3,1.1,2.3,2.4,2.3s2.3-1,2.4-2.4l2-26.9l-2-56.3C-194.7,370-195.8,368.9-197.1,368.9z"/>
+      <path d="M-46.5,394c-4.3,0-8.4,0.9-12.2,2.4C-61.2,368-85,345.8-114,345.8c-7.1,0-14,1.4-20.1,3.8c-2.4,0.9-3,1.9-3,3.7v99.9c0,1.9,1.5,3.5,3.4,3.7c0.1,0,86.7,0,87.3,0c17.4,0,31.5-14.1,31.5-31.5C-15,408.1-29.1,394-46.5,394z"/>
+      <path d="M-143.6,353.2c-1.9,0-3.4,1.6-3.5,3.5l-1.4,70.9l1.4,25.7c0,1.9,1.6,3.4,3.5,3.4c1.9,0,3.4-1.6,3.5-3.5l1.5-25.8l-1.5-70.9C-140.2,354.8-141.7,353.2-143.6,353.2z"/>
+      <path d="M-186.5,366.8c-1.4,0-2.5,1.1-2.6,2.6l-1.6,58.2l1.6,26.7c0,1.4,1.2,2.6,2.6,2.6s2.5-1.1,2.6-2.6l1.8-26.7l-1.8-58.2C-184,367.9-185.1,366.8-186.5,366.8z"/>
+      <path d="M-175.9,368.1c-1.5,0-2.8,1.2-2.8,2.8l-1.5,56.7l1.5,26.5c0,1.6,1.3,2.8,2.8,2.8s2.8-1.2,2.8-2.8l1.7-26.5l-1.7-56.7C-173.1,369.3-174.3,368.1-175.9,368.1z"/>
+      <path d="M-165.2,369.9c-1.7,0-3,1.3-3,3l-1.4,54.7l1.4,26.3c0,1.7,1.4,3,3,3c1.7,0,3-1.3,3-3l1.5-26.3l-1.5-54.7C-162.2,371.3-163.5,369.9-165.2,369.9z"/>
+    </svg>
+  );
+}
+
+function scHashColor(id) {
+  let h = 0; const s = String(id);
+  for (const c of s) h = ((h << 5) - h + c.charCodeAt(0)) | 0;
+  return `hsl(${Math.abs(h) % 360},48%,38%)`;
+}
+
 
 /* ── Wave Progress Bar ───────────────────────────────────────────────────── */
 function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying }) {
@@ -682,10 +709,11 @@ function HeroClone({ hero, exiting, reverse = false }) {
 }
 
 /* ── Sidebar ─────────────────────────────────────────────────────────────── */
-function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer }) {
+function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth, profileRef }) {
   const NAV = [
-    { id:"home",    label:"Треки",  icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg> },
-    { id:"library", label:"Плеер",  icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" viewBox="0 0 24 24"><line x1="4" y1="20" x2="4" y2="13"/><line x1="9" y1="20" x2="9" y2="4"/><line x1="14" y1="20" x2="14" y2="8"/><line x1="19" y1="20" x2="19" y2="14"/></svg> },
+    { id:"home",       label:"Треки",      icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg> },
+    { id:"library",    label:"Плеер",      icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" viewBox="0 0 24 24"><line x1="4" y1="20" x2="4" y2="13"/><line x1="9" y1="20" x2="9" y2="4"/><line x1="14" y1="20" x2="14" y2="8"/><line x1="19" y1="20" x2="19" y2="14"/></svg> },
+    { id:"soundcloud", label:"SoundCloud", icon:<SoundCloudIcon size={16}/> },
   ];
   return (
     <div style={{
@@ -695,13 +723,17 @@ function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer }) {
       borderRight:'1px solid var(--border)',
       background:'rgba(255,255,255,0.012)', zIndex:10,
     }}>
-      <div style={{
+      <div ref={profileRef} style={{
         width:40, height:40, borderRadius:'50%',
         background:'rgba(178,178,178,0.08)', border:'1px solid rgba(178,178,178,0.15)',
         display:'flex', alignItems:'center', justifyContent:'center',
         cursor:'pointer', color:'var(--accent)', marginBottom:12, flexShrink:0,
+        overflow:'hidden',
       }}>
-        <svg width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.6" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+        {scAuth?.avatarUrl
+          ? <img src={scAuth.avatarUrl} style={{width:'100%',height:'100%',objectFit:'cover'}}/>
+          : <svg width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.6" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+        }
       </div>
       {NAV.map(n => (
         <NavIcon key={n.id} icon={n.icon} label={n.label} active={navActive===n.id} onClick={()=>onNav(n.id)}/>
@@ -968,6 +1000,115 @@ function SettingsView({ settings, onSettings, visible, onScanTracks }) {
   );
 }
 
+/* ── AvatarFlyClone ──────────────────────────────────────────────────────── */
+function AvatarFlyClone({ fly, exiting }) {
+  const { avatarUrl, startRect: s, targetRect: t } = fly;
+  const dx = (s.left + s.width/2)  - (t.left + t.width/2);
+  const dy = (s.top  + s.height/2) - (t.top  + t.height/2);
+  const sc = s.width / t.width;
+  const [ready, setReady] = useState(false);
+  useEffect(() => { requestAnimationFrame(() => requestAnimationFrame(() => setReady(true))); }, []);
+  return ReactDOM.createPortal(
+    <div style={{
+      position:'fixed', left:t.left, top:t.top,
+      width:t.width, height:t.height, borderRadius:'50%',
+      overflow:'hidden', zIndex:970, pointerEvents:'none',
+      transformOrigin:'center center',
+      transform: ready ? 'translate(0,0) scale(1)' : `translate(${dx}px,${dy}px) scale(${sc})`,
+      opacity: exiting ? 0 : 1,
+      transition: ready ? 'transform 0.44s cubic-bezier(0.4,0,0.2,1), opacity 0.18s ease' : 'none',
+    }}>
+      <img src={avatarUrl} style={{width:'100%',height:'100%',objectFit:'cover'}}/>
+    </div>,
+    document.body
+  );
+}
+
+/* ── SoundCloudView ──────────────────────────────────────────────────────── */
+function SoundCloudView({ visible, scAuth, onLogin, onLogout, avatarRef, scTracks, scLoading, scError, onReload, onScTrackClick, scPlayingId }) {
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState(null);
+
+  const handleLogin = async () => {
+    setLoading(true); setError(null);
+    try {
+      const creds = await window.electronAPI.scLogin();
+      if (!creds) { setLoading(false); return; }
+      const res = await window.electronAPI.scFetch('https://api-v2.soundcloud.com/me', creds.token, creds.clientId);
+      if (res.data) onLogin({ ...creds, userId: res.data.id, username: res.data.username, avatarUrl: res.data.avatar_url || null });
+      else setError('не удалось получить данные профиля');
+    } catch { setError('ошибка подключения'); }
+    setLoading(false);
+  };
+
+  const SC_ICON = <SoundCloudIcon size={40} fill="rgba(255,100,20,0.65)"/>;
+
+  const transStyle = {
+    position:'absolute', inset:0,
+    opacity: visible ? 1 : 0,
+    transform: visible ? 'none' : 'translateY(8px)',
+    transition:'opacity 0.28s ease, transform 0.28s ease',
+    pointerEvents: visible ? 'auto' : 'none',
+  };
+
+  if (scAuth) return (
+    <div style={{...transStyle, display:'flex', flexDirection:'column'}}>
+      <div style={{padding:'32px 36px 16px', flexShrink:0, display:'flex', alignItems:'center', gap:12}}>
+        <div style={{fontSize:12, fontWeight:500, color:'rgba(255,255,255,0.22)', letterSpacing:'0.06em', textTransform:'uppercase'}}>лайки</div>
+        {!scLoading && scTracks.length > 0 && (
+          <div style={{fontSize:11, color:'rgba(255,255,255,0.14)'}}>{scTracks.length}</div>
+        )}
+        {scLoading && <div style={{fontSize:11, color:'rgba(255,255,255,0.2)'}}>загружаем...</div>}
+        {scError && (
+          <div style={{fontSize:11, color:'rgba(255,80,60,0.75)', maxWidth:320, lineHeight:1.5, wordBreak:'break-all'}}>
+            {scError} — <span style={{cursor:'pointer', textDecoration:'underline'}} onClick={onReload}>повторить</span>
+          </div>
+        )}
+        <div style={{flex:1}}/>
+        <button onClick={onLogout} style={{
+          background:'none', border:'none', cursor:'pointer', fontFamily:'inherit',
+          fontSize:11, color:'rgba(255,255,255,0.2)', padding:'4px 8px',
+          transition:'color 0.15s',
+        }}>выйти</button>
+      </div>
+      <div style={{flex:1, minHeight:0, display:'flex', flexDirection:'column'}}>
+        <VirtualTrackList items={scTracks} activeId={scPlayingId ?? null}
+          onClickItem={(t) => onScTrackClick(t, scTracks.indexOf(t))}/>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{...transStyle, display:'flex', alignItems:'center', justifyContent:'center'}}>
+      <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:20}}>
+        <div ref={avatarRef} style={{
+          width:72, height:72, borderRadius:20, flexShrink:0,
+          background:'rgba(255,85,0,0.07)', border:'1px solid rgba(255,85,0,0.14)',
+          display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden',
+        }}>
+          {SC_ICON}
+        </div>
+        <div style={{textAlign:'center'}}>
+          <div style={{fontSize:15,fontWeight:600,letterSpacing:'-0.015em',color:'rgba(255,255,255,0.6)',marginBottom:7}}>soundcloud не подключён</div>
+          <div style={{fontSize:12,color:'rgba(255,255,255,0.22)',lineHeight:1.6}}>войди чтобы видеть лайки,<br/>артистов и подписки</div>
+        </div>
+        {error && <div style={{fontSize:11,color:'rgba(255,80,60,0.7)'}}>{error}</div>}
+        <button onClick={handleLogin} disabled={loading} style={{
+          background: loading ? 'rgba(255,85,0,0.06)' : 'rgba(255,85,0,0.1)',
+          border:'1px solid rgba(255,85,0,0.22)', borderRadius:10, padding:'9px 24px',
+          fontSize:13, fontWeight:500,
+          color: loading ? 'rgba(255,130,60,0.4)' : 'rgba(255,130,60,0.85)',
+          cursor: loading ? 'default' : 'pointer', fontFamily:'inherit',
+          transition:'background 0.15s, color 0.15s',
+        }}
+          onMouseEnter={e=>{ if(!loading){ e.currentTarget.style.background='rgba(255,85,0,0.17)'; e.currentTarget.style.borderColor='rgba(255,85,0,0.35)'; }}}
+          onMouseLeave={e=>{ e.currentTarget.style.background=loading?'rgba(255,85,0,0.06)':'rgba(255,85,0,0.1)'; e.currentTarget.style.borderColor='rgba(255,85,0,0.22)'; }}
+        >{loading ? 'открываем браузер...' : 'войти через браузер'}</button>
+      </div>
+    </div>
+  );
+}
+
 /* ── App ─────────────────────────────────────────────────────────────────── */
 function App() {
   const [view,          setView]          = useState('home');
@@ -986,15 +1127,22 @@ function App() {
   const [heroExiting,        setHeroExiting]        = useState(false);
   const [reverseHero,        setReverseHero]        = useState(null);
   const [reverseHeroExiting, setReverseHeroExiting] = useState(false);
+  const [avatarFly,          setAvatarFly]          = useState(null);
+  const [avatarFlyExiting,   setAvatarFlyExiting]   = useState(false);
   const [libCollapsed,  setLibCollapsed]  = useState(false);
   const [settings,      setSettings]      = useState({
     autoplay:false, crossfade:0, defaultRepeat:false,
     startWithWindows:false, minimizeToTray:false, musicFolder:'',
-    customTitles: {}, minDuration: 30,
+    customTitles: {}, minDuration: 30, soundcloudAuth: null,
   });
   const [sort,         setSort]         = useState('added');
   const [editingTitle, setEditingTitle] = useState(false);
   const [editValue,    setEditValue]    = useState('');
+  const [scTracks,      setScTracks]      = useState([]);
+  const [scLoading,     setScLoading]     = useState(false);
+  const [scError,       setScError]       = useState(null);
+  const [scPlayingTrack, setScPlayingTrack] = useState(null);
+  const [scPlayingIdx,   setScPlayingIdx]   = useState(-1);
   const editCancelRef  = useRef(false);
 
   const customTitlesRef = useRef({});
@@ -1009,9 +1157,15 @@ function App() {
   const handleNextRef  = useRef(null);
   const handlePrevRef  = useRef(null);
   const isPlayingRef   = useRef(false);
-  const homeScrollRef  = useRef(null);
+  const homeScrollRef     = useRef(null);
+  const scAvatarRef       = useRef(null);
+  const sidebarProfileRef = useRef(null);
+  const scTracksRef       = useRef([]);
+  const scAuthRef         = useRef(null);
+  scTracksRef.current = scTracks;
+  scAuthRef.current   = settings.soundcloudAuth;
   isPlayingRef.current = isPlaying;
-  const track = tracks[trackIdx] || tracks[0];
+  const track = scPlayingTrack || tracks[trackIdx] || tracks[0];
 
   /* загружаем настройки и треки при старте */
   useEffect(() => {
@@ -1062,6 +1216,7 @@ function App() {
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !track) return;
+    if (scPlayingTrack) return; // SC-трек управляется через handleScTrackClick
     if (track.path) {
       audio.src = 'file:///' + track.path.replace(/\\/g, '/');
       audio.load();
@@ -1074,7 +1229,7 @@ function App() {
       audio.src = '';
     }
     setProgress(0);
-  }, [trackIdx, track?.path]);
+  }, [trackIdx, track?.path, scPlayingTrack]);
 
   /* play / pause */
   useEffect(() => {
@@ -1104,6 +1259,14 @@ function App() {
       if (audio) { audio.currentTime = 0; audio.play().catch(() => {}); }
       setProgress(0); return;
     }
+    if (scPlayingTrack) {
+      const list = scTracksRef.current;
+      const ni = scPlayingIdx + 1;
+      if (ni < list.length) handleScTrackClick(list[ni], ni);
+      else if (repeat === 'all') handleScTrackClick(list[0], 0);
+      else setIsPlaying(false);
+      return;
+    }
     if (shuffle) {
       setTrackIdx(i => { let n; do { n = Math.floor(Math.random()*tracks.length); } while (n === i && tracks.length > 1); return n; });
       setProgress(0); return;
@@ -1123,6 +1286,11 @@ function App() {
     if (progress > 0.05) {
       setProgress(0);
       if (audioRef.current) audioRef.current.currentTime = 0;
+      return;
+    }
+    if (scPlayingTrack) {
+      const pi = scPlayingIdx - 1;
+      if (pi >= 0) handleScTrackClick(scTracksRef.current[pi], pi);
       return;
     }
     setTrackIdx(i => (i - 1 + tracks.length) % tracks.length);
@@ -1194,7 +1362,133 @@ function App() {
     } catch {}
   }, []);
 
+  const loadScLikes = useCallback(async (auth) => {
+    setScLoading(true);
+    setScTracks([]);
+    setScError(null);
+    const all = [];
+    let userId = auth.userId;
+    if (!userId) {
+      const me = await window.electronAPI.scFetch('https://api-v2.soundcloud.com/me', auth.token, auth.clientId);
+      if (me.data?.id) userId = me.data.id;
+      else { setScError(`не удалось получить userId: ${me.error ?? 'нет данных'}`); setScLoading(false); return; }
+    }
+    let url = `https://api-v2.soundcloud.com/users/${userId}/likes?limit=200`;
+    let pages = 0;
+    try {
+      while (url && pages < 20) {
+        const res = await window.electronAPI.scFetch(url, auth.token, auth.clientId);
+        if (res.error) { setScError(`ошибка api: ${res.error}`); break; }
+        if (!res.data?.collection) break;
+        for (const item of res.data.collection) {
+          const t = item.track;
+          if (!t?.id) continue;
+          const progressive = t.media?.transcodings?.find(tc => tc.format?.protocol === 'progressive');
+          all.push({
+            id: t.id,
+            title: t.title || 'Без названия',
+            artist: t.user?.username || '',
+            duration: Math.floor((t.duration || 0) / 1000),
+            color: scHashColor(t.id),
+            coverUrl: t.artwork_url ? t.artwork_url.replace('-large', '-t300x300') : null,
+            streamUrl: progressive?.url || null,
+          });
+        }
+        url = res.data.next_href || null;
+        pages++;
+      }
+    } catch (e) {
+      setScError(String(e));
+      console.error('loadScLikes:', e);
+    }
+    if (all.length) {
+      const cached = await window.electronAPI.scCheckCovers(all.map(t => t.id));
+      const withCache = all.map(t => cached[t.id] ? { ...t, coverUrl: cached[t.id] } : t);
+      setScTracks(withCache);
+      setScLoading(false);
+      loadScCovers(withCache.filter(t => !cached[t.id]));
+    } else {
+      setScTracks(all);
+      setScLoading(false);
+    }
+  }, []);
+
+  const loadScCovers = useCallback(async (tracksArr) => {
+    const pending = tracksArr.filter(t => t.coverUrl);
+    if (!pending.length) return;
+    let next = 0;
+    const acc = {};
+    let newSinceFlush = 0;
+    const flush = () => {
+      if (!newSinceFlush) return;
+      newSinceFlush = 0;
+      const snap = { ...acc };
+      setScTracks(prev => prev.map(t => snap[t.id] ? { ...t, coverUrl: snap[t.id] } : t));
+    };
+    async function worker() {
+      while (next < pending.length) {
+        const t = pending[next++];
+        try {
+          const local = await window.electronAPI.scCacheCover(t.id, t.coverUrl);
+          if (local) { acc[t.id] = local; newSinceFlush++; }
+        } catch {}
+        if (newSinceFlush >= 20) flush();
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(6, pending.length) }, worker));
+    flush();
+  }, []);
+
+  useEffect(() => {
+    if (settings.soundcloudAuth?.token) loadScLikes(settings.soundcloudAuth);
+    else setScTracks([]);
+  }, [settings.soundcloudAuth]);
+
+  const handleScLogin = useCallback((auth) => {
+    const startEl  = scAvatarRef.current;
+    const targetEl = sidebarProfileRef.current;
+    setSettings(s => ({ ...s, soundcloudAuth: auth }));
+    if (startEl && targetEl && auth.avatarUrl) {
+      const startRect  = startEl.getBoundingClientRect();
+      const targetRect = targetEl.getBoundingClientRect();
+      setAvatarFly({ avatarUrl: auth.avatarUrl, startRect, targetRect });
+      setTimeout(() => setAvatarFlyExiting(true), 350);
+      setTimeout(() => { setAvatarFly(null); setAvatarFlyExiting(false); }, 520);
+    }
+  }, []);
+  const handleScLogout = useCallback(() => setSettings(s => ({ ...s, soundcloudAuth: null })), []);
+
+  async function handleScTrackClick(scTrack, idx) {
+    setScPlayingIdx(idx);
+    setProgress(0);
+    setIsPlaying(false);
+    setView('player');
+    setPlayerVisible(true);
+    setNavActive('library');
+    if (view === 'soundcloud') { /* fade handled by view change */ }
+
+    const auth = scAuthRef.current;
+    if (!scTrack.streamUrl || !auth) return;
+    const res = await window.electronAPI.scFetch(scTrack.streamUrl, auth.token, auth.clientId);
+    if (!res.data?.url) return;
+
+    const resolved = { ...scTrack, resolvedUrl: res.data.url };
+    setScPlayingTrack(resolved);
+
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.src = res.data.url;
+    audio.load();
+    audio.addEventListener('loadedmetadata', () => {
+      const dur = Math.floor(audio.duration);
+      if (dur) setScPlayingTrack(prev => prev ? { ...prev, duration: dur } : prev);
+    }, { once: true });
+    audio.play().catch(() => setIsPlaying(false));
+    setIsPlaying(true);
+  }
+
   function selectTrack(idx) {
+    setScPlayingTrack(null);
     if (view === 'player') {
       setTrackIdx(idx); setProgress(0); setIsPlaying(true);
       return;
@@ -1266,10 +1560,14 @@ function App() {
         setPlayerVisible(false);
         setHomeVisible(true);
         setView('home');
-      } else if (view === 'settings') {
+      } else if (view === 'settings' || view === 'soundcloud') {
         setHomeVisible(true);
         setView('home');
       }
+    } else if (id === 'soundcloud') {
+      if (view === 'home') setHomeVisible(false);
+      if (view === 'player') setPlayerVisible(false);
+      setTimeout(() => setView('soundcloud'), view === 'home' ? 240 : 300);
     } else if (id === 'settings') {
       if (view === 'player') setPlayerVisible(false);
       if (view === 'home') setHomeVisible(false);
@@ -1290,6 +1588,8 @@ function App() {
     } else if (view === 'settings') {
       setPlayerVisible(true);
       setView('player');
+    } else if (view === 'soundcloud') {
+      setTimeout(() => { setPlayerVisible(true); setView('player'); }, 240);
     }
   };
 
@@ -1299,9 +1599,10 @@ function App() {
     <div style={{display:'flex', width:'100%', height:'100%', overflow:'hidden'}}>
       {hero && hero.targetRect && <HeroClone hero={hero} exiting={heroExiting}/>}
       {reverseHero && reverseHero.targetRect && <HeroClone hero={reverseHero} exiting={reverseHeroExiting} reverse={true}/>}
+      {avatarFly && <AvatarFlyClone fly={avatarFly} exiting={avatarFlyExiting}/>}
       <Sidebar navActive={navActive} onNav={handleNav}
         libCollapsed={libCollapsed} onToggleLib={()=>setLibCollapsed(v=>!v)}
-        inPlayer={view==='player'}/>
+        inPlayer={view==='player'} scAuth={settings.soundcloudAuth||null} profileRef={sidebarProfileRef}/>
 
       <div style={{position:'relative', flex:1, height:'100%', overflow:'hidden'}}>
 
@@ -1410,9 +1711,13 @@ function App() {
             </div>
           </div>
           <VirtualTrackList
-            items={filtered}
-            activeId={track.id}
-            onClickItem={t => { setTrackIdx(tracks.indexOf(t)); setProgress(0); setIsPlaying(true); }}
+            items={scPlayingTrack
+              ? scTracks.filter(t => !search || t.title.toLowerCase().includes(search.toLowerCase()) || t.artist.toLowerCase().includes(search.toLowerCase()))
+              : filtered}
+            activeId={scPlayingTrack ? scPlayingTrack.id : track.id}
+            onClickItem={scPlayingTrack
+              ? t => handleScTrackClick(t, scTracksRef.current.indexOf(t))
+              : t => { setScPlayingTrack(null); setTrackIdx(tracks.indexOf(t)); setProgress(0); setIsPlaying(true); }}
           />
         </div>
 
@@ -1544,6 +1849,7 @@ function App() {
         )}
 
         <SettingsView settings={settings} onSettings={setSettings} visible={view==='settings'} onScanTracks={handleScanTracks}/>
+        <SoundCloudView visible={view==='soundcloud'} scAuth={settings.soundcloudAuth||null} onLogin={handleScLogin} onLogout={handleScLogout} avatarRef={scAvatarRef} scTracks={scTracks} scLoading={scLoading} scError={scError} onReload={()=>loadScLikes(settings.soundcloudAuth)} onScTrackClick={handleScTrackClick} scPlayingId={scPlayingTrack?.id}/>
 
       </div>
     </div>

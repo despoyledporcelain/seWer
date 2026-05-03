@@ -12,4 +12,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onMediaPlayPause:  (cb) => ipcRenderer.on('media-play-pause', () => cb()),
   onMediaNext:       (cb) => ipcRenderer.on('media-next',       () => cb()),
   onMediaPrev:       (cb) => ipcRenderer.on('media-prev',       () => cb()),
+  scLogin:        () => ipcRenderer.invoke('sc-login'),
+  scFetch:        (url, token, clientId) => ipcRenderer.invoke('sc-fetch', url, token, clientId),
+  scCheckCovers:  (ids) => ipcRenderer.invoke('sc-check-covers', ids),
+  scCacheCover:   (id, url) => ipcRenderer.invoke('sc-cache-cover', id, url),
 })

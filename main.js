@@ -104,8 +104,92 @@ ipcMain.handle('get-cover-art', async (_, filePath) => {
   } catch { return null }
 })
 
+const scCoversDir = () => path.join(app.getPath('userData'), 'sc_covers')
+
+ipcMain.handle('sc-check-covers', (_, ids) => {
+  const dir = scCoversDir()
+  const result = {}
+  for (const id of ids) {
+    const file = path.join(dir, `${id}.jpg`)
+    if (fs.existsSync(file)) result[id] = 'file:///' + file.replace(/\\/g, '/')
+  }
+  return result
+})
+
+ipcMain.handle('sc-cache-cover', (_, id, url) => new Promise((resolve) => {
+  const dir = scCoversDir()
+  const file = path.join(dir, `${id}.jpg`)
+  if (fs.existsSync(file)) { resolve('file:///' + file.replace(/\\/g, '/')); return }
+  try { fs.mkdirSync(dir, { recursive: true }) } catch {}
+  const dest = fs.createWriteStream(file)
+  require('https').get(url, (res) => {
+    if (res.statusCode !== 200) { dest.destroy(); fs.unlink(file, () => {}); resolve(null); return }
+    res.pipe(dest)
+    dest.on('finish', () => resolve('file:///' + file.replace(/\\/g, '/')))
+    dest.on('error', () => { fs.unlink(file, () => {}); resolve(null) })
+  }).on('error', () => { dest.destroy(); fs.unlink(file, () => {}); resolve(null) })
+}))
+
 ipcMain.handle('load-settings', () => loadSettings())
 ipcMain.handle('save-settings', (_, data) => saveSettings(data))
+
+ipcMain.handle('sc-login', () => new Promise((resolve) => {
+  const authWin = new BrowserWindow({
+    width: 900, height: 700,
+    parent: win,
+    webPreferences: { nodeIntegration: false, contextIsolation: true, partition: 'persist:soundcloud' },
+  })
+
+  let token = null, clientId = null, resolved = false
+  const ses = authWin.webContents.session
+
+  ses.webRequest.onBeforeSendHeaders({ urls: ['*://api-v2.soundcloud.com/*'] }, (details, callback) => {
+    callback({ requestHeaders: details.requestHeaders })
+
+    const auth = details.requestHeaders['Authorization']
+    if (auth && auth.startsWith('OAuth ')) token = auth.slice(6)
+    try {
+      const cid = new URL(details.url).searchParams.get('client_id')
+      if (cid) clientId = cid
+    } catch {}
+
+    if (token && clientId && !resolved) {
+      resolved = true
+      ses.webRequest.onBeforeSendHeaders(null)
+      resolve({ token, clientId })
+      setImmediate(() => authWin.close())
+    }
+  })
+
+  authWin.loadURL('https://soundcloud.com')
+  authWin.on('closed', () => { if (!resolved) resolve(null) })
+}))
+
+ipcMain.handle('sc-fetch', (_, url, token, clientId) => new Promise((resolve) => {
+  const fullUrl = url.includes('client_id=') ? url
+    : `${url}${url.includes('?') ? '&' : '?'}client_id=${encodeURIComponent(clientId)}`
+  const parsed = new URL(fullUrl)
+  const req = require('https').request({
+    hostname: parsed.hostname,
+    path: parsed.pathname + parsed.search,
+    method: 'GET',
+    headers: {
+      'Authorization': `OAuth ${token}`,
+      'Accept': 'application/json',
+      'User-Agent': 'Mozilla/5.0',
+    },
+  }, (res) => {
+    let raw = ''
+    res.on('data', c => raw += c)
+    res.on('end', () => {
+      if (res.statusCode !== 200) { resolve({ error: res.statusCode }); return }
+      try { resolve({ data: JSON.parse(raw) }) }
+      catch { resolve({ error: 'parse_error' }) }
+    })
+  })
+  req.on('error', e => resolve({ error: String(e) }))
+  req.end()
+}))
 
 app.whenReady().then(() => {
   createWindow()
