@@ -29,7 +29,7 @@ seWer — музыкальный плеер с поддержкой логина
 
 ---
 
-![main screen(https://i.ibb.co/SzbpZ81/1.png)
+![main screen](https://i.ibb.co/SzbpZ81/1.png)
 
 ---
 
