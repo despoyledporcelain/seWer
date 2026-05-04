@@ -29,7 +29,7 @@
 ## утилиты
 
 **строка 98** — `smoothScroll(el, targetTop, duration)` — плавный скролл с easing `easeInOutQuad`  
-**строка 112** — `DEMO_TRACKS`: статичный массив 8 объектов `{id, title, artist, duration (сек), color (hex)}`  
+**строка 112** — `DEMO_TRACKS` удалён. треки стартуют с `[]`.  
 **строка 123** — `fmt(s)` → строка `M:SS`  
 **строка 128** — `SoundCloudIcon({ size=16, fill='currentColor' })` — настоящий логотип SC из `assets/icon.svg`, инлайн SVG с viewBox `-271 345.8 256 111.2`  
 **строка 149** — `scHashColor(id)` → `hsl(...)` по числовому id трека
@@ -38,7 +38,8 @@
 
 ### `WaveProgressBar` — строки 156–279
 пропсы: `{progress [0–1], elapsed, total, onSeek(v), isPlaying}`  
-canvas-волна H=52. плавная анимация без случайных beat-спайков. drag по всей ширине → onSeek.
+canvas-волна H=52. drag по всей ширине → onSeek.  
+**анимация замораживается на паузе**: `accT` накапливается только пока `isPlaying=true`, при resume продолжает с того же места без рывков. refs: `accT`, `lastNow`, `progRef`, `dispProg`, `playRef`, `dragging`, `pendingSize`.
 
 ### `ThinVolumeSlider` — строки 281–394
 пропсы: `{volume [0–1], onChange(v)}`  
@@ -93,11 +94,12 @@ ReactDOM.createPortal → document.body. CSS transition 340ms. фон `#111116`;
 
 ### `CrossfadeSlider` — строки 784–831
 пропсы: `{value [0–12], onChange(v)}`  
-горизонтальный слайдер кроссфейда 0–12 сек.
+горизонтальный слайдер кроссфейда 0–12 сек. поддерживает wheel (passive:false) — колёсико мыши меняет значение, не скроллит страницу. refs: `trackRef`, `dragging`, `onChangeRef`, `valueRef`.
 
 ### `SettingsView` — строки 833–1037
-пропсы: `{settings, onSettings, visible, onScanTracks}`  
-секции: playback / system / about.
+пропсы: `{settings, onSettings, visible, onScanTracks, onClearFolder}`  
+секции: playback / system / about.  
+**system/Локальная музыка**: кнопка «Удалить» появляется только когда `settings.musicFolder` задана (красноватая), сбрасывает путь и треки через `onClearFolder`. карточка «Данные» (очистка кеша обложек) удалена.
 
 ### `AvatarFlyClone` — строки 1039–1061
 пропсы: `{fly: {avatarUrl, startRect, targetRect}, exiting}`  
@@ -114,7 +116,7 @@ portal-анимация: аватар летит из 72px блока в SoundCl
 **state:**
 ```
 view               'home'|'player'|'settings'|'soundcloud'
-tracks             DEMO_TRACKS | локальные треки
+tracks             [] | локальные треки
 trackIdx           0
 isPlaying          false
 progress           0–1
@@ -203,6 +205,7 @@ libSearchRef     null
 - `commitEdit()` — строка 1379: сохраняет кастомное название в `tracks` state и `settings.customTitles`
 - `loadCovers(tracksArr)` — строка 1391: 16 воркеров параллельно, base64 обложки для локальных файлов
 - `handleScanTracks(folder)` — строка 1420: сканирует папку
+- `handleClearFolder()` — сбрасывает `settings.musicFolder` в null, `tracks` в `[]`, `trackIdx/isPlaying/progress` в начальные значения
 - `loadScLikes(auth, opts={})` — строка 1435: пагинированная загрузка лайков SC (`users/{userId}/likes?limit=200`), до 20 страниц. **`opts.silent=true`** — не сбрасывать UI (для fallback из incremental). После загрузки: записывает `scCacheRef.current` + сохраняет на диск через `scSaveLikesCache`. Затем `scCheckCovers` для уже кэшированных, потом `loadScCovers` фоном
 - `loadScCovers(tracksArr)` — строка 1493: 6 воркеров, скачивает обложки в `%AppData%\seWer\sc_covers\{id}.jpg`, flush каждые 20
 - `incrementalScUpdate(auth)` — строка 1519: грузит первую страницу api, проходит пока не встретит знакомый id из `scCacheRef`. Если нашёл — добавляет накопленные новые в начало `scTracks`+`scCacheRef`+ записывает на диск. Если **не** нашёл (кэш сильно отстал) — fallback на `loadScLikes(auth, {silent:true})`. Удалённые лайки не отслеживаются

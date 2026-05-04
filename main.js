@@ -36,10 +36,7 @@ function saveSettings(data) {
 }
 
 function createWindow() {
-  const svgPath = path.join(__dirname, 'assets', 'icon.svg')
-  const icon = nativeImage.createFromDataURL(
-    'data:image/svg+xml;base64,' + Buffer.from(fs.readFileSync(svgPath)).toString('base64')
-  )
+  const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png'))
 
   win = new BrowserWindow({
     width: 900,

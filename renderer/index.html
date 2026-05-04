@@ -109,16 +109,6 @@ function smoothScroll(el, targetTop, duration) {
   requestAnimationFrame(tick);
 }
 
-const DEMO_TRACKS = [
-  { id:1, title:"Dissolve",       artist:"Nocturnal",   duration:214, color:"#7c5cbf" },
-  { id:2, title:"Phase Shift",    artist:"Aeterna",     duration:187, color:"#4e72b8" },
-  { id:3, title:"Нулевой этаж",   artist:"Ploho",       duration:253, color:"#b84e5a" },
-  { id:4, title:"Cold Orbit",     artist:"Subwave",     duration:198, color:"#4eb8a0" },
-  { id:5, title:"Архив",          artist:"Shortparis",  duration:271, color:"#b8934e" },
-  { id:6, title:"Fading Pulse",   artist:"Nocturnal",   duration:224, color:"#4e90b8" },
-  { id:7, title:"Полночь",        artist:"Motorama",    duration:243, color:"#b84ea8" },
-  { id:8, title:"Ritual",         artist:"Molchat Doma",duration:198, color:"#62b84e" },
-];
 
 function fmt(s) {
   const m = Math.floor(s/60), sec = Math.floor(s%60);
@@ -155,17 +145,16 @@ function scHashColor(id) {
 
 /* ── Wave Progress Bar ───────────────────────────────────────────────────── */
 function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying }) {
-  const wrapRef   = useRef(null);
-  const canvasRef = useRef(null);
-  const rafRef    = useRef(null);
-  const progRef   = useRef(progress);
-  const dispProg  = useRef(progress);
-  const playRef   = useRef(isPlaying);
-  const beatRef   = useRef(0);
-  const beatTgt   = useRef(0);
+  const wrapRef    = useRef(null);
+  const canvasRef  = useRef(null);
+  const rafRef     = useRef(null);
+  const progRef    = useRef(progress);
+  const dispProg   = useRef(progress);
+  const playRef    = useRef(isPlaying);
   const dragging   = useRef(false);
-  const startTime  = useRef(null);
   const pendingSize = useRef(null);
+  const accT       = useRef(0);
+  const lastNow    = useRef(null);
   const H = 52;
 
   useEffect(() => { progRef.current = progress; }, [progress]);
@@ -175,7 +164,6 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying }) {
     const canvas = canvasRef.current, wrap = wrapRef.current;
     if (!canvas || !wrap) return;
     const dpr = window.devicePixelRatio || 1;
-    // initial size — canvas style controlled by CSS (width:100%)
     canvas.width  = Math.round(wrap.clientWidth * dpr);
     canvas.height = Math.round(H * dpr);
     const resize = () => {
@@ -191,8 +179,10 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying }) {
         canvas.height = pendingSize.current.h;
         pendingSize.current = null;
       }
-      if (!startTime.current) startTime.current = now;
-      const t = (now - startTime.current) * 0.001;
+      if (playRef.current && lastNow.current !== null)
+        accT.current += (now - lastNow.current) * 0.001;
+      lastNow.current = now;
+      const t = accT.current;
 
       const ctx = canvas.getContext('2d');
       const W = canvas.width, HH = canvas.height;
@@ -200,13 +190,11 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying }) {
 
       dispProg.current += (progRef.current - dispProg.current) * 0.12;
       const p = dispProg.current;
-      const beat = 0;
       const cy = HH*0.5;
       const freq = 0.020/dpr, freq2 = 0.038/dpr;
 
       const env = (x) => {
         const nx = x/W;
-        /* sharp fade at edges, flat middle */
         const edge = Math.min(nx/0.04, (1-nx)/0.04, 1);
         const gauss = Math.exp(-Math.pow((nx-0.5)*2.4, 2));
         return gauss * edge;
@@ -215,12 +203,29 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying }) {
       const pts = [];
       for (let x = 0; x <= W; x += dpr) {
         const e = env(x);
-        const a = (HH*0.26 + beat*HH*0.18) * e;
+        const a = HH*0.26 * e;
         const y = cy + a*Math.sin(x*freq - t*1.4) + a*0.38*Math.sin(x*freq2 - t*0.9 + 1.8);
         pts.push({x, y});
       }
 
-      /* gradient with alpha fade at edges */
+      /* точка прогресса на волне */
+      const px  = p * W;
+      const piX = Math.min(Math.round(px / dpr), pts.length - 1);
+      const dotY = pts[piX]?.y ?? cy;
+
+      /* glow blob — эллипс вытянутый по горизонтали */
+      if (p > 0.01) {
+        ctx.save();
+        ctx.translate(px, dotY);
+        ctx.scale(4, 1);
+        const rg = ctx.createRadialGradient(0, 0, 0, 0, 0, HH * 0.22);
+        rg.addColorStop(0,   'rgba(200,195,225,0.06)');
+        rg.addColorStop(1,   'rgba(0,0,0,0)');
+        ctx.fillStyle = rg;
+        ctx.fillRect(-HH * 1.2, -HH * 0.22, HH * 2.4, HH * 0.44);
+        ctx.restore();
+      }
+
       const grad = ctx.createLinearGradient(0, 0, W, 0);
       const FADE = 0.04, TRANS = 0.018;
       grad.addColorStop(0, 'rgba(0,0,0,0)');
@@ -242,6 +247,19 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying }) {
       ctx.shadowBlur  = 5*dpr*p;
       ctx.stroke();
       ctx.shadowBlur  = 0;
+
+      /* dot на волне в точке прогресса */
+      if (p > 0.01 && p < 0.99) {
+        ctx.save();
+        ctx.shadowColor = 'rgba(215,210,235,0.8)';
+        ctx.shadowBlur  = 5 * dpr;
+        ctx.beginPath();
+        ctx.arc(px, dotY, 2.2 * dpr, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(235,232,250,0.92)';
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.restore();
+      }
 
       rafRef.current = requestAnimationFrame(draw);
     };
@@ -625,6 +643,9 @@ function HeroClone({ hero, exiting, reverse = false }) {
   const dy = (sTop + sH/2) - (tTop + size/2);
   const sc = sW / size;
 
+  const startBR = reverse ? 20 : 16;
+  const endBR   = reverse ? 16 : 20;
+
   const [ready, setReady] = useState(false);
   useEffect(() => {
     requestAnimationFrame(() => requestAnimationFrame(() => setReady(true)));
@@ -639,12 +660,12 @@ function HeroClone({ hero, exiting, reverse = false }) {
       position:'fixed',
       left: tLeft, top: tTop,
       width: size, height: size,
-      borderRadius: 20,
+      borderRadius: ready ? endBR : startBR,
       zIndex:960, pointerEvents:'none', overflow:'hidden',
       transformOrigin:'center center',
       transform,
       opacity: exiting ? 0 : 1,
-      transition: ready ? 'transform 0.34s cubic-bezier(0.4,0,0.2,1), opacity 0.12s ease' : 'none',
+      transition: ready ? 'transform 0.34s cubic-bezier(0.4,0,0.2,1), border-radius 0.34s cubic-bezier(0.4,0,0.2,1), opacity 0.12s ease' : 'none',
     }}>
       <div style={{
         position:'absolute', inset:0, borderRadius:20,
@@ -786,7 +807,9 @@ function CrossfadeSlider({ value, onChange }) {
   const trackRef    = useRef(null);
   const dragging    = useRef(false);
   const onChangeRef = useRef(onChange);
+  const valueRef    = useRef(value);
   onChangeRef.current = onChange;
+  valueRef.current    = value;
 
   const calcVal = (clientX) => {
     const rect = trackRef.current.getBoundingClientRect();
@@ -800,6 +823,16 @@ function CrossfadeSlider({ value, onChange }) {
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up);
     return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+  }, []);
+
+  useEffect(() => {
+    const el = trackRef.current;
+    const onWheel = e => {
+      e.preventDefault();
+      onChangeRef.current(Math.max(0, Math.min(12, valueRef.current + (e.deltaY > 0 ? -1 : 1))));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
   }, []);
 
   const pct = (value / 12) * 100;
@@ -831,7 +864,7 @@ function CrossfadeSlider({ value, onChange }) {
 }
 
 /* ── SettingsView ─────────────────────────────────────────────────────────── */
-function SettingsView({ settings, onSettings, visible, onScanTracks }) {
+function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFolder }) {
   const set = (k, v) => onSettings({ ...settings, [k]: v });
   const [sec, setSec] = useState('playback');
   const secRefs  = useRef({});
@@ -916,15 +949,6 @@ function SettingsView({ settings, onSettings, visible, onScanTracks }) {
         <Row label="Запускать при старте Windows"><Toggle k="startWithWindows"/></Row>
         <Row label="Сворачивать в трей" last><Toggle k="minimizeToTray"/></Row>
       </Card>
-      <Card title="Данные">
-        <Row label="Кэш обложек" sub="Загруженные обложки" last>
-          <div style={{
-            fontSize:12, color:'rgba(255,255,255,0.4)', cursor:'pointer',
-            background:'rgba(255,255,255,0.055)', border:'1px solid rgba(255,255,255,0.09)',
-            borderRadius:7, padding:'5px 14px',
-          }}>Очистить</div>
-        </Row>
-      </Card>
       <Card title="Локальная музыка">
         <Row label="Папка с музыкой"
           sub={settings.musicFolder
@@ -932,18 +956,31 @@ function SettingsView({ settings, onSettings, visible, onScanTracks }) {
               ? '...' + settings.musicFolder.slice(-42)
               : settings.musicFolder
             : 'Не выбрана'}>
-          <div
-            onClick={async () => {
-              const folder = await window.electronAPI.selectMusicFolder();
-              if (folder) { set('musicFolder', folder); onScanTracks(folder); }
-            }}
-            style={{
-              fontSize:12, color:'rgba(255,255,255,0.5)', cursor:'pointer',
-              background:'rgba(255,255,255,0.055)', border:'1px solid rgba(255,255,255,0.09)',
-              borderRadius:7, padding:'5px 14px', flexShrink:0,
-              transition:'background 0.15s',
-            }}
-          >Выбрать</div>
+          <div style={{display:'flex', gap:8, flexShrink:0}}>
+            {settings.musicFolder && (
+              <div
+                onClick={() => onClearFolder()}
+                style={{
+                  fontSize:12, color:'rgba(255,80,80,0.7)', cursor:'pointer',
+                  background:'rgba(255,80,80,0.07)', border:'1px solid rgba(255,80,80,0.15)',
+                  borderRadius:7, padding:'5px 14px',
+                  transition:'background 0.15s',
+                }}
+              >Удалить</div>
+            )}
+            <div
+              onClick={async () => {
+                const folder = await window.electronAPI.selectMusicFolder();
+                if (folder) { set('musicFolder', folder); onScanTracks(folder); }
+              }}
+              style={{
+                fontSize:12, color:'rgba(255,255,255,0.5)', cursor:'pointer',
+                background:'rgba(255,255,255,0.055)', border:'1px solid rgba(255,255,255,0.09)',
+                borderRadius:7, padding:'5px 14px',
+                transition:'background 0.15s',
+              }}
+            >Выбрать</div>
+          </div>
         </Row>
         <Row label="Мин. длительность аудиофайлов" sub="Файлы короче этого значения пропускаются при сканировании" last>
           <div style={{
@@ -1153,7 +1190,7 @@ function SoundCloudView({ visible, scAuth, onLogin, onLogout, avatarRef }) {
 /* ── App ─────────────────────────────────────────────────────────────────── */
 function App() {
   const [view,          setView]          = useState('home');
-  const [tracks,        setTracks]        = useState(DEMO_TRACKS);
+  const [tracks,        setTracks]        = useState([]);
   const [trackIdx,      setTrackIdx]      = useState(0);
   const [isPlaying,     setIsPlaying]     = useState(false);
   const [progress,      setProgress]      = useState(0);
@@ -1214,7 +1251,7 @@ function App() {
   scTracksRef.current = scTracks;
   scAuthRef.current   = settings.soundcloudAuth;
   isPlayingRef.current = isPlaying;
-  const track = scPlayingTrack || tracks[trackIdx] || tracks[0];
+  const track = scPlayingTrack || tracks[trackIdx] || tracks[0] || { id:0, title:'', artist:'', duration:0, color:'#333' };
 
   /* загружаем настройки и треки при старте */
   useEffect(() => {
@@ -1430,6 +1467,14 @@ function App() {
         loadCovers(withCustom);
       }
     } catch {}
+  }, []);
+
+  const handleClearFolder = useCallback(() => {
+    setSettings(s => ({ ...s, musicFolder: null }));
+    setTracks([]);
+    setTrackIdx(0);
+    setIsPlaying(false);
+    setProgress(0);
   }, []);
 
   const loadScLikes = useCallback(async (auth, opts = {}) => {
@@ -1706,7 +1751,7 @@ function App() {
     }
   };
 
-  const handleNav = (id) => {
+  const handleNav = async (id) => {
     setNavActive(id);
     if (id === 'home') {
       if (view === 'player') {
@@ -1753,6 +1798,16 @@ function App() {
       const artEl = artRefs.current[track.id];
       const par = playerArtRef.current?.getBoundingClientRect();
       if (artEl && par) {
+        const scrollEl = homeScrollRef.current;
+        if (scrollEl) {
+          const box = scrollEl.getBoundingClientRect();
+          const cr  = artEl.getBoundingClientRect();
+          if (cr.top < box.top || cr.bottom > box.bottom) {
+            const offset = cr.top - box.top + scrollEl.scrollTop;
+            scrollEl.scrollTop = Math.max(0, offset - box.height / 2 + cr.height / 2);
+            await new Promise(r => requestAnimationFrame(r));
+          }
+        }
         const startRect = artEl.getBoundingClientRect();
         const targetRect = { left: par.left, top: par.top, size: par.width };
         setHero({ track: track, startRect, targetRect });
@@ -1789,10 +1844,10 @@ function App() {
             position:'absolute', inset:0,
             overflowY:'auto', padding:'32px 36px',
             opacity: homeVisible ? 1 : 0,
-            transform: homeVisible ? 'translateX(0)' : 'translateX(28px)',
+            transform: homeVisible ? 'translateX(0)' : (hero ? 'none' : 'translateX(28px)'),
             transition: homeVisible
               ? 'opacity 0.32s ease 0.08s, transform 0.34s cubic-bezier(0.22,1,0.36,1)'
-              : 'opacity 0.14s ease, transform 0.18s ease',
+              : (hero ? 'opacity 0.14s ease' : 'opacity 0.14s ease, transform 0.18s ease'),
             pointerEvents: homeVisible ? 'auto' : 'none',
           }}>
             {!showWelcome && <div style={{display:'flex', alignItems:'center', gap:16, marginBottom:24}}>
@@ -1938,7 +1993,7 @@ function App() {
                   <HomeCard key={t.id} track={t}
                     artRef={el => artRefs.current[t.id] = el}
                     onClick={() => selectTrack(t)}
-                    artHidden={reverseHero && !reverseHeroExiting && t.id === track.id}/>
+                    artHidden={(reverseHero && !reverseHeroExiting && t.id === track.id) || (hero && !heroExiting && t.id === hero.track.id)}/>
                 ))}
               </div>
             )}
@@ -2139,7 +2194,7 @@ function App() {
           </div>
         )}
 
-        <SettingsView settings={settings} onSettings={setSettings} visible={view==='settings'} onScanTracks={handleScanTracks}/>
+        <SettingsView settings={settings} onSettings={setSettings} visible={view==='settings'} onScanTracks={handleScanTracks} onClearFolder={handleClearFolder}/>
         <SoundCloudView visible={view==='soundcloud'} scAuth={settings.soundcloudAuth||null} onLogin={handleScLogin} onLogout={handleScLogout} avatarRef={scAvatarRef}/>
 
       </div>
