@@ -138,6 +138,15 @@ ipcMain.handle('sc-cache-cover', (_, id, url) => new Promise((resolve) => {
 ipcMain.handle('load-settings', () => loadSettings())
 ipcMain.handle('save-settings', (_, data) => saveSettings(data))
 
+const scLikesFile = () => path.join(app.getPath('userData'), 'sc_likes.json')
+
+ipcMain.handle('sc-load-likes-cache', () => {
+  try { return JSON.parse(fs.readFileSync(scLikesFile(), 'utf8')) } catch { return [] }
+})
+ipcMain.handle('sc-save-likes-cache', (_, data) => {
+  try { fs.writeFileSync(scLikesFile(), JSON.stringify(data)) } catch {}
+})
+
 ipcMain.handle('sc-login', () => new Promise((resolve) => {
   const authWin = new BrowserWindow({
     width: 900, height: 700,

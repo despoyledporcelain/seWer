@@ -16,4 +16,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   scFetch:        (url, token, clientId) => ipcRenderer.invoke('sc-fetch', url, token, clientId),
   scCheckCovers:  (ids) => ipcRenderer.invoke('sc-check-covers', ids),
   scCacheCover:   (id, url) => ipcRenderer.invoke('sc-cache-cover', id, url),
+  scLoadLikesCache: ()   => ipcRenderer.invoke('sc-load-likes-cache'),
+  scSaveLikesCache: (data) => ipcRenderer.invoke('sc-save-likes-cache', data),
 })

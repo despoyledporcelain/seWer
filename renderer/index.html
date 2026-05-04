@@ -468,12 +468,12 @@ function PlayBtn({ isPlaying, onToggle }) {
 }
 
 /* ── NavIcon ─────────────────────────────────────────────────────────────── */
-function NavIcon({ icon, label, active, onClick, size=38 }) {
+function NavIcon({ icon, label, active, onClick, size=38, noActiveBg=false }) {
   return (
     <button onClick={onClick} title={label}
       style={{
         width:size, height:size, borderRadius:11, border:'none',
-        background: active ? 'rgba(178,178,178,0.11)' : 'none',
+        background: (active && !noActiveBg) ? 'rgba(178,178,178,0.11)' : 'none',
         color: active ? 'var(--accent)' : 'rgba(255,255,255,0.24)',
         display:'flex', alignItems:'center', justifyContent:'center',
         cursor:'pointer', flexShrink:0,
@@ -668,12 +668,31 @@ function HeroClone({ hero, exiting, reverse = false }) {
 }
 
 /* ── Sidebar ─────────────────────────────────────────────────────────────── */
-function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth, profileRef }) {
+function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth, profileRef, sourceMode, onToggleSource }) {
   const NAV = [
     { id:"home",       label:"Треки",      icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg> },
     { id:"library",    label:"Плеер",      icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" viewBox="0 0 24 24"><line x1="4" y1="20" x2="4" y2="13"/><line x1="9" y1="20" x2="9" y2="4"/><line x1="14" y1="20" x2="14" y2="8"/><line x1="19" y1="20" x2="19" y2="14"/></svg> },
-    { id:"soundcloud", label:"SoundCloud", icon:<SoundCloudIcon size={16}/> },
   ];
+  const folderIcon = (
+    <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+    </svg>
+  );
+
+  const navRefs = useRef({});
+  const [pillRect, setPillRect] = useState({ top: 0, height: 38, visible: false });
+
+  useLayoutEffect(() => {
+    const el = navRefs.current[navActive];
+    if (!el || (navActive !== 'home' && navActive !== 'library')) {
+      setPillRect(p => ({ ...p, visible: false }));
+      return;
+    }
+    setPillRect({ top: el.offsetTop, height: el.offsetHeight, visible: true });
+  }, [navActive]);
+
+  const scActive = navActive === 'soundcloud';
+
   return (
     <div style={{
       width:58, height:'100%', flexShrink:0,
@@ -682,23 +701,42 @@ function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth
       borderRight:'1px solid var(--border)',
       background:'rgba(255,255,255,0.012)', zIndex:10,
     }}>
-      {/* верхняя группа: аватар + nav + collapse */}
+      {/* верхняя группа: аватар-кнопка + nav + collapse */}
       <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:6}}>
-        <div ref={profileRef} style={{
-          width:40, height:40, borderRadius:'50%',
-          background:'rgba(178,178,178,0.08)', border:'1px solid rgba(178,178,178,0.15)',
-          display:'flex', alignItems:'center', justifyContent:'center',
-          cursor:'pointer', color:'var(--accent)', marginBottom:4, flexShrink:0,
-          overflow:'hidden',
-        }}>
+        <div ref={profileRef}
+          onClick={() => onNav('soundcloud')}
+          title={scAuth?.username ? `SoundCloud: ${scAuth.username}` : 'SoundCloud'}
+          style={{
+            width:44, height:44, borderRadius:12,
+            background:'rgba(178,178,178,0.06)',
+            border:'1px solid ' + (scActive ? 'rgba(178,178,178,0.55)' : 'rgba(178,178,178,0.12)'),
+            display:'flex', alignItems:'center', justifyContent:'center',
+            cursor:'pointer', color:'var(--accent)', marginBottom:8, flexShrink:0,
+            overflow:'hidden',
+            transition:'border-color 0.2s ease, background 0.18s ease',
+          }}>
           {scAuth?.avatarUrl
             ? <img src={scAuth.avatarUrl} style={{width:'100%',height:'100%',objectFit:'cover'}}/>
-            : <svg width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.6" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+            : <SoundCloudIcon size={22} fill="rgba(255,100,20,0.8)"/>
           }
         </div>
-        {NAV.map(n => (
-          <NavIcon key={n.id} icon={n.icon} label={n.label} active={navActive===n.id} onClick={()=>onNav(n.id)}/>
-        ))}
+
+        {/* nav-группа с анимирующимся пиллом */}
+        <div style={{position:'relative', display:'flex', flexDirection:'column', alignItems:'center', gap:6}}>
+          <div style={{
+            position:'absolute', left:'50%', transform:'translateX(-50%)',
+            top: pillRect.top, height: pillRect.height, width: 38,
+            background:'rgba(178,178,178,0.11)', borderRadius:11,
+            opacity: pillRect.visible ? 1 : 0,
+            transition:'top 0.34s cubic-bezier(0.22,1,0.36,1), height 0.34s cubic-bezier(0.22,1,0.36,1), opacity 0.18s ease',
+            pointerEvents:'none', zIndex:0,
+          }}/>
+          {NAV.map(n => (
+            <div key={n.id} ref={el => navRefs.current[n.id] = el} style={{position:'relative', zIndex:1}}>
+              <NavIcon icon={n.icon} label={n.label} active={navActive===n.id} onClick={()=>onNav(n.id)} noActiveBg={true}/>
+            </div>
+          ))}
+        </div>
         <div style={{
           display:'flex', flexDirection:'column', alignItems:'center',
           overflow:'hidden',
@@ -725,9 +763,20 @@ function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth
 
       <div style={{flex:1}}/>
 
-      {/* настройки одни внизу */}
-      <NavIcon label="Настройки" active={navActive==='settings'} onClick={()=>onNav('settings')}
-        icon={<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>}/>
+      {/* нижняя группа: оффлайн (если залогинен) + настройки */}
+      <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:6}}>
+        <div style={{
+          maxHeight: scAuth ? 44 : 0,
+          opacity: scAuth ? 1 : 0,
+          overflow:'hidden',
+          transition:'max-height 0.22s cubic-bezier(0.4,0,0.2,1), opacity 0.18s ease',
+        }}>
+          <NavIcon label="Локальная библиотека" active={sourceMode==='local'}
+            onClick={onToggleSource} icon={folderIcon}/>
+        </div>
+        <NavIcon label="Настройки" active={navActive==='settings'} onClick={()=>onNav('settings')}
+          icon={<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>}/>
+      </div>
     </div>
   );
 }
@@ -998,7 +1047,7 @@ function AvatarFlyClone({ fly, exiting }) {
   return ReactDOM.createPortal(
     <div style={{
       position:'fixed', left:t.left, top:t.top,
-      width:t.width, height:t.height, borderRadius:'50%',
+      width:t.width, height:t.height, borderRadius:12,
       overflow:'hidden', zIndex:970, pointerEvents:'none',
       transformOrigin:'center center',
       transform: ready ? 'translate(0,0) scale(1)' : `translate(${dx}px,${dy}px) scale(${sc})`,
@@ -1012,7 +1061,7 @@ function AvatarFlyClone({ fly, exiting }) {
 }
 
 /* ── SoundCloudView ──────────────────────────────────────────────────────── */
-function SoundCloudView({ visible, scAuth, onLogin, onLogout, avatarRef, scTracks, scLoading, scError, onReload, onScTrackClick, scPlayingId }) {
+function SoundCloudView({ visible, scAuth, onLogin, onLogout, avatarRef }) {
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState(null);
 
@@ -1039,28 +1088,33 @@ function SoundCloudView({ visible, scAuth, onLogin, onLogout, avatarRef, scTrack
   };
 
   if (scAuth) return (
-    <div style={{...transStyle, display:'flex', flexDirection:'column'}}>
-      <div style={{padding:'32px 36px 16px', flexShrink:0, display:'flex', alignItems:'center', gap:12}}>
-        <div style={{fontSize:12, fontWeight:500, color:'rgba(255,255,255,0.22)', letterSpacing:'0.06em', textTransform:'uppercase'}}>лайки</div>
-        {!scLoading && scTracks.length > 0 && (
-          <div style={{fontSize:11, color:'rgba(255,255,255,0.14)'}}>{scTracks.length}</div>
-        )}
-        {scLoading && <div style={{fontSize:11, color:'rgba(255,255,255,0.2)'}}>загружаем...</div>}
-        {scError && (
-          <div style={{fontSize:11, color:'rgba(255,80,60,0.75)', maxWidth:320, lineHeight:1.5, wordBreak:'break-all'}}>
-            {scError} — <span style={{cursor:'pointer', textDecoration:'underline'}} onClick={onReload}>повторить</span>
-          </div>
-        )}
-        <div style={{flex:1}}/>
+    <div style={{...transStyle, display:'flex', alignItems:'center', justifyContent:'center'}}>
+      <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:18, padding:'24px'}}>
+        <div style={{
+          width:104, height:104, borderRadius:'50%',
+          background:'rgba(178,178,178,0.06)', border:'1px solid rgba(178,178,178,0.14)',
+          display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden',
+          color:'var(--accent)',
+        }}>
+          {scAuth.avatarUrl
+            ? <img src={scAuth.avatarUrl} style={{width:'100%',height:'100%',objectFit:'cover'}}/>
+            : <svg width="42" height="42" fill="none" stroke="currentColor" strokeWidth="1.6" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+          }
+        </div>
+        <div style={{textAlign:'center'}}>
+          <div style={{fontSize:11, color:'rgba(255,255,255,0.28)', letterSpacing:'0.08em', textTransform:'uppercase', marginBottom:8}}>signed as</div>
+          <div style={{fontSize:20, fontWeight:600, letterSpacing:'-0.02em', color:'rgba(255,255,255,0.85)'}}>{scAuth.username || 'неизвестно'}</div>
+        </div>
         <button onClick={onLogout} style={{
-          background:'none', border:'none', cursor:'pointer', fontFamily:'inherit',
-          fontSize:11, color:'rgba(255,255,255,0.2)', padding:'4px 8px',
-          transition:'color 0.15s',
-        }}>выйти</button>
-      </div>
-      <div style={{flex:1, minHeight:0, display:'flex', flexDirection:'column'}}>
-        <VirtualTrackList items={scTracks} activeId={scPlayingId ?? null}
-          onClickItem={(t) => onScTrackClick(t, scTracks.indexOf(t))}/>
+          background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.08)',
+          borderRadius:9, padding:'7px 18px', marginTop:8,
+          fontSize:12, fontWeight:500, color:'rgba(255,255,255,0.5)',
+          cursor:'pointer', fontFamily:'inherit',
+          transition:'background 0.15s, color 0.15s, border-color 0.15s',
+        }}
+          onMouseEnter={e=>{ e.currentTarget.style.background='rgba(255,255,255,0.07)'; e.currentTarget.style.color='rgba(255,255,255,0.75)'; }}
+          onMouseLeave={e=>{ e.currentTarget.style.background='rgba(255,255,255,0.04)'; e.currentTarget.style.color='rgba(255,255,255,0.5)'; }}
+        >выйти</button>
       </div>
     </div>
   );
@@ -1121,12 +1175,14 @@ function App() {
     autoplay:false, crossfade:0, defaultRepeat:false,
     startWithWindows:false, minimizeToTray:false, musicFolder:'',
     customTitles: {}, minDuration: 30, soundcloudAuth: null,
+    sourceMode: 'local',
   });
   const [sort,         setSort]         = useState('added');
   const [editingTitle, setEditingTitle] = useState(false);
   const [editValue,    setEditValue]    = useState('');
   const [scTracks,      setScTracks]      = useState([]);
   const [scLoading,     setScLoading]     = useState(false);
+  const [scUpdating,    setScUpdating]    = useState(false);
   const [scError,       setScError]       = useState(null);
   const [scPlayingTrack, setScPlayingTrack] = useState(null);
   const [scPlayingIdx,   setScPlayingIdx]   = useState(-1);
@@ -1151,6 +1207,7 @@ function App() {
   const sidebarProfileRef = useRef(null);
   const scTracksRef       = useRef([]);
   const scAuthRef         = useRef(null);
+  const scCacheRef        = useRef([]);
   const prevSearchRef     = useRef('');
   const homeSearchRef     = useRef(null);
   const libSearchRef      = useRef(null);
@@ -1375,16 +1432,21 @@ function App() {
     } catch {}
   }, []);
 
-  const loadScLikes = useCallback(async (auth) => {
-    setScLoading(true);
-    setScTracks([]);
+  const loadScLikes = useCallback(async (auth, opts = {}) => {
+    const silent = opts.silent === true;
+    if (silent) setScUpdating(true);
+    else { setScLoading(true); setScTracks([]); }
     setScError(null);
     const all = [];
     let userId = auth.userId;
     if (!userId) {
       const me = await window.electronAPI.scFetch('https://api-v2.soundcloud.com/me', auth.token, auth.clientId);
       if (me.data?.id) userId = me.data.id;
-      else { setScError(`не удалось получить userId: ${me.error ?? 'нет данных'}`); setScLoading(false); return; }
+      else {
+        setScError(`не удалось получить userId: ${me.error ?? 'нет данных'}`);
+        if (silent) setScUpdating(false); else setScLoading(false);
+        return;
+      }
     }
     let url = `https://api-v2.soundcloud.com/users/${userId}/likes?limit=200`;
     let pages = 0;
@@ -1415,14 +1477,16 @@ function App() {
       console.error('loadScLikes:', e);
     }
     if (all.length) {
+      scCacheRef.current = all;
+      window.electronAPI.scSaveLikesCache(all);
       const cached = await window.electronAPI.scCheckCovers(all.map(t => t.id));
       const withCache = all.map(t => cached[t.id] ? { ...t, coverUrl: cached[t.id] } : t);
       setScTracks(withCache);
-      setScLoading(false);
+      if (silent) setScUpdating(false); else setScLoading(false);
       loadScCovers(withCache.filter(t => !cached[t.id]));
     } else {
-      setScTracks(all);
-      setScLoading(false);
+      if (!silent) setScTracks(all);
+      if (silent) setScUpdating(false); else setScLoading(false);
     }
   }, []);
 
@@ -1452,15 +1516,85 @@ function App() {
     flush();
   }, []);
 
+  const incrementalScUpdate = useCallback(async (auth) => {
+    if (!auth?.userId) return;
+    setScUpdating(true);
+    setScError(null);
+    const knownIds = new Set(scCacheRef.current.map(t => t.id));
+    const newest = [];
+    let url = `https://api-v2.soundcloud.com/users/${auth.userId}/likes?limit=200`;
+    let pages = 0;
+    let foundKnown = false;
+    try {
+      while (url && pages < 20 && !foundKnown) {
+        const res = await window.electronAPI.scFetch(url, auth.token, auth.clientId);
+        if (res.error) { setScError(`ошибка api: ${res.error}`); break; }
+        if (!res.data?.collection) break;
+        for (const item of res.data.collection) {
+          const t = item.track;
+          if (!t?.id) continue;
+          if (knownIds.has(t.id)) { foundKnown = true; break; }
+          const progressive = t.media?.transcodings?.find(tc => tc.format?.protocol === 'progressive');
+          newest.push({
+            id: t.id,
+            title: t.title || 'Без названия',
+            artist: t.user?.username || '',
+            duration: Math.floor((t.duration || 0) / 1000),
+            color: scHashColor(t.id),
+            coverUrl: t.artwork_url ? t.artwork_url.replace('-large', '-t300x300') : null,
+            streamUrl: progressive?.url || null,
+          });
+        }
+        if (foundKnown) break;
+        url = res.data.next_href || null;
+        pages++;
+      }
+    } catch (e) {
+      setScError(String(e));
+      console.error('incrementalScUpdate:', e);
+      setScUpdating(false);
+      return;
+    }
+    if (foundKnown) {
+      if (newest.length > 0) {
+        const cachedCovers = await window.electronAPI.scCheckCovers(newest.map(t => t.id));
+        const newestWithCovers = newest.map(t => cachedCovers[t.id] ? { ...t, coverUrl: cachedCovers[t.id] } : t);
+        setScTracks(prev => [...newestWithCovers, ...prev]);
+        scCacheRef.current = [...newest, ...scCacheRef.current];
+        window.electronAPI.scSaveLikesCache(scCacheRef.current);
+        loadScCovers(newestWithCovers.filter(t => !cachedCovers[t.id]));
+      }
+      setScUpdating(false);
+    } else {
+      setScUpdating(false);
+      loadScLikes(auth, { silent: true });
+    }
+  }, [loadScLikes, loadScCovers]);
+
+  const initScLikes = useCallback(async (auth) => {
+    const cache = await window.electronAPI.scLoadLikesCache();
+    if (cache && cache.length > 0) {
+      scCacheRef.current = cache;
+      const cachedCovers = await window.electronAPI.scCheckCovers(cache.map(t => t.id));
+      const withCovers = cache.map(t => cachedCovers[t.id] ? { ...t, coverUrl: cachedCovers[t.id] } : t);
+      setScTracks(withCovers);
+      setScLoading(false);
+      loadScCovers(withCovers.filter(t => t.coverUrl && !t.coverUrl.startsWith('file:')));
+      incrementalScUpdate(auth);
+    } else {
+      loadScLikes(auth);
+    }
+  }, [loadScLikes, loadScCovers, incrementalScUpdate]);
+
   useEffect(() => {
-    if (settings.soundcloudAuth?.token) loadScLikes(settings.soundcloudAuth);
-    else setScTracks([]);
+    if (settings.soundcloudAuth?.token) initScLikes(settings.soundcloudAuth);
+    else { setScTracks([]); scCacheRef.current = []; }
   }, [settings.soundcloudAuth]);
 
   const handleScLogin = useCallback((auth) => {
     const startEl  = scAvatarRef.current;
     const targetEl = sidebarProfileRef.current;
-    setSettings(s => ({ ...s, soundcloudAuth: auth }));
+    setSettings(s => ({ ...s, soundcloudAuth: auth, sourceMode: 'sc' }));
     if (startEl && targetEl && auth.avatarUrl) {
       const startRect  = startEl.getBoundingClientRect();
       const targetRect = targetEl.getBoundingClientRect();
@@ -1469,16 +1603,18 @@ function App() {
       setTimeout(() => { setAvatarFly(null); setAvatarFlyExiting(false); }, 520);
     }
   }, []);
-  const handleScLogout = useCallback(() => setSettings(s => ({ ...s, soundcloudAuth: null })), []);
+  const handleScLogout = useCallback(() => {
+    scCacheRef.current = [];
+    try { window.electronAPI.scSaveLikesCache([]); } catch {}
+    setSettings(s => ({ ...s, soundcloudAuth: null, sourceMode: 'local' }));
+  }, []);
+  const handleToggleSource = useCallback(() => setSettings(s => ({ ...s, sourceMode: s.sourceMode === 'sc' ? 'local' : 'sc' })), []);
+  const sourceMode = (settings.soundcloudAuth && settings.sourceMode === 'sc') ? 'sc' : 'local';
 
   async function handleScTrackClick(scTrack, idx) {
     setScPlayingIdx(idx);
     setProgress(0);
     setIsPlaying(false);
-    setView('player');
-    setPlayerVisible(true);
-    setNavActive('library');
-    if (view === 'soundcloud') { /* fade handled by view change */ }
 
     const auth = scAuthRef.current;
     if (!scTrack.streamUrl || !auth) return;
@@ -1500,19 +1636,35 @@ function App() {
     setIsPlaying(true);
   }
 
-  function selectTrack(idx) {
-    setScPlayingTrack(null);
+  function selectTrack(t) {
+    const startPlayLocal = (idx) => {
+      setScPlayingTrack(null);
+      setTrackIdx(idx);
+      setProgress(0);
+      setIsPlaying(true);
+    };
+    const startPlay = () => {
+      if (sourceMode === 'sc') {
+        const scIdx = scTracks.indexOf(t);
+        if (scIdx >= 0) handleScTrackClick(t, scIdx);
+      } else {
+        const li = tracks.indexOf(t);
+        if (li >= 0) startPlayLocal(li);
+      }
+    };
+
     if (view === 'player') {
-      setTrackIdx(idx); setProgress(0); setIsPlaying(true);
+      startPlay();
       return;
     }
-    const artEl = artRefs.current[idx];
+
+    const artEl = artRefs.current[t.id];
     const startRect = artEl ? artEl.getBoundingClientRect() : { left:0, top:0, width:0, height:0 };
     const par = playerArtRef.current?.getBoundingClientRect();
     const targetRect = par ? { left: par.left, top: par.top, size: par.width } : { left: 0, top: 0, size: 260 };
 
-    setTrackIdx(idx); setProgress(0); setIsPlaying(true);
-    setHero({ track: tracks[idx], startRect, targetRect });
+    startPlay();
+    setHero({ track: t, startRect, targetRect });
     setHomeVisible(false);
     setPlayerVisible(true);
     setView('player');
@@ -1530,23 +1682,25 @@ function App() {
     return arr;
   }, [tracks, sort]);
 
-  const trackIdxMap = useMemo(() => {
-    const m = new Map();
-    tracks.forEach((t, i) => m.set(t.id, i));
-    return m;
-  }, [tracks]);
-
   const filtered = sortedTracks.filter(t =>
     t.title.toLowerCase().includes(search.toLowerCase()) ||
     t.artist.toLowerCase().includes(search.toLowerCase())
   );
+  const filteredSc = scTracks.filter(t =>
+    t.title.toLowerCase().includes(search.toLowerCase()) ||
+    t.artist.toLowerCase().includes(search.toLowerCase())
+  );
+  const activeList = sourceMode === 'sc' ? filteredSc : filtered;
+  const activeListPlayingId = sourceMode === 'sc'
+    ? (scPlayingTrack ? scPlayingTrack.id : null)
+    : (scPlayingTrack ? null : track?.id);
   const elapsed = Math.floor(progress * (track?.duration || 0));
 
   const handleNav = (id) => {
     setNavActive(id);
     if (id === 'home') {
       if (view === 'player') {
-        const artEl = artRefs.current[trackIdx];
+        const artEl = artRefs.current[track.id];
         const par = playerArtRef.current?.getBoundingClientRect();
         if (artEl && par) {
           const scrollEl = homeScrollRef.current;
@@ -1563,7 +1717,7 @@ function App() {
 
           const cardRect = artEl.getBoundingClientRect();
           setReverseHero({
-            track: tracks[trackIdx],
+            track: track,
             targetRect: { left: par.left, top: par.top, size: par.width },
             startRect:  { left: cardRect.left - 28, top: cardRect.top, width: cardRect.width, height: cardRect.height },
           });
@@ -1586,12 +1740,12 @@ function App() {
       if (view === 'home') setHomeVisible(false);
       setTimeout(() => setView('settings'), view === 'home' ? 240 : 300);
     } else if (view === 'home') {
-      const artEl = artRefs.current[trackIdx];
+      const artEl = artRefs.current[track.id];
       const par = playerArtRef.current?.getBoundingClientRect();
       if (artEl && par) {
         const startRect = artEl.getBoundingClientRect();
         const targetRect = { left: par.left, top: par.top, size: par.width };
-        setHero({ track: tracks[trackIdx], startRect, targetRect });
+        setHero({ track: track, startRect, targetRect });
         setTimeout(() => setHeroExiting(true), 300);
         setTimeout(() => { setHero(null); setHeroExiting(false); }, 420);
       }
@@ -1615,7 +1769,8 @@ function App() {
       {avatarFly && <AvatarFlyClone fly={avatarFly} exiting={avatarFlyExiting}/>}
       <Sidebar navActive={navActive} onNav={handleNav}
         libCollapsed={libCollapsed} onToggleLib={()=>setLibCollapsed(v=>!v)}
-        inPlayer={view==='player'} scAuth={settings.soundcloudAuth||null} profileRef={sidebarProfileRef}/>
+        inPlayer={view==='player'} scAuth={settings.soundcloudAuth||null} profileRef={sidebarProfileRef}
+        sourceMode={sourceMode} onToggleSource={handleToggleSource}/>
 
       <div style={{position:'relative', flex:1, height:'100%', overflow:'hidden'}}>
 
@@ -1632,7 +1787,24 @@ function App() {
           }}>
             <div style={{display:'flex', alignItems:'center', gap:16, marginBottom:24}}>
               <div style={{fontSize:12, fontWeight:500, color:'rgba(255,255,255,0.22)',
-                letterSpacing:'0.06em', textTransform:'uppercase', flexShrink:0}}>Все треки</div>
+                letterSpacing:'0.06em', textTransform:'uppercase', flexShrink:0}}>
+                {sourceMode === 'sc' ? 'Лайки' : 'Все треки'}
+              </div>
+              {sourceMode === 'sc' && scLoading && (
+                <div style={{fontSize:11, color:'rgba(255,255,255,0.32)'}}>загружаем...</div>
+              )}
+              {sourceMode === 'sc' && !scLoading && scUpdating && (
+                <div style={{fontSize:11, color:'rgba(255,255,255,0.32)'}}>обновляем...</div>
+              )}
+              {sourceMode === 'sc' && !scLoading && !scUpdating && scTracks.length > 0 && (
+                <div style={{fontSize:11, color:'rgba(255,255,255,0.16)'}}>{scTracks.length}</div>
+              )}
+              {sourceMode === 'sc' && scError && (
+                <div style={{fontSize:11, color:'rgba(255,80,60,0.75)', maxWidth:320, lineHeight:1.5, wordBreak:'break-all'}}>
+                  {scError} — <span style={{cursor:'pointer', textDecoration:'underline'}}
+                    onClick={() => loadScLikes(settings.soundcloudAuth)}>повторить</span>
+                </div>
+              )}
               <div style={{
                 display:'flex', alignItems:'center', gap:9,
                 background: searchFocused ? 'rgba(255,255,255,0.065)' : 'rgba(255,255,255,0.04)',
@@ -1665,31 +1837,44 @@ function App() {
                   }}>×</div>
                 )}
               </div>
-              <div style={{display:'flex', gap:3, marginLeft:'auto'}}>
-                {[['added','по дате'],['artist','по артисту'],['title','по названию'],['duration','по длине']].map(([k,label]) => (
-                  <button key={k} onClick={() => setSort(k)} style={{
-                    background: sort===k ? 'rgba(255,255,255,0.07)' : 'none',
-                    border: '1px solid ' + (sort===k ? 'rgba(255,255,255,0.09)' : 'transparent'),
-                    borderRadius:6, padding:'3px 9px',
-                    fontSize:10, fontWeight:500, letterSpacing:'0.05em', textTransform:'uppercase',
-                    color: sort===k ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.2)',
-                    cursor:'pointer', fontFamily:'inherit',
-                    transition:'color 0.15s, background 0.15s, border-color 0.15s',
-                  }}>{label}</button>
+              {sourceMode !== 'sc' && (
+                <div style={{display:'flex', gap:3, marginLeft:'auto'}}>
+                  {[['added','по дате'],['artist','по артисту'],['title','по названию'],['duration','по длине']].map(([k,label]) => (
+                    <button key={k} onClick={() => setSort(k)} style={{
+                      background: sort===k ? 'rgba(255,255,255,0.07)' : 'none',
+                      border: '1px solid ' + (sort===k ? 'rgba(255,255,255,0.09)' : 'transparent'),
+                      borderRadius:6, padding:'3px 9px',
+                      fontSize:10, fontWeight:500, letterSpacing:'0.05em', textTransform:'uppercase',
+                      color: sort===k ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.2)',
+                      cursor:'pointer', fontFamily:'inherit',
+                      transition:'color 0.15s, background 0.15s, border-color 0.15s',
+                    }}>{label}</button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {sourceMode === 'sc' && activeList.length === 0 ? (
+              <div style={{
+                display:'flex', alignItems:'center', justifyContent:'center',
+                padding:'80px 20px', fontSize:13, color:'rgba(255,255,255,0.32)',
+                textAlign:'center',
+              }}>
+                {scLoading
+                  ? 'загружаем лайки...'
+                  : scError
+                    ? 'не удалось загрузить'
+                    : (search ? 'ничего не найдено' : 'лайков нет')}
+              </div>
+            ) : (
+              <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(128px, 1fr))', gap:18}}>
+                {activeList.map((t) => (
+                  <HomeCard key={t.id} track={t}
+                    artRef={el => artRefs.current[t.id] = el}
+                    onClick={() => selectTrack(t)}
+                    artHidden={reverseHero && !reverseHeroExiting && t.id === track.id}/>
                 ))}
               </div>
-            </div>
-            <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(128px, 1fr))', gap:18}}>
-              {filtered.map((t) => {
-                const origIdx = trackIdxMap.get(t.id);
-                return (
-                  <HomeCard key={t.id} track={t}
-                    artRef={el => artRefs.current[origIdx] = el}
-                    onClick={() => selectTrack(origIdx)}
-                    artHidden={reverseHero && !reverseHeroExiting && t.id === track.id}/>
-                );
-              })}
-            </div>
+            )}
           </div>
         )}
 
@@ -1744,14 +1929,19 @@ function App() {
             </div>
           </div>
           <VirtualTrackList
-            items={scPlayingTrack
-              ? scTracks.filter(t => !search || t.title.toLowerCase().includes(search.toLowerCase()) || t.artist.toLowerCase().includes(search.toLowerCase()))
-              : filtered}
-            activeId={scPlayingTrack ? scPlayingTrack.id : track.id}
-            onClickItem={scPlayingTrack
-              ? t => handleScTrackClick(t, scTracksRef.current.indexOf(t))
-              : t => { setScPlayingTrack(null); setTrackIdx(tracks.indexOf(t)); setProgress(0); setIsPlaying(true); }}
-            scrollToActive={scPlayingTrack ? libScrollTrigger : 0}
+            items={activeList}
+            activeId={activeListPlayingId}
+            onClickItem={t => {
+              if (sourceMode === 'sc') {
+                handleScTrackClick(t, scTracksRef.current.indexOf(t));
+              } else {
+                setScPlayingTrack(null);
+                setTrackIdx(tracks.indexOf(t));
+                setProgress(0);
+                setIsPlaying(true);
+              }
+            }}
+            scrollToActive={sourceMode === 'sc' ? libScrollTrigger : 0}
           />
         </div>
 
@@ -1883,7 +2073,7 @@ function App() {
         )}
 
         <SettingsView settings={settings} onSettings={setSettings} visible={view==='settings'} onScanTracks={handleScanTracks}/>
-        <SoundCloudView visible={view==='soundcloud'} scAuth={settings.soundcloudAuth||null} onLogin={handleScLogin} onLogout={handleScLogout} avatarRef={scAvatarRef} scTracks={scTracks} scLoading={scLoading} scError={scError} onReload={()=>loadScLikes(settings.soundcloudAuth)} onScTrackClick={handleScTrackClick} scPlayingId={scPlayingTrack?.id}/>
+        <SoundCloudView visible={view==='soundcloud'} scAuth={settings.soundcloudAuth||null} onLogin={handleScLogin} onLogout={handleScLogout} avatarRef={scAvatarRef}/>
 
       </div>
     </div>
