@@ -27,32 +27,6 @@ seWer — музыкальный плеер с поддержкой логина
 
 <br/>
 
-```
-#07070a  ·  #9b7dff  ·  Proxima Soft
-```
-
-<br/>
-
----
-
-<br/>
-
-## запуск
-
-```bash
-npm install
-npm start
-```
-
-```bash
-npm run build   # → .exe
-```
-
-<br/>
-
----
-
-<br/>
 
 ## стек
 
@@ -65,21 +39,6 @@ npm run build   # → .exe
 | сборка | electron-builder · nsis |
 
 <br/>
-
----
-
-<br/>
-
-## дорожная карта
-
-```
-✅  ui — home / player / settings / hero-анимации
-🔄  soundcloud — парсинг страниц
-🔄  аудио движок — soundcloud стриминг
-⬜  интеграция всего вместе
-```
-
----
 
 <div align="center">
 
