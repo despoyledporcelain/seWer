@@ -6,7 +6,7 @@
 
 <br/>
 
-*a dark, minimal music player.*<br/>*local library. soundcloud. yours.*
+*music player.*<br/>*soundcloud. local.  yours.*
 
 <br/>
 
@@ -26,6 +26,10 @@
 seWer — музыкальный плеер с поддержкой логина через soundcloud, локального воспроизведения музыки с прекрасным пользовательским интерфейсом.
 
 <br/>
+
+---
+
+![main screen(https://i.ibb.co/SzbpZ81/1.png)
 
 ---
 
