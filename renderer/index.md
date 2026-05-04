@@ -1,6 +1,6 @@
 # карта renderer/index.html
 
-весь ui — один файл ~2086 строк. jsx компилируется babel standalone в браузере.
+весь ui — один файл ~2160 строк. jsx компилируется babel standalone в браузере.
 
 ## структура файла
 
@@ -150,6 +150,8 @@ searchFocused      false
 `settings.soundcloudAuth` — `{ token, clientId, userId, username, avatarUrl }` — хранится в settings.json  
 `settings.sourceMode` — `'local' | 'sc'` — хранится в settings.json  
 `track` — вычисляется как `scPlayingTrack || tracks[trackIdx] || tracks[0]`
+
+**welcome state (home):** если `!settings.musicFolder && !settings.soundcloudAuth` — показывается центрированный empty state с двумя кнопками («выбрать папку» / «войти в soundcloud»). хедер с поиском/сортировкой в этом случае скрыт. условие — `showWelcome` (рядом с `activeList`).
 
 **эффективный sourceMode (derived, строка 1579):**
 ```js
