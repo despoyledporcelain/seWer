@@ -1,9 +1,10 @@
-const { app, BrowserWindow, ipcMain, dialog, globalShortcut, nativeImage } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, globalShortcut, nativeImage, Tray, Menu } = require('electron')
 const path = require('path')
 const fs   = require('fs')
 const mm   = require('music-metadata')
 
 let win
+let tray = null
 
 // Discord RPC
 let discordClient = null
@@ -96,9 +97,28 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'))
 }
 
+function createTray() {
+  const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png'))
+  tray = new Tray(icon)
+  tray.setToolTip('seWer')
+  tray.on('double-click', () => { win.show(); win.focus() })
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Открыть', click: () => { win.show(); win.focus() } },
+    { type: 'separator' },
+    { label: 'Выйти', click: () => app.quit() },
+  ]))
+}
+
 ipcMain.on('win-minimize', () => win.minimize())
 ipcMain.on('win-maximize', () => win.isMaximized() ? win.unmaximize() : win.maximize())
-ipcMain.on('win-close',    () => win.close())
+ipcMain.on('win-close', () => {
+  const settings = loadSettings()
+  if (settings.minimizeToTray) {
+    win.hide()
+  } else {
+    win.close()
+  }
+})
 
 ipcMain.handle('dialog-select-folder', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog(win, {
@@ -244,6 +264,7 @@ ipcMain.handle('sc-fetch', (_, url, token, clientId) => new Promise((resolve) =>
 
 app.whenReady().then(() => {
   createWindow()
+  createTray()
   initDiscord()
   globalShortcut.register('MediaPlayPause',     () => win?.webContents.send('media-play-pause'))
   globalShortcut.register('MediaNextTrack',     () => win?.webContents.send('media-next'))
