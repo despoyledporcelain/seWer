@@ -525,6 +525,7 @@ const TrackRow = React.memo(function TrackRow({ track, isActive, onClick }) {
         display:'flex', alignItems:'center', gap:10, padding:'8px 10px', borderRadius:9,
         background: !isActive && hov ? 'rgba(255,255,255,0.03)' : 'none',
         cursor:'pointer', transition:'background 0.15s ease', position:'relative', zIndex:1,
+        contentVisibility:'auto', containIntrinsicSize:'auto 50px',
       }}>
       <div style={{
         width:34, height:34, borderRadius:7, flexShrink:0,
@@ -549,45 +550,25 @@ const TrackRow = React.memo(function TrackRow({ track, isActive, onClick }) {
   );
 });
 
-/* ── VirtualTrackList ────────────────────────────────────────────────────── */
+/* ── TrackList ───────────────────────────────────────────────────────────── */
 function VirtualTrackList({ items, activeId, onClickItem, scrollToActive }) {
-  const ROW_H   = 50;
-  const BUFFER  = 8;
-  const ref     = useRef(null);
-  const [scrollTop, setScrollTop] = useState(0);
-  const [viewH,     setViewH]     = useState(500);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    setViewH(el.clientHeight);
-    const ro = new ResizeObserver(() => setViewH(el.clientHeight));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+  const ROW_H = 50;
+  const ref   = useRef(null);
 
   useEffect(() => {
     if (!scrollToActive || !ref.current) return;
     const idx = items.findIndex(t => t.id === activeId);
     if (idx < 0) return;
     const el = ref.current;
-    const target = Math.max(0, idx * ROW_H - el.clientHeight / 2 + ROW_H / 2);
-    el.scrollTop = target;
-    setScrollTop(target);
+    el.scrollTop = Math.max(0, idx * ROW_H - el.clientHeight / 2 + ROW_H / 2);
   }, [scrollToActive]);
 
-  const handleScroll = useCallback(e => setScrollTop(e.currentTarget.scrollTop), []);
-
   const onClickStable = useCallback(t => onClickItem(t), [onClickItem]);
-
-  const start = Math.max(0, Math.floor(scrollTop / ROW_H) - BUFFER);
-  const end   = Math.min(items.length, Math.ceil((scrollTop + viewH) / ROW_H) + BUFFER);
 
   const activeIdx = items.findIndex(t => t.id === activeId);
 
   return (
-    <div ref={ref} className="scroll-thin" style={{flex:1, overflowY:'auto', padding:'2px 6px 10px', position:'relative', willChange:'transform', contain:'strict'}}
-      onScroll={handleScroll}>
+    <div ref={ref} className="scroll-thin" style={{flex:1, overflowY:'auto', padding:'2px 6px 10px', position:'relative', willChange:'transform'}}>
       {activeIdx >= 0 && (
         <div style={{
           position:'absolute', pointerEvents:'none',
@@ -597,8 +578,8 @@ function VirtualTrackList({ items, activeId, onClickItem, scrollToActive }) {
           zIndex:0,
         }}/>
       )}
-      <div style={{paddingTop: start * ROW_H, paddingBottom: (items.length - end) * ROW_H, position:'relative', zIndex:1}}>
-        {items.slice(start, end).map(t => (
+      <div style={{position:'relative', zIndex:1}}>
+        {items.map(t => (
           <TrackRow key={t.id} track={t} isActive={t.id === activeId}
             onClick={() => onClickStable(t)}/>
         ))}

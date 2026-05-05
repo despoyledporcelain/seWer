@@ -68,14 +68,15 @@ canvas TW=28px, вертикальный. drag вверх = больше. onChan
 ### `TrackRow` — строки 487–518
 пропсы: `{track, isActive, onClick}`  
 строка библиотеки: миниатюра 34px + title/artist + duration. высота ~50px.  
+обёрнут в `React.memo`. `contentVisibility:'auto', containIntrinsicSize:'auto 50px'` — браузер пропускает рендер строк вне вьюпорта нативно.  
 фон active рисует пилл в `VirtualTrackList`. `position:relative, zIndex:1` чтобы быть поверх пилла. фон миниатюры — нейтральный `#111116`.
 
 ### `VirtualTrackList` — строки 520–572
 пропсы: `{items, activeId, onClickItem, scrollToActive}`  
-виртуализированный список: рендерит только видимые строки + 4 буфера. ROW_H=50.  
+рендерит все строки сразу — видимость управляется CSS `content-visibility:auto` на каждом `TrackRow`, без js-виртуализации. ROW_H=50.  
 содержит абсолютно позиционированный «пилл» — `top: activeIdx * ROW_H + 2`, CSS transition `0.42s cubic-bezier(0.22,1,0.36,1)`.  
 `scrollToActive` — числовой триггер: при изменении скроллит список к активному треку (центрирует).  
-scroll-контейнер имеет `className="scroll-thin"`.
+scroll-контейнер имеет `className="scroll-thin"`, `willChange:'transform'`.
 
 ### `HomeCard` — строки 574–617
 пропсы: `{track, onClick, artRef, artHidden}`  
