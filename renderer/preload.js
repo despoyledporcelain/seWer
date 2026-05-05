@@ -18,4 +18,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   scCacheCover:   (id, url) => ipcRenderer.invoke('sc-cache-cover', id, url),
   scLoadLikesCache: ()   => ipcRenderer.invoke('sc-load-likes-cache'),
   scSaveLikesCache: (data) => ipcRenderer.invoke('sc-save-likes-cache', data),
+  discordUpdate: (data) => ipcRenderer.invoke('discord-update', data),
+  discordClear:  ()     => ipcRenderer.invoke('discord-clear'),
 })

@@ -1262,6 +1262,9 @@ function App() {
   const prevSearchRef     = useRef('');
   const homeSearchRef     = useRef(null);
   const libSearchRef      = useRef(null);
+  const discordTimerRef   = useRef(null);
+  const discordProgressRef = useRef(0);
+  discordProgressRef.current = progress;
   scTracksRef.current = scTracks;
   scAuthRef.current   = settings.soundcloudAuth;
   isPlayingRef.current = isPlaying;
@@ -1367,6 +1370,28 @@ function App() {
     return () => window.removeEventListener('keydown', handler);
   }, [view]);
 
+  useEffect(() => {
+    clearTimeout(discordTimerRef.current);
+    discordTimerRef.current = setTimeout(() => {
+      if (!track) { window.electronAPI?.discordClear?.(); return; }
+      let coverUrl = (track.coverUrl || '').startsWith('https://') ? track.coverUrl : null;
+      if (!coverUrl && scPlayingTrack) {
+        const cached = scCacheRef.current.find(t => t.id === track.id);
+        if (cached?.coverUrl?.startsWith('https://')) coverUrl = cached.coverUrl;
+      }
+      window.electronAPI?.discordUpdate?.({
+        title:    track.title,
+        artist:   track.artist,
+        duration: track.duration,
+        progress: discordProgressRef.current,
+        coverUrl,
+        isPlaying,
+      });
+    }, 800);
+  }, [track?.id, isPlaying]);
+
+  useEffect(() => () => window.electronAPI?.discordClear?.(), []);
+
   function handleNext() {
     if (repeat === 'one') {
       const audio = audioRef.current;
@@ -1414,9 +1439,24 @@ function App() {
 
   const handleSeek = useCallback((v) => {
     setProgress(v);
+    discordProgressRef.current = v;
     const audio = audioRef.current;
     if (audio?.duration) audio.currentTime = v * audio.duration;
-  }, []);
+    clearTimeout(discordTimerRef.current);
+    discordTimerRef.current = setTimeout(() => {
+      const t = track;
+      if (!t) return;
+      let coverUrl = (t.coverUrl || '').startsWith('https://') ? t.coverUrl : null;
+      if (!coverUrl && scPlayingTrack) {
+        const cached = scCacheRef.current.find(c => c.id === t.id);
+        if (cached?.coverUrl?.startsWith('https://')) coverUrl = cached.coverUrl;
+      }
+      window.electronAPI?.discordUpdate?.({
+        title: t.title, artist: t.artist, duration: t.duration,
+        progress: v, coverUrl, isPlaying: isPlayingRef.current,
+      });
+    }, 400);
+  }, [track, scPlayingTrack]);
 
   useEffect(() => { setEditingTitle(false); }, [trackIdx]);
 

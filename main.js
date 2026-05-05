@@ -5,6 +5,46 @@ const mm   = require('music-metadata')
 
 let win
 
+// Discord RPC
+let discordClient = null
+let discordReady  = false
+
+async function initDiscord() {
+  try {
+    const { Client } = await import('@xhayper/discord-rpc')
+    discordClient = new Client({ clientId: '1501214545136586792' })
+    discordClient.on('ready',        () => { discordReady = true })
+    discordClient.on('disconnected', () => { discordReady = false })
+    await discordClient.login()
+  } catch {}
+}
+
+ipcMain.handle('discord-update', async (_, data) => {
+  if (!discordReady || !discordClient?.user) return
+  try {
+    const activity = {
+      type: 2,
+      details: String(data.title  || '').slice(0, 128),
+      state:   String(data.artist || '').slice(0, 128),
+    }
+    if (data.coverUrl?.startsWith('https://')) {
+      activity.largeImageKey = data.coverUrl
+    }
+    if (data.isPlaying && data.duration > 0) {
+      const elapsed = Math.max(0, data.progress) * data.duration * 1000
+      const now = Date.now()
+      activity.startTimestamp = Math.floor(now - elapsed)
+      activity.endTimestamp   = Math.floor(now - elapsed + data.duration * 1000)
+    }
+    await discordClient.user.setActivity(activity)
+  } catch {}
+})
+
+ipcMain.handle('discord-clear', async () => {
+  if (!discordReady || !discordClient?.user) return
+  try { await discordClient.user.clearActivity() } catch {}
+})
+
 const AUDIO_EXTS = new Set(['.mp3', '.flac', '.ogg', '.wav', '.m4a', '.aac', '.opus', '.wma'])
 
 function hashColor(str) {
@@ -204,12 +244,21 @@ ipcMain.handle('sc-fetch', (_, url, token, clientId) => new Promise((resolve) =>
 
 app.whenReady().then(() => {
   createWindow()
+  initDiscord()
   globalShortcut.register('MediaPlayPause',     () => win?.webContents.send('media-play-pause'))
   globalShortcut.register('MediaNextTrack',     () => win?.webContents.send('media-next'))
   globalShortcut.register('MediaPreviousTrack', () => win?.webContents.send('media-prev'))
 })
 
-app.on('will-quit', () => globalShortcut.unregisterAll())
+app.once('before-quit', async (event) => {
+  event.preventDefault()
+  globalShortcut.unregisterAll()
+  try {
+    if (discordReady && discordClient?.user) await discordClient.user.clearActivity()
+    if (discordClient) await discordClient.destroy()
+  } catch {}
+  app.exit(0)
+})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
