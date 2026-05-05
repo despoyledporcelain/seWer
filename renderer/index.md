@@ -22,6 +22,10 @@
 глобально: `*, *::before, *::after { user-select: none }` — текст не выделяется.  
 `input[type=number]` — спинеры скрыты через `-webkit-appearance:none`.
 
+**скроллбары:**
+- `.scroll-thin` — кастомный webkit-скроллбар: 8px ширина (большая зона захвата), визуально 2px через `border: 3px solid transparent + background-clip: content-box`. hover → 4px + ярче. track margin `10px 0`.
+- `.scroll-home` — дополняет `.scroll-thin` для домашней сетки: `margin-top:82px; margin-bottom:18px` (выравнивает трек скроллбара по высоте карточек, ниже хедера поиска).
+
 шрифт: **Proxima Soft** (локальный, `renderer/fonts/ProximaSoft-Bold.ttf`, подключён через `@font-face`).
 
 анимации: `breathe` (масштаб+opacity), `spin` (360°)
@@ -70,7 +74,8 @@ canvas TW=28px, вертикальный. drag вверх = больше. onChan
 пропсы: `{items, activeId, onClickItem, scrollToActive}`  
 виртуализированный список: рендерит только видимые строки + 4 буфера. ROW_H=50.  
 содержит абсолютно позиционированный «пилл» — `top: activeIdx * ROW_H + 2`, CSS transition `0.42s cubic-bezier(0.22,1,0.36,1)`.  
-`scrollToActive` — числовой триггер: при изменении скроллит список к активному треку (центрирует).
+`scrollToActive` — числовой триггер: при изменении скроллит список к активному треку (центрирует).  
+scroll-контейнер имеет `className="scroll-thin"`.
 
 ### `HomeCard` — строки 574–617
 пропсы: `{track, onClick, artRef, artHidden}`  
@@ -178,9 +183,11 @@ sidebarProfileRef null — ref на иконку профиля в Sidebar (це
 scTracksRef      []   — синхронизируется с scTracks; используется в handleNext/Prev
 scAuthRef        null — синхронизируется с settings.soundcloudAuth
 scCacheRef       []   — данные api в формате с CDN coverUrl (для записи в sc_likes.json)
-prevSearchRef    ''
-homeSearchRef    null
-libSearchRef     null
+prevSearchRef      ''
+homeSearchRef      null
+libSearchRef       null
+discordTimerRef    null — debounce-таймер Discord RPC обновлений
+discordProgressRef 0    — всегда актуальный `progress` (синхронизируется каждый рендер); используется внутри setTimeout-коллбэков чтобы не захватывать стейл-значение
 ```
 
 **useEffect-ы (аудио):**
@@ -198,10 +205,14 @@ libSearchRef     null
 - `[settings.soundcloudAuth]`: если токен есть → `initScLikes(auth)`; иначе → `setScTracks([])` + чистит `scCacheRef`
 - `[view]`: ctrl+f переключает фокус между home/lib search
 
+**useEffect-ы (Discord RPC):**
+- `[track?.id, isPlaying]` — 800мс debounce → `discordUpdate` с title/artist/duration/progress/coverUrl. coverUrl: берёт HTTPS-ссылку из `track.coverUrl`; если там `file://` — ищет CDN URL в `scCacheRef` по id. timestamps (`startTimestamp`/`endTimestamp`) вычисляются в main.js из `progress * duration`.
+- `[]` cleanup — при размонтировании: `discordClear()`
+
 **ключевые функции:**
 - `handleNext()` — строка 1319: в SC режиме (`scPlayingTrack !== null`) — следующий трек в `scTracks`; иначе обычная логика (repeat/shuffle/local). определяется по тому **что играет**, не по `sourceMode`
 - `handlePrev()` — строка 1348: симметрично
-- `handleSeek(v)` — строка 1364
+- `handleSeek(v)` — строка 1438: кроме перемотки аудио немедленно обновляет `discordProgressRef.current` и через 400мс шлёт Discord RPC с актуальной позицией
 - `commitEdit()` — строка 1379: сохраняет кастомное название в `tracks` state и `settings.customTitles`
 - `loadCovers(tracksArr)` — строка 1391: 16 воркеров параллельно, base64 обложки для локальных файлов
 - `handleScanTracks(folder)` — строка 1420: сканирует папку
@@ -251,7 +262,14 @@ Sidebar(58px) | LibraryPanel(260px) | CenterPlayer(flex:1) | VolumeSlider(28px)
 **ipc-методы (preload.js):**
 - window/файлы/настройки — без изменений
 - `scLogin`, `scFetch`, `scCheckCovers`, `scCacheCover` — как было
-- **новые**: `scLoadLikesCache()` → читает `%AppData%\seWer\sc_likes.json`, `scSaveLikesCache(data)` → пишет туда
+- `scLoadLikesCache()` → читает `%AppData%\seWer\sc_likes.json`, `scSaveLikesCache(data)` → пишет туда
+- `discordUpdate(data)` → `discord-update` ipc: обновляет Discord Rich Presence (type=2 Listening, details=title, state=artist, largeImageKey=coverUrl, startTimestamp/endTimestamp)
+- `discordClear()` → `discord-clear` ipc: снимает presence
+
+**Discord RPC (main.js):**
+- clientId `1501214545136586792`, пакет `@xhayper/discord-rpc`, dynamic `import()`
+- `initDiscord()` — вызывается в `app.whenReady()`, использует `client.login()` (не `connect()`)
+- `before-quit` с `event.preventDefault()` — дожидается `clearActivity()` + `destroy()` перед выходом, чтобы presence не утекала после закрытия приложения
 
 ### рендер (строка 2083)
 ```js

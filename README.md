@@ -28,7 +28,7 @@ seWer — музыкальный плеер с поддержкой логина
 <br/>
 
 ---
-
+<div align="center">
 ![main screen](https://i.ibb.co/SzbpZ81/1.png)
 
 ---
@@ -44,7 +44,7 @@ seWer — музыкальный плеер с поддержкой логина
 | сборка | electron-builder · nsis |
 
 <br/>
-
+</div>
 <div align="center">
 
 <br/>
