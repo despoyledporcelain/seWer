@@ -26,8 +26,8 @@
 seWer — музыкальный плеер с поддержкой логина через soundcloud, локального воспроизведения музыки с прекрасным пользовательским интерфейсом.
 
 <br/>
-<div align="center">
 ---
+<div align="center">
 
 ![main screen](https://i.ibb.co/SzbpZ81/1.png)
 
