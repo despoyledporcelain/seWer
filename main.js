@@ -236,24 +236,28 @@ ipcMain.handle('sc-login', () => new Promise((resolve) => {
   authWin.on('closed', () => { if (!resolved) resolve(null) })
 }))
 
-ipcMain.handle('sc-fetch', (_, url, token, clientId) => new Promise((resolve) => {
+ipcMain.handle('sc-fetch', (_, url, token, clientId, method = 'GET') => new Promise((resolve) => {
   const fullUrl = url.includes('client_id=') ? url
     : `${url}${url.includes('?') ? '&' : '?'}client_id=${encodeURIComponent(clientId)}`
   const parsed = new URL(fullUrl)
   const req = require('https').request({
     hostname: parsed.hostname,
     path: parsed.pathname + parsed.search,
-    method: 'GET',
+    method,
     headers: {
       'Authorization': `OAuth ${token}`,
       'Accept': 'application/json',
       'User-Agent': 'Mozilla/5.0',
+      'Content-Length': 0,
     },
   }, (res) => {
     let raw = ''
     res.on('data', c => raw += c)
     res.on('end', () => {
-      if (res.statusCode !== 200) { resolve({ error: res.statusCode }); return }
+      if (res.statusCode !== 200 && res.statusCode !== 201 && res.statusCode !== 204) {
+        resolve({ error: res.statusCode }); return
+      }
+      if (!raw.trim()) { resolve({ data: null }); return }
       try { resolve({ data: JSON.parse(raw) }) }
       catch { resolve({ error: 'parse_error' }) }
     })

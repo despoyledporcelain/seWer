@@ -1,14 +1,14 @@
 # карта renderer/index.html
 
-весь ui — один файл ~2160 строк. jsx компилируется babel standalone в браузере.
+весь ui — один файл ~2500 строк. jsx компилируется babel standalone в браузере.
 
 ## структура файла
 
 | строки    | что                                                        |
 |-----------|------------------------------------------------------------|
-| 1–76      | `<head>`: cdn-скрипты, css (`:root` vars, `#app-shell`, titlebar, scrollbar) |
+| 1–76      | `<head>`: cdn-скрипты (react **production**), css (`:root` vars, `#app-shell`, titlebar, scrollbar) |
 | 77–93     | `#app-shell` + `#titlebar` html: wrapper с border-radius + кнопки minimize/maximize/close |
-| 94–2086   | `<script type="text/babel">`: весь react                   |
+| 94–2501   | `<script type="text/babel">`: весь react                   |
 
 ## css-переменные (строка 14)
 
@@ -78,50 +78,68 @@ canvas TW=28px, вертикальный. drag вверх = больше. onChan
 `scrollToActive` — числовой триггер: при изменении скроллит список к активному треку (центрирует).  
 scroll-контейнер имеет `className="scroll-thin"`, `willChange:'transform'`.
 
-### `HomeCard` — строки 574–617
-пропсы: `{track, onClick, artRef, artHidden}`  
-карточка сетки. hover-scale 1.03. `artRef` — ref на div-обложку (для HeroClone). `artHidden` — скрывает обложку во время reverse-hero. фон art-div всегда `#111116`; заглушка — иконка ноты (svg).
+### `HomeCard` — строки 591–651
+пропсы: `{track, onClick, artRef, artHidden, isLiked, onLike}`  
+карточка сетки. hover-scale 1.03. `artRef` — ref на div-обложку (для HeroClone). `artHidden` — скрывает обложку во время reverse-hero. фон art-div всегда `#111116`; заглушка — иконка ноты (svg).  
+**сердечко** — правый нижний угол обложки, `opacity: hov || isLiked ? 1 : 0`. цвет `var(--accent)` если залайкан. `onLike=null` когда `sourceMode!=='sc'` — тогда сердечко не рендерится.
 
-### `HeroClone` — строки 619–668
+### `HeroClone` — строки 652–705
 пропсы: `{hero: {track, startRect, targetRect: {left,top,size}}, exiting, reverse=false}`  
 ReactDOM.createPortal → document.body. CSS transition 340ms. фон `#111116`; если `coverUrl` — только img; иначе — иконка ноты.
 
-### `Sidebar` — строки 670–782
+### `Sidebar` — строки 706–820
 пропсы: `{navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth, profileRef, sourceMode, onToggleSource}`  
 левая панель 58px.  
 - **сверху — аватар-кнопка soundcloud**: квадратная 44×44, `borderRadius:12`, кликом → `onNav('soundcloud')`. `profileRef` на этом блоке (для AvatarFlyClone). Когда `navActive==='soundcloud'` — рамка `1px` светлеет до `rgba(178,178,178,0.55)`. Содержимое: при `scAuth?.avatarUrl` — `<img>`, иначе — `SoundCloudIcon` оранжевый (size=22)
-- **nav-группа** (Треки + Плеер) с **анимирующимся пиллом**:
-  - `navRefs` на каждую кнопку, `useLayoutEffect` мерит `offsetTop`/`offsetHeight` активной → state `pillRect`
+- **nav-группа** (Треки + **Поиск** + Плеер) с **анимирующимся пиллом**:
+  - NAV: `[{id:'home'}, {id:'search', иконка лупы}, {id:'library'}]`
+  - `navRefs` на каждую кнопку, `useLayoutEffect([navActive, inPlayer])` мерит `offsetTop`/`offsetHeight` активной → state `pillRect`
   - абсолютный div рендерится в группе: `top/height` из `pillRect`, transition `0.34s cubic-bezier(0.22,1,0.36,1)`
-  - `pillRect.visible=false` (opacity:0) когда `navActive` это `soundcloud`/`settings` — пилл исчезает плавно, кнопки используют `NavIcon noActiveBg={true}`
+  - `pillRect.visible=false` (opacity:0) когда `navActive` это `soundcloud`/`settings` — пилл исчезает плавно
 - collapse-кнопка библиотеки (видна только в view='player')  
 - внизу: кнопка **Локальная библиотека** (иконка папки) — toggle режима, видна только при `scAuth`. `active=sourceMode==='local'`. над настройками  
 - настройки  
 
-### `CrossfadeSlider` — строки 784–831
+### `CrossfadeSlider` — строки 821–881
 пропсы: `{value [0–12], onChange(v)}`  
 горизонтальный слайдер кроссфейда 0–12 сек. поддерживает wheel (passive:false) — колёсико мыши меняет значение, не скроллит страницу. refs: `trackRef`, `dragging`, `onChangeRef`, `valueRef`.
 
-### `SettingsView` — строки 833–1037
+### `SettingsView` — строки 882–1091
 пропсы: `{settings, onSettings, visible, onScanTracks, onClearFolder}`  
 секции: playback / system / about.  
 **system/Локальная музыка**: кнопка «Удалить» появляется только когда `settings.musicFolder` задана (красноватая), сбрасывает путь и треки через `onClearFolder`. карточка «Данные» (очистка кеша обложек) удалена.
 
-### `AvatarFlyClone` — строки 1039–1061
+### `AvatarFlyClone` — строки 1092–1115
 пропсы: `{fly: {avatarUrl, startRect, targetRect}, exiting}`  
 portal-анимация: аватар летит из 72px блока в SoundCloudView в 44px квадратный аватар сайдбара (`borderRadius:12`). та же механика что у HeroClone (позиция на targetRect, transform в startRect, transition к identity).
 
-### `SoundCloudView` — строки 1063–1151
+### `SoundCloudView` — строки 1116–1205
 пропсы: `{visible, scAuth, onLogin, onLogout, avatarRef}`  
 два состояния:
 - **не залогинен**: центрированный экран с `SoundCloudIcon` + кнопка «войти через браузер»; `avatarRef` на контейнер иконки (стартовая точка анимации аватара)
 - **залогинен (профиль-заглушка)**: круглый аватар 104px + «SIGNED AS» + ник + кнопка «выйти». список лайков **здесь больше не показывается** — он переехал в `home`/`player` через `sourceMode`.
 
-### `App` — строки 1154–2082
+### `SearchTrackRow` — строки 1206–1247
+пропсы: `{track, isLiked, onLike, onClick, onCoverClick}`  
+строка результата поиска: обложка 44px + title/artist + duration + сердечко.  
+клик по обложке → `onCoverClick` (играть без перехода во вкладку), клик по тексту → `onClick` (играть + переход в player).  
+сердечко: opacity 0→1 при hover или если залайкан. цвет `var(--accent)`.
+
+### `SearchView` — строки 1248–1408
+пропсы: `{visible, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack}`  
+**пустое состояние**: только searchbar, `top: '36%'`.  
+**с результатами**: searchbar анимируется на `top: '8%'` (transition 0.42s), снизу появляются результаты.  
+debounce 380ms. infinite scroll — `handleScroll` при достижении низа вызывает `doSearch(query, offset)`.  
+запросы: `search/tracks?limit=20&offset=N` + `search/users?limit=4` (только при offset=0).  
+**исполнители**: grid 4 колонки.  
+**треки**: список `SearchTrackRow`.  
+скроллбар: `className="scroll-thin"`, `right:10`, `willChange:'transform'`.
+
+### `App` — строки 1409–2497
 
 **state:**
 ```
-view               'home'|'player'|'settings'|'soundcloud'
+view               'home'|'player'|'settings'|'soundcloud'|'search'
 tracks             [] | локальные треки
 trackIdx           0
 isPlaying          false
@@ -157,7 +175,8 @@ searchFocused      false
 
 `settings.soundcloudAuth` — `{ token, clientId, userId, username, avatarUrl }` — хранится в settings.json  
 `settings.sourceMode` — `'local' | 'sc'` — хранится в settings.json  
-`track` — вычисляется как `scPlayingTrack || tracks[trackIdx] || tracks[0]`
+`track` — вычисляется как `scPlayingTrack || tracks[trackIdx] || tracks[0]`  
+`likedIds` — `useMemo(() => new Set(scTracks.map(t => t.id)), [scTracks])` — для быстрой проверки залайканности
 
 **welcome state (home):** если `!settings.musicFolder && !settings.soundcloudAuth` — показывается центрированный empty state с двумя кнопками («выбрать папку» / «войти в soundcloud»). хедер с поиском/сортировкой в этом случае скрыт. условие — `showWelcome` (рядом с `activeList`).
 
@@ -232,7 +251,8 @@ discordProgressRef 0    — всегда актуальный `progress` (син
 - `filteredSc` — строка 1689: scTracks фильтрованные по search
 - `activeList` — строка 1693: `sourceMode==='sc' ? filteredSc : filtered` — единый источник для home grid и library panel
 - `activeListPlayingId` — строка 1694: id играющего трека если он есть в `activeList` (иначе null — ничего не подсвечивается)
-- `handleNav(id)` — строка 1699: смена view; reverse-hero берёт `artRefs.current[track.id]` (по id текущего играющего, работает в обоих режимах)
+- `handleLike(track)` — PUT/DELETE `me/track_likes/{id}`, оптимистично обновляет `scTracks` + `scCacheRef` + сохраняет кэш на диск
+- `handleNav(id)` — смена view; reverse-hero берёт `artRefs.current[track.id]`. `search`: без delay, `setView('search')` сразу. `library` из search/settings: `setPlayerVisible(true)` + `setView('player')` без delay
 
 **layout:**
 ```
@@ -262,7 +282,8 @@ Sidebar(58px) | LibraryPanel(260px) | CenterPlayer(flex:1) | VolumeSlider(28px)
 
 **ipc-методы (preload.js):**
 - window/файлы/настройки — без изменений
-- `scLogin`, `scFetch`, `scCheckCovers`, `scCacheCover` — как было
+- `scLogin`, `scCheckCovers`, `scCacheCover` — как было
+- `scFetch(url, token, clientId, method='GET')` — поддерживает GET/PUT/DELETE; 200/201/204 как успех; пустой ответ → `{data: null}`
 - `scLoadLikesCache()` → читает `%AppData%\seWer\sc_likes.json`, `scSaveLikesCache(data)` → пишет туда
 - `discordUpdate(data)` → `discord-update` ipc: обновляет Discord Rich Presence (type=2 Listening, details=title, state=artist, largeImageKey=coverUrl, startTimestamp/endTimestamp)
 - `discordClear()` → `discord-clear` ipc: снимает presence
@@ -272,7 +293,17 @@ Sidebar(58px) | LibraryPanel(260px) | CenterPlayer(flex:1) | VolumeSlider(28px)
 - `initDiscord()` — вызывается в `app.whenReady()`, использует `client.login()` (не `connect()`)
 - `before-quit` с `event.preventDefault()` — дожидается `clearActivity()` + `destroy()` перед выходом, чтобы presence не утекала после закрытия приложения
 
-### рендер (строка 2083)
+**Tray (main.js):**
+- `createTray()` — вызывается в `app.whenReady()` после `createWindow()`; иконка `assets/icon.png`; tooltip `seWer`
+- двойной клик → `win.show(); win.focus()`
+- контекстное меню: «Открыть» / «Выйти» (`app.quit()`)
+- `win-close` ipc — читает `loadSettings()`; если `minimizeToTray` → `win.hide()`, иначе → `win.close()`
+
+**home div** — `opacity: homeVisible ? 1 : 0`, `transition: 'opacity 0.18s ease'` (без transform — анимацию перехода обеспечивает HeroClone). `right:10` для отступа скроллбара от края.
+
+**SearchView** в рендере: `likedIds`, `onLike={handleLike}`, `onPlayTrack` → `handleScTrackClick(t, -1)` (играть без смены view), `onSelectTrack` → играть + `setPlayerVisible(true)` + `setView('player')`.
+
+### рендер (строка 2498)
 ```js
 ReactDOM.createRoot(document.getElementById('root')).render(<App/>)
 ```
