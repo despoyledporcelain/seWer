@@ -170,10 +170,11 @@ const scCoversDir = () => path.join(app.getPath('userData'), 'sc_covers')
 
 ipcMain.handle('sc-check-covers', (_, ids) => {
   const dir = scCoversDir()
+  let existing
+  try { existing = new Set(fs.readdirSync(dir)) } catch { existing = new Set() }
   const result = {}
   for (const id of ids) {
-    const file = path.join(dir, `${id}.jpg`)
-    if (fs.existsSync(file)) result[id] = 'file:///' + file.replace(/\\/g, '/')
+    if (existing.has(`${id}.jpg`)) result[id] = 'file:///' + path.join(dir, `${id}.jpg`).replace(/\\/g, '/')
   }
   return result
 })

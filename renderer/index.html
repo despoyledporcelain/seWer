@@ -158,7 +158,7 @@ function scHashColor(id) {
 
 
 /* ── Wave Progress Bar ───────────────────────────────────────────────────── */
-function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying }) {
+function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying, visible }) {
   const wrapRef    = useRef(null);
   const canvasRef  = useRef(null);
   const rafRef     = useRef(null);
@@ -169,10 +169,23 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying }) {
   const pendingSize = useRef(null);
   const accT       = useRef(0);
   const lastNow    = useRef(null);
+  const visibleRef = useRef(visible);
+  const drawFnRef  = useRef(null);
   const H = 52;
 
   useEffect(() => { progRef.current = progress; }, [progress]);
   useEffect(() => { playRef.current = isPlaying; }, [isPlaying]);
+
+  useEffect(() => {
+    visibleRef.current = visible;
+    if (visible && drawFnRef.current && !rafRef.current) {
+      lastNow.current = null;
+      rafRef.current = requestAnimationFrame(drawFnRef.current);
+    } else if (!visible) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+  }, [visible]);
 
   useEffect(() => {
     const canvas = canvasRef.current, wrap = wrapRef.current;
@@ -275,10 +288,12 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying }) {
         ctx.restore();
       }
 
+      if (!visibleRef.current) { rafRef.current = null; return; }
       rafRef.current = requestAnimationFrame(draw);
     };
-    rafRef.current = requestAnimationFrame(draw);
-    return () => { cancelAnimationFrame(rafRef.current); ro.disconnect(); };
+    drawFnRef.current = draw;
+    if (visibleRef.current) rafRef.current = requestAnimationFrame(draw);
+    return () => { cancelAnimationFrame(rafRef.current); rafRef.current = null; ro.disconnect(); };
   }, []);
 
   const getVal = (e) => {
@@ -1467,6 +1482,7 @@ function App() {
   const scTracksRef       = useRef([]);
   const scAuthRef         = useRef(null);
   const scCacheRef        = useRef([]);
+  const scCacheMapRef     = useRef(new Map());
   const prevSearchRef     = useRef('');
   const homeSearchRef     = useRef(null);
   const libSearchRef      = useRef(null);
@@ -1584,7 +1600,7 @@ function App() {
       if (!track) { window.electronAPI?.discordClear?.(); return; }
       let coverUrl = (track.coverUrl || '').startsWith('https://') ? track.coverUrl : null;
       if (!coverUrl && scPlayingTrack) {
-        const cached = scCacheRef.current.find(t => t.id === track.id);
+        const cached = scCacheMapRef.current.get(track.id);
         if (cached?.coverUrl?.startsWith('https://')) coverUrl = cached.coverUrl;
       }
       window.electronAPI?.discordUpdate?.({
@@ -1656,7 +1672,7 @@ function App() {
       if (!t) return;
       let coverUrl = (t.coverUrl || '').startsWith('https://') ? t.coverUrl : null;
       if (!coverUrl && scPlayingTrack) {
-        const cached = scCacheRef.current.find(c => c.id === t.id);
+        const cached = scCacheMapRef.current.get(t.id);
         if (cached?.coverUrl?.startsWith('https://')) coverUrl = cached.coverUrl;
       }
       window.electronAPI?.discordUpdate?.({
@@ -1786,6 +1802,7 @@ function App() {
     }
     if (all.length) {
       scCacheRef.current = all;
+      scCacheMapRef.current = new Map(all.map(t => [t.id, t]));
       window.electronAPI.scSaveLikesCache(all);
       const cached = await window.electronAPI.scCheckCovers(all.map(t => t.id));
       const withCache = all.map(t => cached[t.id] ? { ...t, coverUrl: cached[t.id] } : t);
@@ -1869,6 +1886,7 @@ function App() {
         const newestWithCovers = newest.map(t => cachedCovers[t.id] ? { ...t, coverUrl: cachedCovers[t.id] } : t);
         setScTracks(prev => [...newestWithCovers, ...prev]);
         scCacheRef.current = [...newest, ...scCacheRef.current];
+        newest.forEach(t => scCacheMapRef.current.set(t.id, t));
         window.electronAPI.scSaveLikesCache(scCacheRef.current);
         loadScCovers(newestWithCovers.filter(t => !cachedCovers[t.id]));
       }
@@ -1883,6 +1901,7 @@ function App() {
     const cache = await window.electronAPI.scLoadLikesCache();
     if (cache && cache.length > 0) {
       scCacheRef.current = cache;
+      scCacheMapRef.current = new Map(cache.map(t => [t.id, t]));
       const cachedCovers = await window.electronAPI.scCheckCovers(cache.map(t => t.id));
       const withCovers = cache.map(t => cachedCovers[t.id] ? { ...t, coverUrl: cachedCovers[t.id] } : t);
       setScTracks(withCovers);
@@ -1896,7 +1915,7 @@ function App() {
 
   useEffect(() => {
     if (settings.soundcloudAuth?.token) initScLikes(settings.soundcloudAuth);
-    else { setScTracks([]); scCacheRef.current = []; }
+    else { setScTracks([]); scCacheRef.current = []; scCacheMapRef.current = new Map(); }
   }, [settings.soundcloudAuth]);
 
   const handleScLogin = useCallback((auth) => {
@@ -1913,6 +1932,7 @@ function App() {
   }, []);
   const handleScLogout = useCallback(() => {
     scCacheRef.current = [];
+    scCacheMapRef.current = new Map();
     try { window.electronAPI.scSaveLikesCache([]); } catch {}
     setSettings(s => ({ ...s, soundcloudAuth: null, sourceMode: 'local' }));
   }, []);
@@ -1997,6 +2017,7 @@ function App() {
       );
       setScTracks(prev => prev.filter(t => t.id !== track.id));
       scCacheRef.current = scCacheRef.current.filter(t => t.id !== track.id);
+      scCacheMapRef.current.delete(track.id);
     } else {
       await window.electronAPI.scFetch(
         `https://api-v2.soundcloud.com/me/track_likes/${track.id}`,
@@ -2004,6 +2025,7 @@ function App() {
       );
       setScTracks(prev => [track, ...prev]);
       scCacheRef.current = [track, ...scCacheRef.current];
+      scCacheMapRef.current.set(track.id, track);
     }
     window.electronAPI.scSaveLikesCache(scCacheRef.current);
   }, []);
@@ -2016,14 +2038,19 @@ function App() {
     return arr;
   }, [tracks, sort]);
 
-  const filtered = sortedTracks.filter(t =>
-    t.title.toLowerCase().includes(search.toLowerCase()) ||
-    t.artist.toLowerCase().includes(search.toLowerCase())
-  );
-  const filteredSc = scTracks.filter(t =>
-    t.title.toLowerCase().includes(search.toLowerCase()) ||
-    t.artist.toLowerCase().includes(search.toLowerCase())
-  );
+  const searchLower = useMemo(() => search.toLowerCase(), [search]);
+  const filtered = useMemo(() =>
+    sortedTracks.filter(t =>
+      t.title.toLowerCase().includes(searchLower) ||
+      t.artist.toLowerCase().includes(searchLower)
+    ),
+  [sortedTracks, searchLower]);
+  const filteredSc = useMemo(() =>
+    scTracks.filter(t =>
+      t.title.toLowerCase().includes(searchLower) ||
+      t.artist.toLowerCase().includes(searchLower)
+    ),
+  [scTracks, searchLower]);
   const activeList = sourceMode === 'sc' ? filteredSc : filtered;
   const activeListPlayingId = sourceMode === 'sc'
     ? (scPlayingTrack ? scPlayingTrack.id : null)
@@ -2436,7 +2463,7 @@ function App() {
             </div>
             <div style={{width:'100%', marginBottom:20}}>
               <WaveProgressBar progress={progress} elapsed={elapsed} total={track.duration || 0}
-                onSeek={handleSeek} isPlaying={isPlaying}/>
+                onSeek={handleSeek} isPlaying={isPlaying} visible={playerVisible}/>
             </div>
             {(()=>{ const P = { spring:0.055, damping:0.84, clamp:10 }; return (
             <div style={{display:'flex', alignItems:'center', gap:8, justifyContent:'center'}}>
