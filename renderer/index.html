@@ -525,6 +525,7 @@ const TrackRow = React.memo(function TrackRow({ track, isActive, onClick }) {
         display:'flex', alignItems:'center', gap:10, padding:'8px 10px', borderRadius:9,
         background: !isActive && hov ? 'rgba(255,255,255,0.03)' : 'none',
         cursor:'pointer', transition:'background 0.15s ease', position:'relative', zIndex:1,
+        height: 50, overflow:'hidden',
         contentVisibility:'auto', containIntrinsicSize:'auto 50px',
       }}>
       <div style={{
