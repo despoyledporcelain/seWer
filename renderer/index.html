@@ -73,6 +73,7 @@
     border-radius:4px;
     border:3px solid transparent;
     background-clip:content-box;
+    min-height:40px;
   }
   .scroll-thin::-webkit-scrollbar-thumb:hover {
     background:rgba(255,255,255,0.28);
@@ -606,15 +607,17 @@ function VirtualTrackList({ items, activeId, onClickItem, scrollToActive, scroll
 }
 
 /* ── HomeCard ────────────────────────────────────────────────────────────── */
-function HomeCard({ track, onClick, artRef, artHidden, isLiked, onLike }) {
+const HomeCard = React.memo(function HomeCard({ track, onSelect, artRef, artHidden, isLiked, onLike }) {
   const [hov, setHov] = useState(false);
+  const handleClick = useCallback(() => onSelect(track), [onSelect, track]);
   return (
-    <div onClick={onClick}
+    <div onClick={handleClick}
       onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
       style={{
         borderRadius:16, overflow:'hidden', cursor:'pointer',
         transform:`scale(${hov?1.03:1})`,
         transition:'transform 0.35s cubic-bezier(0.34,1.56,0.64,1)',
+        contentVisibility:'auto', containIntrinsicSize:'auto 128px',
       }}>
       <div ref={artRef} style={{
         opacity: artHidden ? 0 : 1,
@@ -664,7 +667,7 @@ function HomeCard({ track, onClick, artRef, artHidden, isLiked, onLike }) {
       </div>
     </div>
   );
-}
+});
 
 /* ── Hero clone ──────────────────────────────────────────────────────────── */
 function HeroClone({ hero, exiting, reverse = false }) {
@@ -1471,6 +1474,13 @@ function App() {
   minDurationRef.current = settings.minDuration ?? 30;
 
   const artRefs       = useRef({});
+  const artRefCacheRef = useRef({});
+  const getArtRef = useCallback((id) => {
+    if (!artRefCacheRef.current[id]) {
+      artRefCacheRef.current[id] = (el) => { artRefs.current[id] = el; };
+    }
+    return artRefCacheRef.current[id];
+  }, []);
   const playerArtRef  = useRef(null);
   const audioRef      = useRef(null);
   const handleNextRef  = useRef(null);
@@ -2004,6 +2014,10 @@ function App() {
     setTimeout(() => { setHero(null); setHeroExiting(false); }, 420);
   }
 
+  const selectTrackRef = useRef(null);
+  selectTrackRef.current = selectTrack;
+  const selectTrackStable = useCallback((t) => selectTrackRef.current(t), []);
+
   const likedIds = useMemo(() => new Set(scTracks.map(t => t.id)), [scTracks]);
 
   const handleLike = useCallback(async (track) => {
@@ -2311,8 +2325,8 @@ function App() {
               <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(128px, 1fr))', gap:18}}>
                 {activeList.map((t) => (
                   <HomeCard key={t.id} track={t}
-                    artRef={el => artRefs.current[t.id] = el}
-                    onClick={() => selectTrack(t)}
+                    artRef={getArtRef(t.id)}
+                    onSelect={selectTrackStable}
                     artHidden={(reverseHero && !reverseHeroExiting && t.id === track.id) || (hero && !heroExiting && t.id === hero.track.id)}
                     isLiked={sourceMode === 'sc' ? likedIds.has(t.id) : false}
                     onLike={sourceMode === 'sc' ? handleLike : null}/>

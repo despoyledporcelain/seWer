@@ -41,9 +41,10 @@
 ## компоненты (по порядку в файле)
 
 ### `WaveProgressBar` — строки 156–279
-пропсы: `{progress [0–1], elapsed, total, onSeek(v), isPlaying}`  
+пропсы: `{progress [0–1], elapsed, total, onSeek(v), isPlaying, visible}`  
 canvas-волна H=52. drag по всей ширине → onSeek.  
-**анимация замораживается на паузе**: `accT` накапливается только пока `isPlaying=true`, при resume продолжает с того же места без рывков. refs: `accT`, `lastNow`, `progRef`, `dispProg`, `playRef`, `dragging`, `pendingSize`.
+**анимация замораживается на паузе**: `accT` накапливается только пока `isPlaying=true`, при resume продолжает с того же места без рывков.  
+**rAF останавливается когда `visible=false`** (home/settings) и перезапускается при возврате в плеер — через `visibleRef` + `drawFnRef`. refs: `accT`, `lastNow`, `progRef`, `dispProg`, `playRef`, `dragging`, `pendingSize`, `visibleRef`, `drawFnRef`.
 
 ### `ThinVolumeSlider` — строки 281–394
 пропсы: `{volume [0–1], onChange(v)}`  
@@ -67,7 +68,7 @@ canvas TW=28px, вертикальный. drag вверх = больше. onChan
 
 ### `TrackRow` — строки 487–518
 пропсы: `{track, isActive, onClick}`  
-строка библиотеки: миниатюра 34px + title/artist + duration. высота ~50px.  
+строка библиотеки: миниатюра 34px + title/artist + duration. высота **жёстко зафиксирована `height:50, overflow:'hidden'`** (border-box) — гарантирует точное совпадение с `ROW_H=50` в пилле и скролле при любых метриках шрифта.  
 обёрнут в `React.memo`. `contentVisibility:'auto', containIntrinsicSize:'auto 50px'` — браузер пропускает рендер строк вне вьюпорта нативно.  
 фон active рисует пилл в `VirtualTrackList`. `position:relative, zIndex:1` чтобы быть поверх пилла. фон миниатюры — нейтральный `#111116`.
 
@@ -203,6 +204,7 @@ sidebarProfileRef null — ref на иконку профиля в Sidebar (це
 scTracksRef      []   — синхронизируется с scTracks; используется в handleNext/Prev
 scAuthRef        null — синхронизируется с settings.soundcloudAuth
 scCacheRef       []   — данные api в формате с CDN coverUrl (для записи в sc_likes.json)
+scCacheMapRef    Map  — зеркало scCacheRef в виде Map<id, track> для O(1) поиска; синхронизируется везде где меняется scCacheRef
 prevSearchRef      ''
 homeSearchRef      null
 libSearchRef       null
@@ -247,8 +249,9 @@ discordProgressRef 0    — всегда актуальный `progress` (син
 - `handleScTrackClick(scTrack, idx)` — строка 1614: резолвит stream URL через `sc-fetch`, ставит `audio.src`, играет. **Не управляет view** (это делает `selectTrack`/`handleNav`)
 - `selectTrack(t)` — строка 1639: принимает **track-объект** (раньше принимал idx). Работает в обоих режимах: если `view==='player'` — просто меняет трек; иначе — hero-анимация home→player. SC: вызывает `handleScTrackClick`. Local: `setTrackIdx(tracks.indexOf(t))` + `setScPlayingTrack(null)`
 - `sortedTracks` — строка 1677: useMemo, сортирует local tracks по `sort`
-- `filtered` — строка 1685: sortedTracks фильтрованные по search
-- `filteredSc` — строка 1689: scTracks фильтрованные по search
+- `searchLower` — useMemo от `search` (toLowerCase один раз)
+- `filtered` — useMemo: sortedTracks фильтрованные по searchLower
+- `filteredSc` — useMemo: scTracks фильтрованные по searchLower
 - `activeList` — строка 1693: `sourceMode==='sc' ? filteredSc : filtered` — единый источник для home grid и library panel
 - `activeListPlayingId` — строка 1694: id играющего трека если он есть в `activeList` (иначе null — ничего не подсвечивается)
 - `handleLike(track)` — PUT/DELETE `me/track_likes/{id}`, оптимистично обновляет `scTracks` + `scCacheRef` + сохраняет кэш на диск
