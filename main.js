@@ -233,7 +233,7 @@ ipcMain.handle('sc-login', () => new Promise((resolve) => {
     }
   })
 
-  authWin.loadURL('https://soundcloud.com')
+  authWin.loadURL('https://soundcloud.com/signin')
   authWin.on('closed', () => { if (!resolved) resolve(null) })
 }))
 
