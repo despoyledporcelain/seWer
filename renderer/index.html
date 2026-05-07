@@ -172,6 +172,10 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying, visible 
   const lastNow    = useRef(null);
   const visibleRef = useRef(visible);
   const drawFnRef  = useRef(null);
+  const elapsedSpanRef   = useRef(null);
+  const remainingSpanRef = useRef(null);
+  const totalRef   = useRef(total);
+  totalRef.current = total;
   const H = 52;
 
   useEffect(() => { progRef.current = progress; }, [progress]);
@@ -217,77 +221,50 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying, visible 
       ctx.clearRect(0, 0, W, HH);
 
       dispProg.current += (progRef.current - dispProg.current) * 0.12;
-      const p = dispProg.current;
-      const cy = HH*0.5;
+      const p   = dispProg.current;
+      const barH = 5 * dpr;
+      const r    = barH / 2;
+      const cy   = HH * 0.5;
       const freq = 0.020/dpr, freq2 = 0.038/dpr;
-
-      const env = (x) => {
-        const nx = x/W;
-        const edge = Math.min(nx/0.04, (1-nx)/0.04, 1);
-        const gauss = Math.exp(-Math.pow((nx-0.5)*2.4, 2));
-        return gauss * edge;
-      };
+      const step = Math.max(1, Math.round(dpr));
 
       const pts = [];
-      for (let x = 0; x <= W; x += dpr) {
-        const e = env(x);
-        const a = HH*0.26 * e;
-        const y = cy + a*Math.sin(x*freq - t*1.4) + a*0.38*Math.sin(x*freq2 - t*0.9 + 1.8);
-        pts.push({x, y});
+      for (let x = 0; x <= W; x += step) {
+        const nx  = x / W;
+        const env = Math.min(nx/0.04, (1-nx)/0.04, 1) * Math.exp(-Math.pow((nx-0.5)*2.4, 2));
+        const a   = HH * 0.18 * env;
+        pts.push({ x, y: cy + a*Math.sin(x*freq - t*1.4) + a*0.38*Math.sin(x*freq2 - t*0.9 + 1.8) });
       }
 
-      /* точка прогресса на волне */
-      const px  = p * W;
-      const piX = Math.min(Math.round(px / dpr), pts.length - 1);
-      const dotY = pts[piX]?.y ?? cy;
-
-      /* glow blob — эллипс вытянутый по горизонтали */
-      if (p > 0.01) {
-        ctx.save();
-        ctx.translate(px, dotY);
-        ctx.scale(4, 1);
-        const rg = ctx.createRadialGradient(0, 0, 0, 0, 0, HH * 0.22);
-        rg.addColorStop(0,   'rgba(200,195,225,0.06)');
-        rg.addColorStop(1,   'rgba(0,0,0,0)');
-        ctx.fillStyle = rg;
-        ctx.fillRect(-HH * 1.2, -HH * 0.22, HH * 2.4, HH * 0.44);
-        ctx.restore();
-      }
-
-      const grad = ctx.createLinearGradient(0, 0, W, 0);
-      const FADE = 0.04, TRANS = 0.018;
-      grad.addColorStop(0, 'rgba(0,0,0,0)');
-      grad.addColorStop(FADE, p > FADE + TRANS ? '#b2b2b2' : 'rgba(255,255,255,0.16)');
-      if (p > FADE + TRANS && p < 1 - FADE - TRANS) {
-        grad.addColorStop(Math.max(FADE + 0.001, p - TRANS), '#b2b2b2');
-        grad.addColorStop(Math.min(1 - FADE - 0.001, p + TRANS), 'rgba(255,255,255,0.16)');
-      }
-      grad.addColorStop(1 - FADE, 'rgba(255,255,255,0.16)');
-      grad.addColorStop(1, 'rgba(0,0,0,0)');
-
+      /* bg track */
       ctx.beginPath();
-      pts.forEach(({x,y}, i) => i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y));
-      ctx.lineWidth   = 2.4*dpr;
-      ctx.lineCap     = 'round';
-      ctx.lineJoin    = 'round';
-      ctx.strokeStyle = grad;
-      ctx.shadowColor = `rgba(178,178,178,${0.3*p})`;
-      ctx.shadowBlur  = 5*dpr*p;
-      ctx.stroke();
-      ctx.shadowBlur  = 0;
+      ctx.moveTo(pts[0].x, pts[0].y - r);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y - r);
+      for (let i = pts.length - 1; i >= 0; i--) ctx.lineTo(pts[i].x, pts[i].y + r);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(255,255,255,0.07)';
+      ctx.fill();
 
-      /* dot на волне в точке прогресса */
-      if (p > 0.01 && p < 0.99) {
-        ctx.save();
-        ctx.shadowColor = 'rgba(215,210,235,0.8)';
-        ctx.shadowBlur  = 5 * dpr;
+      /* fill */
+      if (p > 0.005) {
+        const piX = Math.min(Math.round(p * W / step), pts.length - 1);
         ctx.beginPath();
-        ctx.arc(px, dotY, 2.2 * dpr, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(235,232,250,0.92)';
+        ctx.moveTo(pts[0].x, pts[0].y - r);
+        for (let i = 1; i <= piX; i++) ctx.lineTo(pts[i].x, pts[i].y - r);
+        ctx.arc(pts[piX].x, pts[piX].y, r, -Math.PI/2, Math.PI/2, false);
+        for (let i = piX; i >= 0; i--) ctx.lineTo(pts[i].x, pts[i].y + r);
+        ctx.closePath();
+        ctx.shadowColor = 'rgba(178,178,178,0.5)';
+        ctx.shadowBlur  = 8 * dpr;
+        ctx.fillStyle   = '#c8c8c8';
         ctx.fill();
-        ctx.shadowBlur = 0;
-        ctx.restore();
+        ctx.shadowBlur  = 0;
       }
+
+      const dur = totalRef.current || 0;
+      const de = Math.floor(dispProg.current * dur);
+      if (elapsedSpanRef.current)   elapsedSpanRef.current.textContent   = fmt(de);
+      if (remainingSpanRef.current) remainingSpanRef.current.textContent = '-' + fmt(dur - de);
 
       if (!visibleRef.current) { rafRef.current = null; return; }
       rafRef.current = requestAnimationFrame(draw);
@@ -316,12 +293,14 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying, visible 
   };
   return (
     <div style={{width:'100%', display:'flex', alignItems:'center', gap:9}}>
-      <span style={timeStyle}>{fmt(elapsed)}</span>
-      <div ref={wrapRef} style={{flex:1, minWidth:0, overflow:'hidden', cursor:'pointer'}}
-        onMouseDown={e => { dragging.current = true; onSeek(getVal(e)); }}>
+      <span ref={elapsedSpanRef} style={timeStyle}>{fmt(elapsed)}</span>
+      <div ref={wrapRef} style={{flex:1, minWidth:0, overflow:'hidden', cursor:'pointer',
+        WebkitMaskImage:'linear-gradient(to right, transparent, black 20px, black calc(100% - 20px), transparent)',
+        maskImage:'linear-gradient(to right, transparent, black 20px, black calc(100% - 20px), transparent)',
+      }} onMouseDown={e => { dragging.current = true; onSeek(getVal(e)); }}>
         <canvas ref={canvasRef} style={{display:'block', width:'100%', height:H+'px'}}/>
       </div>
-      <span style={timeStyle}>-{fmt(total - elapsed)}</span>
+      <span ref={remainingSpanRef} style={timeStyle}>-{fmt(total - elapsed)}</span>
     </div>
   );
 }
@@ -363,54 +342,41 @@ function ThinVolumeSlider({ volume, onChange }) {
     ro.observe(wrap);
 
     const draw = () => {
-      /* smooth display chases actual */
       const speed = dragging.current ? 0.09 : 0.04;
       volDisp.current += (volActual.current - volDisp.current) * speed;
       const v = volDisp.current;
-
-      /* animate track thickness */
-      const tgtTW = dragging.current ? 4 : 2;
-      const tgtHR = dragging.current ? 6 : 3.5;
-      trackWAnim.current  += (tgtTW - trackWAnim.current)  * 0.14;
-      handleRAnim.current += (tgtHR - handleRAnim.current) * 0.14;
-      const TRW = trackWAnim.current  * dpr;
-      const HR  = handleRAnim.current * dpr;
 
       const ctx = canvas.getContext('2d');
       const WW = canvas.width, HH = canvas.height;
       ctx.clearRect(0, 0, WW, HH);
 
-      const cx       = WW/2;
-      const pad      = HR + 2*dpr;
-      const trackH   = HH - pad*2;
-      const fillTop  = pad + trackH*(1-v);
-      const trackBot = HH - pad;
+      const cx    = WW / 2;
+      const barW  = 5 * dpr;
+      const r     = barW / 2;
+      const pad   = r + 4 * dpr;
+      const trackH = HH - pad * 2;
+      const trackTop = pad;
+      const trackBot = pad + trackH;
 
-      /* track bg */
+      /* bg track */
       ctx.beginPath();
-      ctx.roundRect(cx - TRW/2, pad, TRW, trackH, TRW/2);
+      ctx.roundRect(cx - r, trackTop, barW, trackH, r);
       ctx.fillStyle = 'rgba(255,255,255,0.07)';
       ctx.fill();
 
       /* fill */
-      if (v > 0.005) {
-        ctx.shadowColor = 'rgba(178,178,178,0.4)';
-        ctx.shadowBlur  = 4*dpr;
+      if (v > 0.01) {
+        const fillH   = Math.max(barW, trackH * v);
+        const fillTop = trackBot - fillH;
+        ctx.save();
+        ctx.shadowColor = 'rgba(178,178,178,0.5)';
+        ctx.shadowBlur  = 8 * dpr;
         ctx.beginPath();
-        ctx.roundRect(cx - TRW/2, fillTop, TRW, trackBot-fillTop, TRW/2);
-        ctx.fillStyle = '#b2b2b2';
+        ctx.roundRect(cx - r, fillTop, barW, fillH, r);
+        ctx.fillStyle = '#c8c8c8';
         ctx.fill();
-        ctx.shadowBlur = 0;
+        ctx.restore();
       }
-
-      /* handle */
-      ctx.beginPath();
-      ctx.arc(cx, fillTop, HR, 0, Math.PI*2);
-      ctx.fillStyle = v > 0.005 ? 'rgba(200,200,200,0.9)' : 'rgba(255,255,255,0.18)';
-      ctx.shadowColor = 'rgba(200,200,200,0.5)';
-      ctx.shadowBlur  = dragging.current ? 8*dpr : (v > 0.005 ? 5*dpr : 0);
-      ctx.fill();
-      ctx.shadowBlur = 0;
 
       rafRef.current = requestAnimationFrame(draw);
     };
@@ -487,6 +453,14 @@ function MagBtn({ onClick, active, children, size=52 }) {
 /* ── PlayBtn ─────────────────────────────────────────────────────────────── */
 function PlayBtn({ isPlaying, onToggle }) {
   const [pressed, setPressed] = useState(false);
+  const ico = (visible, rot) => ({
+    position:'absolute', top:0, left:0, width:24, height:24,
+    filter:'brightness(0) invert(1)',
+    opacity: visible ? 1 : 0,
+    transform: visible ? 'scale(1) rotate(0deg)' : `scale(0.45) rotate(${rot}deg)`,
+    transition:'opacity 0.2s ease, transform 0.26s cubic-bezier(0.34,1.56,0.64,1)',
+    pointerEvents:'none',
+  });
   return (
     <button onClick={onToggle}
       onMouseDown={() => setPressed(true)} onMouseUp={() => setPressed(false)}
@@ -502,15 +476,10 @@ function PlayBtn({ isPlaying, onToggle }) {
           ? '0 0 22px rgba(178,178,178,0.1), inset 0 0 0 1px rgba(178,178,178,0.18)'
           : 'inset 0 0 0 1px rgba(255,255,255,0.07)',
       }}>
-      {isPlaying
-        ? <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24">
-            <rect x="5" y="4" width="4.5" height="16" rx="2.25"/>
-            <rect x="14.5" y="4" width="4.5" height="16" rx="2.25"/>
-          </svg>
-        : <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24" style={{marginLeft:2}}>
-            <path d="M5 3.5 19.5 12 5 20.5z"/>
-          </svg>
-      }
+      <div style={{position:'relative', width:24, height:24}}>
+        <img src="../assets/play.png"  style={ico(!isPlaying,  90)}/>
+        <img src="../assets/pause.png" style={ico( isPlaying, -90)}/>
+      </div>
     </button>
   );
 }
@@ -646,7 +615,7 @@ const HomeCard = React.memo(function HomeCard({ track, onSelect, artRef, artHidd
         {onLike && (
           <div onClick={e=>{ e.stopPropagation(); onLike(track); }} style={{
             position:'absolute', right:7, bottom:7, zIndex:2,
-            opacity: hov || isLiked ? 1 : 0, transition:'opacity 0.18s ease',
+            opacity: hov ? 1 : 0, transition:'opacity 0.18s ease',
             background:'rgba(0,0,0,0.45)', borderRadius:'50%',
             width:26, height:26, display:'flex', alignItems:'center', justifyContent:'center',
             color: isLiked ? 'var(--accent)' : 'rgba(255,255,255,0.75)',
@@ -724,7 +693,7 @@ function HeroClone({ hero, exiting, reverse = false }) {
 }
 
 /* ── Sidebar ─────────────────────────────────────────────────────────────── */
-function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth, profileRef, sourceMode, onToggleSource }) {
+function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth, profileRef, sourceMode, onToggleSource, avatarFlying }) {
   const NAV = [
     { id:"home",    label:"Треки",   icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg> },
     { id:"search",  label:"Поиск",   icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35" strokeLinecap="round"/></svg> },
@@ -773,7 +742,7 @@ function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth
             transition:'border-color 0.2s ease, background 0.18s ease',
           }}>
           {scAuth?.avatarUrl
-            ? <img src={scAuth.avatarUrl} style={{width:'100%',height:'100%',objectFit:'cover'}}/>
+            ? <img src={scAuth.avatarUrl} style={{width:'100%',height:'100%',objectFit:'cover', opacity: avatarFlying ? 0 : 1, transition:'opacity 0.1s ease'}}/>
             : <SoundCloudIcon size={22} fill="rgba(255,100,20,0.8)"/>
           }
         </div>
@@ -1125,7 +1094,7 @@ function AvatarFlyClone({ fly, exiting }) {
       transformOrigin:'center center',
       transform: ready ? 'translate(0,0) scale(1)' : `translate(${dx}px,${dy}px) scale(${sc})`,
       opacity: exiting ? 0 : 1,
-      transition: ready ? 'transform 0.44s cubic-bezier(0.4,0,0.2,1), opacity 0.18s ease' : 'none',
+      transition: ready ? 'transform 0.38s cubic-bezier(0.22,1,0.36,1), opacity 0.12s ease' : 'none',
     }}>
       <img src={avatarUrl} style={{width:'100%',height:'100%',objectFit:'cover'}}/>
     </div>,
@@ -1446,6 +1415,7 @@ function App() {
   const [reverseHeroExiting, setReverseHeroExiting] = useState(false);
   const [avatarFly,          setAvatarFly]          = useState(null);
   const [avatarFlyExiting,   setAvatarFlyExiting]   = useState(false);
+  const [avatarFlying,       setAvatarFlying]       = useState(false);
   const [libCollapsed,  setLibCollapsed]  = useState(false);
   const [settings,      setSettings]      = useState({
     autoplay:false, crossfade:0, defaultRepeat:false,
@@ -1498,8 +1468,12 @@ function App() {
   const libSearchRef      = useRef(null);
   const discordTimerRef   = useRef(null);
   const discordProgressRef = useRef(0);
+  const filteredRef       = useRef([]);
+  const filteredScRef     = useRef([]);
+  const searchRef         = useRef('');
   discordProgressRef.current = progress;
   scTracksRef.current = scTracks;
+  searchRef.current   = search;
   scAuthRef.current   = settings.soundcloudAuth;
   isPlayingRef.current = isPlaying;
   const track = scPlayingTrack || tracks[trackIdx] || tracks[0] || { id:0, title:'', artist:'', duration:0, color:'#333' };
@@ -1633,23 +1607,28 @@ function App() {
       setProgress(0); return;
     }
     if (scPlayingTrack) {
-      const list = scTracksRef.current;
-      const ni = scPlayingIdx + 1;
-      if (ni < list.length) handleScTrackClick(list[ni], ni);
-      else if (repeat === 'all') handleScTrackClick(list[0], 0);
+      const list = searchRef.current ? filteredScRef.current : scTracksRef.current;
+      const curIdx = list.findIndex(t => t.id === scPlayingTrack.id);
+      const ni = curIdx + 1;
+      if (ni < list.length) handleScTrackClick(list[ni], scTracksRef.current.indexOf(list[ni]));
+      else if (repeat === 'all') handleScTrackClick(list[0], scTracksRef.current.indexOf(list[0]));
       else setIsPlaying(false);
       return;
     }
+    const list = searchRef.current ? filteredRef.current : tracks;
     if (shuffle) {
-      setTrackIdx(i => { let n; do { n = Math.floor(Math.random()*tracks.length); } while (n === i && tracks.length > 1); return n; });
+      const cur = tracks[trackIdx];
+      let n; do { n = Math.floor(Math.random()*list.length); } while (list[n] === cur && list.length > 1);
+      setTrackIdx(tracks.indexOf(list[n]));
       setProgress(0); return;
     }
-    const next = trackIdx + 1;
-    if (next >= tracks.length) {
-      if (repeat === 'all') { setTrackIdx(0); }
+    const curIdx = list.indexOf(tracks[trackIdx]);
+    const next = curIdx + 1;
+    if (next >= list.length) {
+      if (repeat === 'all') { setTrackIdx(tracks.indexOf(list[0])); }
       else { setIsPlaying(false); }
     } else {
-      setTrackIdx(next);
+      setTrackIdx(tracks.indexOf(list[next]));
     }
     setProgress(0);
   }
@@ -1662,11 +1641,15 @@ function App() {
       return;
     }
     if (scPlayingTrack) {
-      const pi = scPlayingIdx - 1;
-      if (pi >= 0) handleScTrackClick(scTracksRef.current[pi], pi);
+      const list = searchRef.current ? filteredScRef.current : scTracksRef.current;
+      const curIdx = list.findIndex(t => t.id === scPlayingTrack.id);
+      const pi = curIdx - 1;
+      if (pi >= 0) handleScTrackClick(list[pi], scTracksRef.current.indexOf(list[pi]));
       return;
     }
-    setTrackIdx(i => (i - 1 + tracks.length) % tracks.length);
+    const list = searchRef.current ? filteredRef.current : tracks;
+    const curIdx = list.indexOf(tracks[trackIdx]);
+    setTrackIdx(tracks.indexOf(list[(curIdx - 1 + list.length) % list.length]));
     setProgress(0);
   }
   handlePrevRef.current = handlePrev;
@@ -1935,9 +1918,10 @@ function App() {
     if (startEl && targetEl && auth.avatarUrl) {
       const startRect  = startEl.getBoundingClientRect();
       const targetRect = targetEl.getBoundingClientRect();
+      setAvatarFlying(true);
       setAvatarFly({ avatarUrl: auth.avatarUrl, startRect, targetRect });
-      setTimeout(() => setAvatarFlyExiting(true), 350);
-      setTimeout(() => { setAvatarFly(null); setAvatarFlyExiting(false); }, 520);
+      setTimeout(() => { setAvatarFlying(false); setAvatarFlyExiting(true); }, 400);
+      setTimeout(() => { setAvatarFly(null); setAvatarFlyExiting(false); }, 560);
     }
   }, []);
   const handleScLogout = useCallback(() => {
@@ -2059,12 +2043,14 @@ function App() {
       t.artist.toLowerCase().includes(searchLower)
     ),
   [sortedTracks, searchLower]);
+  filteredRef.current = filtered;
   const filteredSc = useMemo(() =>
     scTracks.filter(t =>
       t.title.toLowerCase().includes(searchLower) ||
       t.artist.toLowerCase().includes(searchLower)
     ),
   [scTracks, searchLower]);
+  filteredScRef.current = filteredSc;
   const activeList = sourceMode === 'sc' ? filteredSc : filtered;
   const activeListPlayingId = sourceMode === 'sc'
     ? (scPlayingTrack ? scPlayingTrack.id : null)
@@ -2172,7 +2158,7 @@ function App() {
       <Sidebar navActive={navActive} onNav={handleNav}
         libCollapsed={libCollapsed} onToggleLib={()=>setLibCollapsed(v=>!v)}
         inPlayer={view==='player'} scAuth={settings.soundcloudAuth||null} profileRef={sidebarProfileRef}
-        sourceMode={sourceMode} onToggleSource={handleToggleSource}/>
+        sourceMode={sourceMode} onToggleSource={handleToggleSource} avatarFlying={avatarFlying}/>
 
       <div style={{position:'relative', flex:1, height:'100%', overflow:'hidden'}}>
 
@@ -2475,48 +2461,35 @@ function App() {
                 transition: playerVisible ? 'opacity 0.36s ease 0.2s' : 'opacity 0.1s ease',
               }}>{track.artist}</div>
             </div>
-            <div style={{width:'100%', marginBottom:20}}>
+            <div style={{
+              width:'100%', marginBottom:20,
+              opacity: playerVisible ? 1 : 0,
+              transform: playerVisible ? 'translateY(0)' : 'translateY(10px)',
+              transition: playerVisible ? 'opacity 0.36s ease 0.28s, transform 0.48s cubic-bezier(0.22,1,0.36,1) 0.28s' : 'opacity 0.1s ease, transform 0.1s ease',
+            }}>
               <WaveProgressBar progress={progress} elapsed={elapsed} total={track.duration || 0}
                 onSeek={handleSeek} isPlaying={isPlaying} visible={playerVisible}/>
             </div>
             {(()=>{ const P = { spring:0.055, damping:0.84, clamp:10 }; return (
-            <div style={{display:'flex', alignItems:'center', gap:8, justifyContent:'center'}}>
+            <div style={{display:'flex', alignItems:'center', gap:8, justifyContent:'center',
+              opacity: playerVisible ? 1 : 0,
+              transform: playerVisible ? 'translateY(0)' : 'translateY(10px)',
+              transition: playerVisible ? 'opacity 0.36s ease 0.38s, transform 0.48s cubic-bezier(0.22,1,0.36,1) 0.38s' : 'opacity 0.1s ease, transform 0.1s ease',
+            }}>
               <MagBtn onClick={()=>setShuffle(s=>!s)} active={shuffle} size={48} physics={P}>
-                <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-                  <path d="M3 17h2.5C7.5 17 9.5 15.5 12 12s4.5-5 6.5-5H21"/>
-                  <polyline points="18 5 21 7 18 9"/>
-                  <path d="M3 7h2.5C7.5 7 9 8.3 10.8 10.4"/>
-                  <path d="M13.2 13.6C15 15.7 16.5 17 18.5 17H21"/>
-                  <polyline points="18 15 21 17 18 19"/>
-                </svg>
+                <img src="../assets/shuffle.png" style={{width:22,height:22,filter:'brightness(0) invert(1)',opacity:shuffle?1:0.38,transition:'opacity 0.2s ease'}}/>
               </MagBtn>
               <MagBtn onClick={handlePrev} size={54} physics={P}>
-                <svg width="21" height="21" fill="currentColor" viewBox="0 0 24 24">
-                  <rect x="4" y="4.5" width="3.5" height="15" rx="1.75"/>
-                  <path d="M9.5 12 19 5.5v13z"/>
-                </svg>
+                <img src="../assets/rewind.png" style={{width:22,height:22,filter:'brightness(0) invert(1)',opacity:0.38}}/>
               </MagBtn>
               <PlayBtn isPlaying={isPlaying} onToggle={()=>setIsPlaying(p=>!p)} physics={P}/>
               <MagBtn onClick={handleNext} size={54} physics={P}>
-                <svg width="21" height="21" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M14.5 12 5 5.5v13z"/>
-                  <rect x="16.5" y="4.5" width="3.5" height="15" rx="1.75"/>
-                </svg>
+                <img src="../assets/forward.png" style={{width:22,height:22,filter:'brightness(0) invert(1)',opacity:0.38}}/>
               </MagBtn>
               <MagBtn onClick={()=>setRepeat(r=>r==='off'?'all':r==='all'?'one':'off')} active={repeat!=='off'} size={48} physics={P}>
-                <div style={{position:'relative', display:'flex', alignItems:'center', justifyContent:'center'}}>
-                  <svg width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-                    <path d="M17 2l4 4-4 4"/>
-                    <path d="M3 11V9a5 5 0 0 1 5-5h13"/>
-                    <path d="M7 22l-4-4 4-4"/>
-                    <path d="M21 13v2a5 5 0 0 1-5 5H3"/>
-                  </svg>
-                  {repeat==='one' && <span style={{
-                    position:'absolute', top:-6, right:-8,
-                    background:'var(--accent)', color:'#07070a',
-                    fontSize:7.5, fontWeight:700, lineHeight:1,
-                    padding:'2px 4px', borderRadius:4,
-                  }}>1</span>}
+                <div style={{position:'relative',width:22,height:22}}>
+                  <img src="../assets/repeat.png"  style={{position:'absolute',width:22,height:22,filter:'brightness(0) invert(1)',opacity:repeat==='off'?0.38:repeat==='all'?1:0,transition:'opacity 0.2s ease'}}/>
+                  <img src="../assets/repeat1.png" style={{position:'absolute',width:22,height:22,filter:'brightness(0) invert(1)',opacity:repeat==='one'?1:0,transition:'opacity 0.2s ease'}}/>
                 </div>
               </MagBtn>
             </div>
@@ -2528,7 +2501,10 @@ function App() {
         <div style={{
           width:28, flexShrink:0, height:'100%',
           display:'flex', flexDirection:'column', alignItems:'center',
-          paddingTop:80, paddingBottom:80, paddingRight:5,
+          paddingTop:110, paddingBottom:110, paddingRight:5,
+          opacity: playerVisible ? 1 : 0,
+          transform: playerVisible ? 'translateX(0)' : 'translateX(8px)',
+          transition: playerVisible ? 'opacity 0.36s ease 0.44s, transform 0.48s cubic-bezier(0.22,1,0.36,1) 0.44s' : 'opacity 0.1s ease, transform 0.1s ease',
         }}>
           <ThinVolumeSlider volume={volume} onChange={setVolume}/>
         </div>
