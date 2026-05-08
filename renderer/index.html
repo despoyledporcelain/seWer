@@ -16,6 +16,7 @@
 <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+<script src="./hls.min.js"></script>
 <style>
   *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; user-select:none; }
   :root {
@@ -86,8 +87,11 @@
   input[type=number]::-webkit-inner-spin-button,
   input[type=number]::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
   input[type=number] { -moz-appearance:textfield; }
-  @keyframes breathe { 0%,100%{opacity:0.38;transform:scale(1)} 50%{opacity:0.62;transform:scale(1.1)} }
-  @keyframes spin    { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+  @keyframes breathe    { 0%,100%{opacity:0.38;transform:scale(1)} 50%{opacity:0.62;transform:scale(1.1)} }
+  @keyframes spin       { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+  @keyframes fadeInUp   { from{opacity:0;transform:translateX(-50%) translateY(6px)} to{opacity:1;transform:translateX(-50%) translateY(0)} }
+  @keyframes fadeOutDown{ from{opacity:1;transform:translateX(-50%) translateY(0)} to{opacity:0;transform:translateX(-50%) translateY(5px)} }
+  @keyframes artEntrance{ from{opacity:0;transform:scale(0.86)} to{opacity:1;transform:scale(1)} }
 </style>
 </head>
 <body>
@@ -422,11 +426,7 @@ function AlbumArt({ track, isPlaying }) {
       background:'#111116',border:'1px solid rgba(255,255,255,0.06)',
       display:'flex',alignItems:'center',justifyContent:'center',
     }}>
-      <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
-        <path d="M9 18V5l12-2v13" stroke="rgba(255,255,255,0.13)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-        <circle cx="6" cy="18" r="3" stroke="rgba(255,255,255,0.13)" strokeWidth="1.5"/>
-        <circle cx="18" cy="16" r="3" stroke="rgba(255,255,255,0.13)" strokeWidth="1.5"/>
-      </svg>
+      <img src="../assets/note.png" style={{width:32,height:32,filter:'brightness(0) invert(1)',opacity:0.13}}/>
     </div>
   );
 }
@@ -491,10 +491,10 @@ function NavIcon({ icon, label, active, onClick, size=38, noActiveBg=false }) {
       style={{
         width:size, height:size, borderRadius:11, border:'none',
         background: (active && !noActiveBg) ? 'rgba(178,178,178,0.11)' : 'none',
-        color: active ? 'var(--accent)' : 'rgba(255,255,255,0.24)',
         display:'flex', alignItems:'center', justifyContent:'center',
         cursor:'pointer', flexShrink:0,
-        transition:'color 0.18s ease, background 0.18s ease',
+        opacity: active ? 1 : 0.3,
+        transition:'opacity 0.18s ease, background 0.18s ease',
       }}>
       {icon}
     </button>
@@ -502,7 +502,7 @@ function NavIcon({ icon, label, active, onClick, size=38, noActiveBg=false }) {
 }
 
 /* ── TrackRow ────────────────────────────────────────────────────────────── */
-const TrackRow = React.memo(function TrackRow({ track, isActive, onClick }) {
+const TrackRow = React.memo(function TrackRow({ track, isActive, isLoading, onClick }) {
   const [hov, setHov] = useState(false);
   return (
     <div onClick={onClick} onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
@@ -522,7 +522,7 @@ const TrackRow = React.memo(function TrackRow({ track, isActive, onClick }) {
       }}>
         {track.coverUrl
           ? <img src={track.coverUrl} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}/>
-          : <svg width="9" height="9" fill={isActive?'var(--accent)':'rgba(255,255,255,0.2)'} viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>
+          : <img src="../assets/note.png" style={{width:11,height:11,filter:'brightness(0) invert(1)',opacity:isActive?0.9:0.2}}/>
         }
       </div>
       <div style={{flex:1, overflow:'hidden'}}>
@@ -531,13 +531,24 @@ const TrackRow = React.memo(function TrackRow({ track, isActive, onClick }) {
           whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{track.title}</div>
         <div style={{fontSize:11, color:'rgba(255,255,255,0.26)', marginTop:1}}>{track.artist}</div>
       </div>
-      <div style={{fontSize:11, color:'rgba(255,255,255,0.16)', flexShrink:0}}>{fmt(track.duration)}</div>
+      <div style={{display:'flex', alignItems:'center', gap:7, flexShrink:0}}>
+        <div style={{
+          width:14, height:14, flexShrink:0,
+          opacity: isLoading ? 1 : 0,
+          transition:'opacity 0.22s ease',
+          borderRadius:'50%',
+          border:'2px solid rgba(255,255,255,0.08)',
+          borderTopColor:'rgba(255,255,255,0.45)',
+          animation: isLoading ? 'spin 0.75s linear infinite' : 'none',
+        }}/>
+        <div style={{fontSize:11, color:'rgba(255,255,255,0.16)'}}>{fmt(track.duration)}</div>
+      </div>
     </div>
   );
 });
 
 /* ── TrackList ───────────────────────────────────────────────────────────── */
-function VirtualTrackList({ items, activeId, onClickItem, scrollToActive, scrollTargetId }) {
+function VirtualTrackList({ items, activeId, loadingId, onClickItem, scrollToActive, scrollTargetId }) {
   const ROW_H = 50;
   const ref   = useRef(null);
 
@@ -568,6 +579,7 @@ function VirtualTrackList({ items, activeId, onClickItem, scrollToActive, scroll
       <div style={{position:'relative', zIndex:1}}>
         {items.map(t => (
           <TrackRow key={t.id} track={t} isActive={t.id === activeId}
+            isLoading={t.id === loadingId}
             onClick={() => onClickStable(t)}/>
         ))}
       </div>
@@ -599,11 +611,7 @@ const HomeCard = React.memo(function HomeCard({ track, onSelect, artRef, artHidd
         {track.coverUrl ? (
           <img src={track.coverUrl} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}/>
         ) : (
-          <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
-            <path d="M9 18V5l12-2v13" stroke="rgba(255,255,255,0.13)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-            <circle cx="6" cy="18" r="3" stroke="rgba(255,255,255,0.13)" strokeWidth="1.5"/>
-            <circle cx="18" cy="16" r="3" stroke="rgba(255,255,255,0.13)" strokeWidth="1.5"/>
-          </svg>
+          <img src="../assets/note.png" style={{width:24,height:24,filter:'brightness(0) invert(1)',opacity:0.13}}/>
         )}
         <div style={{
           position:'absolute', inset:0, background:'rgba(0,0,0,0.32)',
@@ -694,16 +702,13 @@ function HeroClone({ hero, exiting, reverse = false }) {
 
 /* ── Sidebar ─────────────────────────────────────────────────────────────── */
 function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth, profileRef, sourceMode, onToggleSource, avatarFlying }) {
+  const navImg = (src) => <img src={src} style={{width:18, height:18, filter:'brightness(0) invert(1)', display:'block'}}/>;
   const NAV = [
-    { id:"home",    label:"Треки",   icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg> },
-    { id:"search",  label:"Поиск",   icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35" strokeLinecap="round"/></svg> },
-    { id:"library", label:"Плеер",   icon:<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" viewBox="0 0 24 24"><line x1="4" y1="20" x2="4" y2="13"/><line x1="9" y1="20" x2="9" y2="4"/><line x1="14" y1="20" x2="14" y2="8"/><line x1="19" y1="20" x2="19" y2="14"/></svg> },
+    { id:"home",    label:"Треки",  icon: navImg('../assets/tracks.png')  },
+    { id:"search",  label:"Поиск",  icon: navImg('../assets/search.png')  },
+    { id:"library", label:"Плеер",  icon: navImg('../assets/player.png')  },
   ];
-  const folderIcon = (
-    <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-    </svg>
-  );
+  const folderIcon = navImg('../assets/local.png');
 
   const navRefs = useRef({});
   const [pillRect, setPillRect] = useState({ top: 0, height: 38, visible: false });
@@ -801,7 +806,7 @@ function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth
             onClick={onToggleSource} icon={folderIcon}/>
         </div>
         <NavIcon label="Настройки" active={navActive==='settings'} onClick={()=>onNav('settings')}
-          icon={<svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>}/>
+          icon={<img src="../assets/settings.png" style={{width:18,height:18,filter:'brightness(0) invert(1)',display:'block'}}/>}/>
       </div>
     </div>
   );
@@ -810,7 +815,6 @@ function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth
 /* ── CrossfadeSlider ─────────────────────────────────────────────────────── */
 function CrossfadeSlider({ value, onChange }) {
   const trackRef    = useRef(null);
-  const dragging    = useRef(false);
   const onChangeRef = useRef(onChange);
   const valueRef    = useRef(value);
   onChangeRef.current = onChange;
@@ -818,17 +822,8 @@ function CrossfadeSlider({ value, onChange }) {
 
   const calcVal = (clientX) => {
     const rect = trackRef.current.getBoundingClientRect();
-    const x = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    return Math.round(x * 12);
+    return Math.round(Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * 12);
   };
-
-  useEffect(() => {
-    const move = (e) => { if (dragging.current) onChangeRef.current(calcVal(e.clientX)); };
-    const up   = ()  => { dragging.current = false; };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
-    return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
-  }, []);
 
   useEffect(() => {
     const el = trackRef.current;
@@ -840,24 +835,29 @@ function CrossfadeSlider({ value, onChange }) {
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
 
-  const pct = (value / 12) * 100;
+  const pct = ((value || 0) / 12) * 100;
 
   return (
     <div style={{display:'flex', alignItems:'center', gap:12}}>
       <div ref={trackRef}
-        style={{width:130, height:20, display:'flex', alignItems:'center', cursor:'ew-resize', position:'relative', userSelect:'none'}}
-        onMouseDown={e=>{ dragging.current=true; onChangeRef.current(calcVal(e.clientX)); e.preventDefault(); }}>
-        <div style={{width:'100%', height:3, borderRadius:2, background:'rgba(255,255,255,0.1)', position:'relative'}}>
+        style={{width:150, height:24, display:'flex', alignItems:'center', cursor:'ew-resize', userSelect:'none', touchAction:'none'}}
+        onPointerDown={e => {
+          e.currentTarget.setPointerCapture(e.pointerId);
+          onChangeRef.current(calcVal(e.clientX));
+        }}
+        onPointerMove={e => {
+          if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+          onChangeRef.current(calcVal(e.clientX));
+        }}
+        onPointerUp={e => {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        }}>
+        <div style={{width:'100%', height:6, borderRadius:3, background:'rgba(255,255,255,0.07)', position:'relative', overflow:'hidden'}}>
           <div style={{
-            position:'absolute', left:0, top:0, height:'100%', borderRadius:2,
-            width:`${pct}%`, background:'rgba(255,255,255,0.45)',
-          }}/>
-          <div style={{
-            position:'absolute', top:'50%', left:`${pct}%`,
-            transform:'translate(-50%,-50%)', pointerEvents:'none',
-            width:13, height:13, borderRadius:'50%',
-            background:'#fff', boxShadow:'0 1px 5px rgba(0,0,0,0.5)',
-            border:'2px solid rgba(255,255,255,0.35)',
+            position:'absolute', left:0, top:0, height:'100%',
+            width:`${pct}%`, borderRadius:3,
+            background:'#c8c8c8',
+            boxShadow: pct > 0 ? '0 0 8px rgba(178,178,178,0.45)' : 'none',
           }}/>
         </div>
       </div>
@@ -931,12 +931,12 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
   );
 
   const SECS = [
-    { id:'playback',   label:'Воспроизведение',
-      icon:<svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg> },
-    { id:'system',     label:'Система',
-      icon:<svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg> },
-    { id:'about',      label:'О приложении',
-      icon:<svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg> },
+    { id:'playback', label:'Воспроизведение',
+      icon:<img src="../assets/vosproizvedenie.png" style={{width:15,height:15,filter:'brightness(0) invert(1)',display:'block'}}/> },
+    { id:'system',   label:'Система',
+      icon:<img src="../assets/system.png" style={{width:15,height:15,filter:'brightness(0) invert(1)',display:'block'}}/> },
+    { id:'about',    label:'О приложении',
+      icon:<img src="../assets/about.png" style={{width:15,height:15,filter:'brightness(0) invert(1)',display:'block'}}/> },
   ];
 
   const content = {
@@ -1273,6 +1273,7 @@ function SearchView({ visible, scAuth, likedIds, onLike, onPlayTrack, onSelectTr
       color: scHashColor(t.id),
       coverUrl: t.artwork_url ? t.artwork_url.replace('-large', '-t300x300') : null,
       streamUrl: t.media?.transcodings?.find(tc => tc.format?.protocol === 'progressive')?.url || null,
+      hlsUrl: t.media?.transcodings?.find(tc => tc.format?.protocol === 'hls')?.url || null,
     }));
     if (off === 0) {
       setResults(newTracks);
@@ -1411,6 +1412,7 @@ function App() {
   const [playerVisible,      setPlayerVisible]      = useState(false);
   const [homeVisible,        setHomeVisible]        = useState(true);
   const [heroExiting,        setHeroExiting]        = useState(false);
+  const [artEntranceKey,     setArtEntranceKey]     = useState(0);
   const [reverseHero,        setReverseHero]        = useState(null);
   const [reverseHeroExiting, setReverseHeroExiting] = useState(false);
   const [avatarFly,          setAvatarFly]          = useState(null);
@@ -1430,6 +1432,9 @@ function App() {
   const [scLoading,     setScLoading]     = useState(false);
   const [scUpdating,    setScUpdating]    = useState(false);
   const [scError,       setScError]       = useState(null);
+  const [toast,         setToast]         = useState(null);
+  const [toastExiting,  setToastExiting]  = useState(false);
+  const [loadingTrackId, setLoadingTrackId] = useState(null);
   const [scPlayingTrack, setScPlayingTrack] = useState(null);
   const [scPlayingIdx,   setScPlayingIdx]   = useState(-1);
   const [libScrollTrigger,  setLibScrollTrigger]  = useState(0);
@@ -1453,6 +1458,7 @@ function App() {
   }, []);
   const playerArtRef  = useRef(null);
   const audioRef      = useRef(null);
+  const hlsRef        = useRef(null);
   const handleNextRef  = useRef(null);
   const handlePrevRef  = useRef(null);
   const isPlayingRef   = useRef(false);
@@ -1471,11 +1477,16 @@ function App() {
   const filteredRef       = useRef([]);
   const filteredScRef     = useRef([]);
   const searchRef         = useRef('');
+  const volumeRef         = useRef(0.7);
+  const settingsRef       = useRef({});
+  const crossfadeRafRef   = useRef(null);
   discordProgressRef.current = progress;
   scTracksRef.current = scTracks;
   searchRef.current   = search;
   scAuthRef.current   = settings.soundcloudAuth;
   isPlayingRef.current = isPlaying;
+  volumeRef.current    = volume;
+  settingsRef.current  = settings;
   const track = scPlayingTrack || tracks[trackIdx] || tracks[0] || { id:0, title:'', artist:'', duration:0, color:'#333' };
 
   /* загружаем настройки и треки при старте */
@@ -1510,7 +1521,20 @@ function App() {
     audio.volume = volume;
     audioRef.current = audio;
 
-    const onTime  = () => { if (audio.duration) setProgress(audio.currentTime / audio.duration); };
+    const onTime  = () => {
+      if (!audio.duration) return;
+      setProgress(audio.currentTime / audio.duration);
+      // crossfade fade-out: плавно убираем громкость в конце трека
+      const cf = settingsRef.current?.crossfade || 0;
+      if (cf > 0) {
+        const remaining = audio.duration - audio.currentTime;
+        if (remaining <= cf && remaining > 0) {
+          audio.volume = Math.max(0, volumeRef.current * (remaining / cf));
+        } else if (remaining > cf && audio.volume !== volumeRef.current) {
+          audio.volume = volumeRef.current; // восстанавливаем если seek после fade
+        }
+      }
+    };
     const onEnded = () => handleNextRef.current?.();
     audio.addEventListener('timeupdate', onTime);
     audio.addEventListener('ended',      onEnded);
@@ -1520,6 +1544,8 @@ function App() {
       audio.removeEventListener('ended',      onEnded);
       audio.pause();
       audio.src = '';
+      destroyHls();
+      cancelAnimationFrame(crossfadeRafRef.current);
     };
   }, []);
 
@@ -1528,6 +1554,7 @@ function App() {
     const audio = audioRef.current;
     if (!audio || !track) return;
     if (scPlayingTrack) return; // SC-трек управляется через handleScTrackClick
+    destroyHls(); // если был HLS — уничтожить при переключении на локальный трек
     if (track.path) {
       audio.src = 'file:///' + track.path.replace(/\\/g, '/');
       audio.load();
@@ -1535,7 +1562,10 @@ function App() {
         const dur = Math.floor(audio.duration);
         if (dur) setTracks(prev => prev.map((t, i) => i === trackIdx ? { ...t, duration: dur } : t));
       }, { once: true });
-      if (isPlayingRef.current) audio.play().catch(() => setIsPlaying(false));
+      if (isPlayingRef.current) {
+        startFadeIn(audio);
+        audio.play().catch(() => setIsPlaying(false));
+      }
     } else {
       audio.src = '';
     }
@@ -1546,8 +1576,13 @@ function App() {
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-    if (isPlaying) audio.play().catch(() => setIsPlaying(false));
-    else audio.pause();
+    if (isPlaying) {
+      audio.play().catch(() => setIsPlaying(false));
+    } else {
+      cancelAnimationFrame(crossfadeRafRef.current);
+      audio.volume = volumeRef.current; // восстановить если fade-out прервал
+      audio.pause();
+    }
   }, [isPlaying]);
 
   /* громкость */
@@ -1563,6 +1598,11 @@ function App() {
     api.onMediaNext(() => handleNextRef.current?.());
     api.onMediaPrev(() => handlePrevRef.current?.());
   }, []);
+
+  /* анимация обложки при входе в плеер не из home */
+  useEffect(() => {
+    if (view === 'player' && !hero) setArtEntranceKey(k => k + 1);
+  }, [view]);
 
   /* ctrl+f → фокус на поиск */
   useEffect(() => {
@@ -1657,8 +1697,12 @@ function App() {
   const handleSeek = useCallback((v) => {
     setProgress(v);
     discordProgressRef.current = v;
+    cancelAnimationFrame(crossfadeRafRef.current); // отменяем fade если был
     const audio = audioRef.current;
-    if (audio?.duration) audio.currentTime = v * audio.duration;
+    if (audio?.duration) {
+      audio.currentTime = v * audio.duration;
+      audio.volume = volumeRef.current; // восстанавливаем громкость после seek
+    }
     clearTimeout(discordTimerRef.current);
     discordTimerRef.current = setTimeout(() => {
       const t = track;
@@ -1776,6 +1820,7 @@ function App() {
           const t = item.track;
           if (!t?.id) continue;
           const progressive = t.media?.transcodings?.find(tc => tc.format?.protocol === 'progressive');
+          const hls = t.media?.transcodings?.find(tc => tc.format?.protocol === 'hls');
           all.push({
             id: t.id,
             title: t.title || 'Без названия',
@@ -1784,6 +1829,7 @@ function App() {
             color: scHashColor(t.id),
             coverUrl: t.artwork_url ? t.artwork_url.replace('-large', '-t300x300') : null,
             streamUrl: progressive?.url || null,
+            hlsUrl: hls?.url || null,
           });
         }
         url = res.data.next_href || null;
@@ -1853,6 +1899,7 @@ function App() {
           if (!t?.id) continue;
           if (knownIds.has(t.id)) { foundKnown = true; break; }
           const progressive = t.media?.transcodings?.find(tc => tc.format?.protocol === 'progressive');
+          const hls = t.media?.transcodings?.find(tc => tc.format?.protocol === 'hls');
           newest.push({
             id: t.id,
             title: t.title || 'Без названия',
@@ -1861,6 +1908,7 @@ function App() {
             color: scHashColor(t.id),
             coverUrl: t.artwork_url ? t.artwork_url.replace('-large', '-t300x300') : null,
             streamUrl: progressive?.url || null,
+            hlsUrl: hls?.url || null,
           });
         }
         if (foundKnown) break;
@@ -1892,7 +1940,8 @@ function App() {
 
   const initScLikes = useCallback(async (auth) => {
     const cache = await window.electronAPI.scLoadLikesCache();
-    if (cache && cache.length > 0) {
+    const cacheValid = cache && cache.length > 0 && Object.prototype.hasOwnProperty.call(cache[0], 'hlsUrl');
+    if (cacheValid) {
       scCacheRef.current = cache;
       scCacheMapRef.current = new Map(cache.map(t => [t.id, t]));
       const cachedCovers = await window.electronAPI.scCheckCovers(cache.map(t => t.id));
@@ -1933,29 +1982,93 @@ function App() {
   const handleToggleSource = useCallback(() => setSettings(s => ({ ...s, sourceMode: s.sourceMode === 'sc' ? 'local' : 'sc' })), []);
   const sourceMode = (settings.soundcloudAuth && settings.sourceMode === 'sc') ? 'sc' : 'local';
 
+  const toastTimerRef = useRef(null);
+  function showToast(msg) {
+    setToast(msg);
+    setToastExiting(false);
+    clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => {
+      setToastExiting(true);
+      setTimeout(() => { setToast(null); setToastExiting(false); }, 240);
+    }, 2200);
+  }
+
+  function startFadeIn(audio) {
+    cancelAnimationFrame(crossfadeRafRef.current);
+    const cf = settingsRef.current?.crossfade || 0;
+    if (cf <= 0) { audio.volume = volumeRef.current; return; }
+    audio.volume = 0;
+    const target = volumeRef.current;
+    const startMs = performance.now();
+    const tick = (now) => {
+      const t = Math.min(1, (now - startMs) / (cf * 1000));
+      audio.volume = target * t;
+      if (t < 1) crossfadeRafRef.current = requestAnimationFrame(tick);
+    };
+    crossfadeRafRef.current = requestAnimationFrame(tick);
+  }
+
+  function destroyHls() {
+    if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+  }
+
   async function handleScTrackClick(scTrack, idx) {
     setScPlayingIdx(idx);
     setProgress(0);
     setIsPlaying(false);
+    setLoadingTrackId(scTrack.id);
+    destroyHls();
 
     const auth = scAuthRef.current;
-    if (!scTrack.streamUrl || !auth) return;
-    const res = await window.electronAPI.scFetch(scTrack.streamUrl, auth.token, auth.clientId);
-    if (!res.data?.url) return;
+    if (!auth) { setLoadingTrackId(null); return; }
 
-    const resolved = { ...scTrack, resolvedUrl: res.data.url };
+    if (!scTrack.streamUrl && !scTrack.hlsUrl) { showToast('трек недоступен'); setLoadingTrackId(null); return; }
+
+    let resolvedUrl = null;
+    let isHls = false;
+
+    if (scTrack.streamUrl) {
+      const res = await window.electronAPI.scFetch(scTrack.streamUrl, auth.token, auth.clientId);
+      if (res.data?.url) resolvedUrl = res.data.url;
+    }
+    if (!resolvedUrl && scTrack.hlsUrl) {
+      const res = await window.electronAPI.scFetch(scTrack.hlsUrl, auth.token, auth.clientId);
+      if (res.data?.url) { resolvedUrl = res.data.url; isHls = true; }
+    }
+
+    if (!resolvedUrl) { setLoadingTrackId(null); showToast('трек недоступен'); return; }
+
+    const resolved = { ...scTrack, resolvedUrl };
     setScPlayingTrack(resolved);
 
     const audio = audioRef.current;
-    if (!audio) return;
-    audio.src = res.data.url;
-    audio.load();
-    audio.addEventListener('loadedmetadata', () => {
-      const dur = Math.floor(audio.duration);
-      if (dur) setScPlayingTrack(prev => prev ? { ...prev, duration: dur } : prev);
-    }, { once: true });
-    audio.play().catch(() => setIsPlaying(false));
-    setIsPlaying(true);
+    if (!audio) { setLoadingTrackId(null); return; }
+
+    if (isHls && typeof Hls !== 'undefined' && Hls.isSupported()) {
+      const hls = new Hls();
+      hlsRef.current = hls;
+      hls.loadSource(resolvedUrl);
+      hls.attachMedia(audio);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        startFadeIn(audio);
+        audio.play().then(() => setLoadingTrackId(null)).catch(() => { setLoadingTrackId(null); setIsPlaying(false); });
+        setIsPlaying(true);
+      });
+      hls.on(Hls.Events.LEVEL_LOADED, (_, data) => {
+        const dur = Math.floor(data.details.totalduration || 0);
+        if (dur) setScPlayingTrack(prev => prev ? { ...prev, duration: dur } : prev);
+      });
+    } else {
+      audio.src = resolvedUrl;
+      audio.load();
+      audio.addEventListener('loadedmetadata', () => {
+        const dur = Math.floor(audio.duration);
+        if (dur) setScPlayingTrack(prev => prev ? { ...prev, duration: dur } : prev);
+      }, { once: true });
+      startFadeIn(audio);
+      audio.play().then(() => setLoadingTrackId(null)).catch(() => { setLoadingTrackId(null); setIsPlaying(false); });
+      setIsPlaying(true);
+    }
   }
 
   function selectTrack(t) {
@@ -2340,7 +2453,7 @@ function App() {
           opacity: playerVisible ? 1 : 0,
           transform: playerVisible ? 'translateX(0)' : 'translateX(-28px)',
           transition: playerVisible
-            ? 'opacity 0.22s ease, transform 0.26s cubic-bezier(0.22,1,0.36,1), width 0.44s cubic-bezier(0.4,0,0.2,1), border 0.44s ease'
+            ? 'opacity 0.36s ease 0.1s, transform 0.44s cubic-bezier(0.22,1,0.36,1) 0.1s, width 0.44s cubic-bezier(0.4,0,0.2,1), border 0.44s ease'
             : 'opacity 0.14s ease, transform 0.18s ease, width 0.44s cubic-bezier(0.4,0,0.2,1), border 0.44s ease',
         }}>
           <div style={{padding:'12px 10px 8px', flexShrink:0}}>
@@ -2375,6 +2488,7 @@ function App() {
           <VirtualTrackList
             items={activeList}
             activeId={activeListPlayingId}
+            loadingId={loadingTrackId}
             onClickItem={t => {
               if (sourceMode === 'sc') {
                 handleScTrackClick(t, scTracksRef.current.indexOf(t));
@@ -2402,7 +2516,9 @@ function App() {
             alignItems:'center', gap:0,
           }}>
             <div id="player-album-art" ref={playerArtRef} style={{width:'100%', marginBottom:22, opacity: ((hero && !heroExiting) || reverseHero) ? 0 : 1}}>
-              <AlbumArt track={track} isPlaying={isPlaying}/>
+              <div key={artEntranceKey} style={{animation: artEntranceKey > 0 ? 'artEntrance 0.42s cubic-bezier(0.34,1.56,0.64,1)' : 'none'}}>
+                <AlbumArt track={track} isPlaying={isPlaying}/>
+              </div>
             </div>
             <div style={{
               textAlign:'center', marginBottom:18, width:'100%',
@@ -2517,6 +2633,19 @@ function App() {
           likedIds={likedIds} onLike={handleLike}
           onPlayTrack={t => { handleScTrackClick(t, -1); }}
           onSelectTrack={t => { handleScTrackClick(t, -1); setPlayerVisible(true); setView('player'); setNavActive('library'); }}/>
+
+        {toast && (
+          <div style={{
+            position:'absolute', bottom:28, left:'50%',
+            background:'rgba(30,30,36,0.97)', border:'1px solid rgba(255,255,255,0.09)',
+            borderRadius:8, padding:'7px 13px', fontSize:12,
+            color:'rgba(255,255,255,0.45)', pointerEvents:'none',
+            zIndex:9999, whiteSpace:'nowrap',
+            animation: toastExiting
+              ? 'fadeOutDown 0.24s ease forwards'
+              : 'fadeInUp 0.18s ease',
+          }}>{toast}</div>
+        )}
 
       </div>
     </div>
