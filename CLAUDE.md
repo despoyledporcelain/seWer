@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **electron** — desktop-приложение (frame: false, кастомный тайтлбар)
 - **html/css/react** — ui через cdn (react 18 + babel standalone, без сборщика)
-- **space grotesk** — шрифт (google fonts)
+- **proxima soft** — шрифт (локальный, `renderer/fonts/ProximaSoft-Bold.ttf`)
 - **music-metadata v6** — чтение тегов аудиофайлов в main process (CJS-совместимая версия)
 
 ## структура
@@ -39,6 +39,8 @@ npm run build      # сборка .exe через electron-builder (NSIS)
 **никогда не запускать `npm start` или electron самостоятельно для проверки** — пользователь запускает сам.
 
 **уточнять задачу если непонятно** — перед тем как писать код, логически проверить: понятно ли что именно нужно сделать, в каком компоненте, с каким поведением. если задача звучит двусмысленно или можно понять по-разному — спросить уточнение, не угадывать.
+
+**для поиска конкретных строк** — читать [`renderer/index.md`](renderer/index.md), там карта компонентов с номерами строк.
 
 ## архитектура ui
 
@@ -104,9 +106,8 @@ npm run build      # сборка .exe через electron-builder (NSIS)
 ## план разработки
 
 - [x] часть 1 — ui/фронтенд (статичный, заглушки)
-- [~] часть 2 — парсинг soundcloud (страницы)
-- [~] часть 3 — аудио движок (локальные файлы готовы; soundcloud — нет)
-- [ ] часть 4 — интеграция
+- [x] часть 2 — парсинг soundcloud (лайки, поиск, стримы)
+- [x] часть 3 — аудио движок (локальные файлы + soundcloud HLS/progressive)
 
 ## гитхаб
 

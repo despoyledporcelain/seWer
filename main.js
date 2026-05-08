@@ -198,6 +198,19 @@ ipcMain.handle('save-settings', (_, data) => saveSettings(data))
 
 const scLikesFile = () => path.join(app.getPath('userData'), 'sc_likes.json')
 
+ipcMain.handle('sc-clear-covers-cache', () => {
+  const dir = scCoversDir()
+  try {
+    const files = fs.readdirSync(dir)
+    for (const f of files) fs.unlinkSync(path.join(dir, f))
+    return files.length
+  } catch { return 0 }
+})
+
+ipcMain.handle('sc-clear-likes-cache', () => {
+  try { fs.unlinkSync(scLikesFile()); return true } catch { return false }
+})
+
 ipcMain.handle('sc-load-likes-cache', () => {
   try { return JSON.parse(fs.readFileSync(scLikesFile(), 'utf8')) } catch { return [] }
 })
