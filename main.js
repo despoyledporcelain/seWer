@@ -23,10 +23,12 @@ async function initDiscord() {
 ipcMain.handle('discord-update', async (_, data) => {
   if (!discordReady || !discordClient?.user) return
   try {
+    const details = String(data.title  || '').slice(0, 128).padEnd(2, ' ')
+    const state   = String(data.artist || '').slice(0, 128).padEnd(2, ' ')
     const activity = {
       type: 2,
-      details: String(data.title  || '').slice(0, 128),
-      state:   String(data.artist || '').slice(0, 128),
+      details,
+      state,
     }
     if (data.coverUrl?.startsWith('https://')) {
       activity.largeImageKey = data.coverUrl
