@@ -20,6 +20,10 @@ async function initDiscord() {
   } catch {}
 }
 
+ipcMain.handle('set-login-item', (_, enable) => {
+  app.setLoginItemSettings({ openAtLogin: !!enable, name: 'seWer' })
+})
+
 ipcMain.handle('discord-update', async (_, data) => {
   if (!discordReady || !discordClient?.user) return
   try {

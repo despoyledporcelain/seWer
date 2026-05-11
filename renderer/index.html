@@ -426,7 +426,11 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying, visible 
       const W = canvas.width, HH = canvas.height;
       ctx.clearRect(0, 0, W, HH);
 
-      dispProg.current += (progRef.current - dispProg.current) * 0.12;
+      if (playRef.current && lastNow.current !== null && totalRef.current > 0) {
+        const dt = (now - lastNow.current) * 0.001;
+        dispProg.current += dt / totalRef.current;
+      }
+      dispProg.current += (progRef.current - dispProg.current) * 0.015;
       const p   = dispProg.current;
       const barH = 5 * dpr;
       const r    = barH / 2;
@@ -1195,8 +1199,6 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
   const content = {
     playback: (
       <Card title={t('card_audio')}>
-        <Row label={t('autoplay')} sub={t('autoplay_sub')}><Toggle k="autoplay"/></Row>
-        <Row label={t('default_repeat')}><Toggle k="defaultRepeat"/></Row>
         <Row label={t('crossfade')} sub={t('crossfade_sub')} last>
           <CrossfadeSlider value={settings.crossfade} onChange={v=>set('crossfade', v)}/>
         </Row>
@@ -1869,8 +1871,9 @@ function App() {
   const homeSearchRef     = useRef(null);
   const libSearchRef      = useRef(null);
   const searchViewRef     = useRef(null);
-  const discordTimerRef   = useRef(null);
+  const discordTimerRef    = useRef(null);
   const discordProgressRef = useRef(0);
+  const trackSwitchingRef  = useRef(false);
   const filteredRef       = useRef([]);
   const filteredScRef     = useRef([]);
   const searchRef         = useRef('');
@@ -1916,6 +1919,10 @@ function App() {
   useEffect(() => {
     try { window.electronAPI.saveSettings(settings); } catch {}
   }, [settings]);
+
+  useEffect(() => {
+    try { window.electronAPI.setLoginItem?.(settings.startWithWindows); } catch {}
+  }, [settings.startWithWindows]);
 
   /* инициализация Audio */
   useEffect(() => {
@@ -1982,7 +1989,7 @@ function App() {
       audio.play().catch(() => setIsPlaying(false));
     } else {
       cancelAnimationFrame(crossfadeRafRef.current);
-      audio.volume = volumeRef.current; // восстановить если fade-out прервал
+      if (!trackSwitchingRef.current) audio.volume = volumeRef.current;
       audio.pause();
     }
   }, [isPlaying]);
@@ -2502,6 +2509,7 @@ function App() {
   }
 
   async function handleScTrackClick(scTrack, idx, autoSkip = false, skipCount = 0, direction = 1) {
+    trackSwitchingRef.current = true;
     setScPlayingIdx(idx);
     setProgress(0);
     setIsPlaying(false);
@@ -2555,6 +2563,7 @@ function App() {
     };
 
     if (!scTrack.streamUrl && !scTrack.hlsUrl) {
+      trackSwitchingRef.current = false;
       setLoadingTrackId(null);
       markError();
       if (autoSkip) { skipInDirection(); }
@@ -2574,6 +2583,7 @@ function App() {
     }
 
     if (!resolvedUrl) {
+      trackSwitchingRef.current = false;
       setLoadingTrackId(null);
       markError();
       if (autoSkip) { skipInDirection(); }
@@ -2586,13 +2596,19 @@ function App() {
     const audio = audioRef.current;
     if (!audio) { setLoadingTrackId(null); return; }
 
+    const cf = settingsRef.current?.crossfade || 0;
+    audio.volume = cf > 0 ? 0 : volumeRef.current;
+    audio.addEventListener('playing', () => {
+      trackSwitchingRef.current = false;
+      startFadeIn(audio);
+    }, { once: true });
+
     if (isHls && typeof Hls !== 'undefined' && Hls.isSupported()) {
       const hls = new Hls();
       hlsRef.current = hls;
       hls.loadSource(resolvedUrl);
       hls.attachMedia(audio);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        startFadeIn(audio);
         audio.play().then(() => setLoadingTrackId(null)).catch(() => { setLoadingTrackId(null); setIsPlaying(false); });
         setIsPlaying(true);
       });
@@ -2607,7 +2623,6 @@ function App() {
         const dur = Math.floor(audio.duration);
         if (dur) setScPlayingTrack(prev => prev ? { ...prev, duration: dur } : prev);
       }, { once: true });
-      startFadeIn(audio);
       audio.play().then(() => setLoadingTrackId(null)).catch(() => { setLoadingTrackId(null); setIsPlaying(false); });
       setIsPlaying(true);
     }
@@ -3103,11 +3118,12 @@ function App() {
                 </div>
               ) : (
                 <div style={{
-                  display:'flex', alignItems:'center', justifyContent:'center', gap:10,
+                  display:'flex', alignItems:'center',
                   width:'100%', minWidth:0,
                   opacity: playerVisible ? 1 : 0,
                   transition: playerVisible ? 'opacity 0.36s ease 0.12s' : 'opacity 0.1s ease',
                 }}>
+                  {scPlayingTrack && <div style={{width:27, flexShrink:0}}/>}
                   <MarqueeText
                     text={track.title}
                     onClick={e => {

@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   scClearLikesCache:  () => ipcRenderer.invoke('sc-clear-likes-cache'),
   scLoadLikesCache: ()   => ipcRenderer.invoke('sc-load-likes-cache'),
   scSaveLikesCache: (data) => ipcRenderer.invoke('sc-save-likes-cache', data),
-  discordUpdate: (data) => ipcRenderer.invoke('discord-update', data),
-  discordClear:  ()     => ipcRenderer.invoke('discord-clear'),
+  discordUpdate:    (data) => ipcRenderer.invoke('discord-update', data),
+  discordClear:     ()     => ipcRenderer.invoke('discord-clear'),
+  setLoginItem:     (enable) => ipcRenderer.invoke('set-login-item', enable),
 })
