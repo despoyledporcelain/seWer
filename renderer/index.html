@@ -163,6 +163,115 @@ function scHashColor(id) {
 }
 
 
+/* ── i18n ────────────────────────────────────────────────────────────────── */
+const STRINGS = {
+  ru: {
+    minimize:'Свернуть', maximize:'Развернуть', close:'Закрыть',
+    nav_tracks:'Треки', nav_search:'Поиск', nav_player:'Плеер',
+    nav_local:'Локальная библиотека', nav_settings:'Настройки',
+    unavailable:'недоступен',
+    off:'выкл', sec:'с',
+    cancel:'отмена',
+    cache:'Кэш',
+    covers_cache:'Кэш обложек SoundCloud', covers_cache_sub:'Сохранённые обложки треков',
+    del:'удалить', clear:'очистить',
+    likes_cache:'Кэш треков SoundCloud', likes_cache_sub:'Список лайков, перезагрузится при входе',
+    sec_playback:'Воспроизведение', sec_appearance:'Оформление',
+    sec_system:'Система', sec_about:'О приложении',
+    settings_title:'Настройки',
+    card_audio:'Аудио',
+    autoplay:'Автовоспроизведение', autoplay_sub:'Следующий трек запускается автоматически',
+    default_repeat:'Повтор по умолчанию',
+    crossfade:'Кроссфейд', crossfade_sub:'Плавное перекрытие треков',
+    card_interface:'Интерфейс',
+    hide_dividers:'Отключить разделители', hide_dividers_sub:'Убирает линии между пунктами настроек',
+    card_language:'Язык интерфейса', language_label:'Язык', language_sub:'Язык элементов управления',
+    card_startup:'Запуск',
+    start_windows:'Запускать при старте Windows', minimize_tray:'Сворачивать в трей',
+    card_local:'Локальная музыка', music_folder:'Папка с музыкой', no_folder:'Не выбрана',
+    remove:'Удалить', choose:'Выбрать',
+    min_dur:'Мин. длительность аудиофайлов', min_dur_sub:'Файлы короче этого значения пропускаются при сканировании',
+    secs:'сек',
+    version:'Версия', repository:'Репозиторий', stack:'Стек',
+    profile_error:'не удалось получить данные профиля',
+    conn_error:'ошибка подключения',
+    unknown:'неизвестно', logout:'выйти',
+    sc_not_connected:'soundcloud не подключён',
+    sc_hint:'войди чтобы видеть лайки,\nартистов и подписки',
+    opening_browser:'открываем браузер...', login_browser:'войти через браузер',
+    search_ph:'поиск треков, исполнителей...',
+    artists:'Исполнители', followers:'подписчиков', tracks_label:'Треки',
+    loading:'загрузка...',
+    likes:'Лайки', all_tracks:'Все треки',
+    loading_dots:'загружаем...', updating:'обновляем...',
+    search_short:'поиск...',
+    sort_added:'по дате', sort_artist:'по артисту', sort_title:'по названию', sort_dur:'по длине',
+    welcome_title:'добро пожаловать в seWer',
+    welcome_sub:'выбери папку с локальной музыкой\nили войди в soundcloud чтобы начать',
+    pick_folder:'выбрать папку', login_sc:'войти в soundcloud',
+    loading_likes:'загружаем лайки...', load_failed:'не удалось загрузить',
+    not_found:'ничего не найдено', no_likes:'лайков нет', retry:'повторить',
+    unlike_err:'ошибка: не удалось убрать лайк', like_err:'ошибка: не удалось поставить лайк',
+    track_unavailable:'трек недоступен', no_title:'Без названия',
+    userid_err:'не удалось получить userId', api_err:'ошибка api',
+  },
+  en: {
+    minimize:'Minimize', maximize:'Maximize', close:'Close',
+    nav_tracks:'Tracks', nav_search:'Search', nav_player:'Player',
+    nav_local:'Local library', nav_settings:'Settings',
+    unavailable:'unavailable',
+    off:'off', sec:'s',
+    cancel:'cancel',
+    cache:'Cache',
+    covers_cache:'SoundCloud covers cache', covers_cache_sub:'Saved track artwork',
+    del:'delete', clear:'clear',
+    likes_cache:'SoundCloud tracks cache', likes_cache_sub:'Likes list, reloads on login',
+    sec_playback:'Playback', sec_appearance:'Appearance',
+    sec_system:'System', sec_about:'About',
+    settings_title:'Settings',
+    card_audio:'Audio',
+    autoplay:'Autoplay', autoplay_sub:'Next track plays automatically',
+    default_repeat:'Default repeat',
+    crossfade:'Crossfade', crossfade_sub:'Smooth overlap between tracks',
+    card_interface:'Interface',
+    hide_dividers:'Hide dividers', hide_dividers_sub:'Removes lines between settings items',
+    card_language:'Interface language', language_label:'Language', language_sub:'Language of UI elements',
+    card_startup:'Startup',
+    start_windows:'Launch at Windows startup', minimize_tray:'Minimize to tray',
+    card_local:'Local music', music_folder:'Music folder', no_folder:'Not selected',
+    remove:'Remove', choose:'Choose',
+    min_dur:'Min. audio file duration', min_dur_sub:'Files shorter than this are skipped when scanning',
+    secs:'sec',
+    version:'Version', repository:'Repository', stack:'Stack',
+    profile_error:'could not get profile data',
+    conn_error:'connection error',
+    unknown:'unknown', logout:'log out',
+    sc_not_connected:'soundcloud not connected',
+    sc_hint:'log in to see your likes,\nartists and subscriptions',
+    opening_browser:'opening browser...', login_browser:'log in via browser',
+    search_ph:'search tracks, artists...',
+    artists:'Artists', followers:'followers', tracks_label:'Tracks',
+    loading:'loading...',
+    likes:'Likes', all_tracks:'All tracks',
+    loading_dots:'loading...', updating:'updating...',
+    search_short:'search...',
+    sort_added:'by date', sort_artist:'by artist', sort_title:'by title', sort_dur:'by length',
+    welcome_title:'welcome to seWer',
+    welcome_sub:'choose a local music folder\nor log in to soundcloud to start',
+    pick_folder:'choose folder', login_sc:'log in to soundcloud',
+    loading_likes:'loading likes...', load_failed:'failed to load',
+    not_found:'nothing found', no_likes:'no likes', retry:'retry',
+    unlike_err:'error: could not remove like', like_err:'error: could not add like',
+    track_unavailable:'track unavailable', no_title:'Untitled',
+    userid_err:'could not get userId', api_err:'api error',
+  },
+};
+const LangContext = React.createContext('ru');
+function useLang() {
+  const lang = React.useContext(LangContext);
+  return key => STRINGS[lang]?.[key] ?? STRINGS.ru[key] ?? key;
+}
+
 function buildScShuffle(list, currentId) {
   const ids = list.map(t => t.id);
   const rest = currentId != null ? ids.filter(id => id !== currentId) : ids.slice();
@@ -512,6 +621,7 @@ function NavIcon({ icon, label, active, onClick, size=38, noActiveBg=false }) {
 
 /* ── TrackRow ────────────────────────────────────────────────────────────── */
 const TrackRow = React.memo(function TrackRow({ track, isActive, isLoading, isError, onClick }) {
+  const t = useLang();
   const [hov, setHov] = useState(false);
   return (
     <div onClick={onClick} onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
@@ -551,7 +661,7 @@ const TrackRow = React.memo(function TrackRow({ track, isActive, isLoading, isEr
           animation: isLoading ? 'spin 0.75s linear infinite' : 'none',
         }}/>
         {isError
-          ? <div style={{fontSize:11, color:'rgba(255,80,80,0.7)', transition:'opacity 0.3s ease'}}>недоступен</div>
+          ? <div style={{fontSize:11, color:'rgba(255,80,80,0.7)', transition:'opacity 0.3s ease'}}>{t('unavailable')}</div>
           : <div style={{fontSize:11, color:'rgba(255,255,255,0.16)'}}>{fmt(track.duration)}</div>
         }
       </div>
@@ -715,11 +825,12 @@ function HeroClone({ hero, exiting, reverse = false }) {
 
 /* ── Sidebar ─────────────────────────────────────────────────────────────── */
 function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth, profileRef, sourceMode, onToggleSource, avatarFlying }) {
+  const t = useLang();
   const navImg = (src) => <img src={src} style={{width:18, height:18, filter:'brightness(0) invert(1)', display:'block'}}/>;
   const NAV = [
-    { id:"home",    label:"Треки",  icon: navImg('../assets/tracks.png')  },
-    { id:"search",  label:"Поиск",  icon: navImg('../assets/search.png')  },
-    { id:"library", label:"Плеер",  icon: navImg('../assets/player.png')  },
+    { id:"home",    label:t('nav_tracks'),  icon: navImg('../assets/tracks.png')  },
+    { id:"search",  label:t('nav_search'),  icon: navImg('../assets/search.png')  },
+    { id:"library", label:t('nav_player'),  icon: navImg('../assets/player.png')  },
   ];
   const folderIcon = navImg('../assets/local.png');
 
@@ -818,10 +929,10 @@ function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth
           overflow:'hidden',
           transition:'max-height 0.22s cubic-bezier(0.4,0,0.2,1), opacity 0.18s ease',
         }}>
-          <NavIcon label="Локальная библиотека" active={sourceMode==='local'}
+          <NavIcon label={t('nav_local')} active={sourceMode==='local'}
             onClick={onToggleSource} icon={folderIcon}/>
         </div>
-        <NavIcon label="Настройки" active={navActive==='settings'} onClick={()=>onNav('settings')}
+        <NavIcon label={t('nav_settings')} active={navActive==='settings'} onClick={()=>onNav('settings')}
           icon={<img src="../assets/settings.png" style={{width:18,height:18,filter:'brightness(0) invert(1)',display:'block'}}/>}/>
       </div>
     </div>
@@ -830,6 +941,7 @@ function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth
 
 /* ── CrossfadeSlider ─────────────────────────────────────────────────────── */
 function CrossfadeSlider({ value, onChange }) {
+  const t = useLang();
   const trackRef    = useRef(null);
   const onChangeRef = useRef(onChange);
   const valueRef    = useRef(value);
@@ -878,7 +990,7 @@ function CrossfadeSlider({ value, onChange }) {
         </div>
       </div>
       <span style={{fontSize:12, color:'rgba(255,255,255,0.32)', minWidth:28, textAlign:'right'}}>
-        {value === 0 ? 'выкл' : `${value} с`}
+        {value === 0 ? t('off') : `${value} ${t('sec')}`}
       </span>
     </div>
   );
@@ -886,6 +998,7 @@ function CrossfadeSlider({ value, onChange }) {
 
 /* ── ClearCacheCard ───────────────────────────────────────────────────────── */
 function ClearCacheCard({ Card, Row, onClearCoversCache, onClearLikesCache }) {
+  const t = useLang();
   const [confirmCovers, setConfirmCovers] = useState(false);
   const [confirmLikes,  setConfirmLikes]  = useState(false);
   const btn = (label, onClick) => (
@@ -895,29 +1008,29 @@ function ClearCacheCard({ Card, Row, onClearCoversCache, onClearLikesCache }) {
   );
   const cancel = (fn) => (
     <div onClick={fn} style={{fontSize:12, color:'rgba(255,255,255,0.45)', cursor:'pointer', background:'rgba(255,255,255,0.055)', borderRadius:7, padding:'5px 14px'}}>
-      отмена
+      {t('cancel')}
     </div>
   );
   return (
-    <Card title="Кэш">
-      <Row label="Кэш обложек SoundCloud" sub="Сохранённые обложки треков">
+    <Card title={t('cache')}>
+      <Row label={t('covers_cache')} sub={t('covers_cache_sub')}>
         {confirmCovers ? (
           <div style={{display:'flex', gap:8, flexShrink:0}}>
             {cancel(()=>setConfirmCovers(false))}
-            {btn('удалить', ()=>{ onClearCoversCache(); setConfirmCovers(false); })}
+            {btn(t('del'), ()=>{ onClearCoversCache(); setConfirmCovers(false); })}
           </div>
         ) : (
-          <div onClick={()=>setConfirmCovers(true)} style={{fontSize:12, color:'rgba(255,255,255,0.45)', cursor:'pointer', background:'rgba(255,255,255,0.055)', borderRadius:7, padding:'5px 14px'}}>очистить</div>
+          <div onClick={()=>setConfirmCovers(true)} style={{fontSize:12, color:'rgba(255,255,255,0.45)', cursor:'pointer', background:'rgba(255,255,255,0.055)', borderRadius:7, padding:'5px 14px'}}>{t('clear')}</div>
         )}
       </Row>
-      <Row label="Кэш треков SoundCloud" sub="Список лайков, перезагрузится при входе" last>
+      <Row label={t('likes_cache')} sub={t('likes_cache_sub')} last>
         {confirmLikes ? (
           <div style={{display:'flex', gap:8, flexShrink:0}}>
             {cancel(()=>setConfirmLikes(false))}
-            {btn('удалить', ()=>{ onClearLikesCache(); setConfirmLikes(false); })}
+            {btn(t('del'), ()=>{ onClearLikesCache(); setConfirmLikes(false); })}
           </div>
         ) : (
-          <div onClick={()=>setConfirmLikes(true)} style={{fontSize:12, color:'rgba(255,255,255,0.45)', cursor:'pointer', background:'rgba(255,255,255,0.055)', borderRadius:7, padding:'5px 14px'}}>очистить</div>
+          <div onClick={()=>setConfirmLikes(true)} style={{fontSize:12, color:'rgba(255,255,255,0.45)', cursor:'pointer', background:'rgba(255,255,255,0.055)', borderRadius:7, padding:'5px 14px'}}>{t('clear')}</div>
         )}
       </Row>
     </Card>
@@ -926,6 +1039,7 @@ function ClearCacheCard({ Card, Row, onClearCoversCache, onClearLikesCache }) {
 
 /* ── SettingsView ─────────────────────────────────────────────────────────── */
 function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFolder, onClearCoversCache, onClearLikesCache }) {
+  const t = useLang();
   const set = (k, v) => onSettings({ ...settings, [k]: v });
   const [sec, setSec] = useState('playback');
   const secRefs  = useRef({});
@@ -986,44 +1100,67 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
   );
 
   const SECS = [
-    { id:'playback', label:'Воспроизведение',
+    { id:'playback', label:t('sec_playback'),
       icon:<img src="../assets/vosproizvedenie.png" style={{width:15,height:15,filter:'brightness(0) invert(1)',display:'block'}}/> },
-    { id:'appearance', label:'Оформление',
+    { id:'appearance', label:t('sec_appearance'),
       icon:<img src="../assets/theme.png" style={{width:15,height:15,filter:'brightness(0) invert(1)',display:'block'}}/> },
-    { id:'system',   label:'Система',
+    { id:'system',   label:t('sec_system'),
       icon:<img src="../assets/system.png" style={{width:15,height:15,filter:'brightness(0) invert(1)',display:'block'}}/> },
-    { id:'about',    label:'О приложении',
+    { id:'about',    label:t('sec_about'),
       icon:<img src="../assets/about.png" style={{width:15,height:15,filter:'brightness(0) invert(1)',display:'block'}}/> },
   ];
 
   const content = {
     playback: (
-      <Card title="Аудио">
-        <Row label="Автовоспроизведение" sub="Следующий трек запускается автоматически"><Toggle k="autoplay"/></Row>
-        <Row label="Повтор по умолчанию"><Toggle k="defaultRepeat"/></Row>
-        <Row label="Кроссфейд" sub="Плавное перекрытие треков" last>
+      <Card title={t('card_audio')}>
+        <Row label={t('autoplay')} sub={t('autoplay_sub')}><Toggle k="autoplay"/></Row>
+        <Row label={t('default_repeat')}><Toggle k="defaultRepeat"/></Row>
+        <Row label={t('crossfade')} sub={t('crossfade_sub')} last>
           <CrossfadeSlider value={settings.crossfade} onChange={v=>set('crossfade', v)}/>
         </Row>
       </Card>
     ),
     appearance: (
-      <Card title="Интерфейс">
-        <Row label="Отключить разделители" sub="Убирает линии между пунктами настроек" last><Toggle k="hideDividers"/></Row>
+      <Card title={t('card_interface')}>
+        <Row label={t('hide_dividers')} sub={t('hide_dividers_sub')} last><Toggle k="hideDividers"/></Row>
       </Card>
     ),
     system: (<>
-      <ClearCacheCard Card={Card} Row={Row} onClearCoversCache={onClearCoversCache} onClearLikesCache={onClearLikesCache}/>
-      <Card title="Запуск">
-        <Row label="Запускать при старте Windows"><Toggle k="startWithWindows"/></Row>
-        <Row label="Сворачивать в трей" last><Toggle k="minimizeToTray"/></Row>
+      <Card title={t('card_language')}>
+        <Row label={t('language_label')} sub={t('language_sub')} last>
+          <div style={{display:'flex', gap:6, flexShrink:0}}>
+            {['RU','EN'].map(lang => {
+              const active = (settings.language || 'RU') === lang;
+              return (
+                <div key={lang} onClick={() => set('language', lang)} style={{
+                  fontSize:12, fontWeight:500, letterSpacing:'0.04em',
+                  padding:'5px 18px', borderRadius:8, cursor:'pointer',
+                  userSelect:'none',
+                  background: active ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)',
+                  color: active ? 'rgba(255,255,255,0.88)' : 'rgba(255,255,255,0.3)',
+                  border: active ? '1px solid rgba(255,255,255,0.15)' : '1px solid transparent',
+                  transition:'background 0.15s, color 0.15s, border-color 0.15s',
+                }}
+                  onMouseEnter={e => { if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; }}
+                  onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
+                >{lang}</div>
+              );
+            })}
+          </div>
+        </Row>
       </Card>
-      <Card title="Локальная музыка">
-        <Row label="Папка с музыкой"
+      <ClearCacheCard Card={Card} Row={Row} onClearCoversCache={onClearCoversCache} onClearLikesCache={onClearLikesCache}/>
+      <Card title={t('card_startup')}>
+        <Row label={t('start_windows')}><Toggle k="startWithWindows"/></Row>
+        <Row label={t('minimize_tray')} last><Toggle k="minimizeToTray"/></Row>
+      </Card>
+      <Card title={t('card_local')}>
+        <Row label={t('music_folder')}
           sub={settings.musicFolder
             ? settings.musicFolder.length > 42
               ? '...' + settings.musicFolder.slice(-42)
               : settings.musicFolder
-            : 'Не выбрана'}>
+            : t('no_folder')}>
           <div style={{display:'flex', gap:8, flexShrink:0}}>
             {settings.musicFolder && (
               <div
@@ -1034,7 +1171,7 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
                   borderRadius:7, padding:'5px 14px',
                   transition:'background 0.15s',
                 }}
-              >Удалить</div>
+              >{t('remove')}</div>
             )}
             <div
               onClick={async () => {
@@ -1047,10 +1184,10 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
                 borderRadius:7, padding:'5px 14px',
                 transition:'background 0.15s',
               }}
-            >Выбрать</div>
+            >{t('choose')}</div>
           </div>
         </Row>
-        <Row label="Мин. длительность аудиофайлов" sub="Файлы короче этого значения пропускаются при сканировании" last>
+        <Row label={t('min_dur')} sub={t('min_dur_sub')} last>
           <div style={{display:'flex', alignItems:'center', gap:8, flexShrink:0}}>
             <div onClick={()=>set('minDuration', Math.max(0,(settings.minDuration??30)-5))}
               style={{width:28,height:28,borderRadius:8,background:'rgba(255,255,255,0.055)',
@@ -1059,7 +1196,7 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
               onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,0.09)'}
               onMouseLeave={e=>e.currentTarget.style.background='rgba(255,255,255,0.055)'}>−</div>
             <span style={{fontSize:13,color:'rgba(255,255,255,0.75)',minWidth:42,textAlign:'center'}}>
-              {settings.minDuration??30} сек
+              {settings.minDuration??30} {t('secs')}
             </span>
             <div onClick={()=>set('minDuration', (settings.minDuration??30)+5)}
               style={{width:28,height:28,borderRadius:8,background:'rgba(255,255,255,0.055)',
@@ -1073,9 +1210,9 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
     </>),
     about: (
       <Card>
-        <Row label="Версия"><span style={{fontSize:12, color:'rgba(255,255,255,0.3)'}}>0.1.0-alpha</span></Row>
-        <Row label="Репозиторий"><span style={{fontSize:12, color:'rgba(255,255,255,0.3)'}}>despoyledporcelain/seWer</span></Row>
-        <Row label="Стек" last><span style={{fontSize:12, color:'rgba(255,255,255,0.3)'}}>Electron · React · HTML</span></Row>
+        <Row label={t('version')}><span style={{fontSize:12, color:'rgba(255,255,255,0.3)'}}>0.1.0-alpha</span></Row>
+        <Row label={t('repository')}><span style={{fontSize:12, color:'rgba(255,255,255,0.3)'}}>despoyledporcelain/seWer</span></Row>
+        <Row label={t('stack')} last><span style={{fontSize:12, color:'rgba(255,255,255,0.3)'}}>Electron · React · HTML</span></Row>
       </Card>
     ),
   };
@@ -1098,7 +1235,7 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
         <div style={{
           fontSize:19, fontWeight:600, letterSpacing:'-0.025em',
           color:'rgba(255,255,255,0.85)', marginBottom:26, paddingLeft:10,
-        }}>Настройки</div>
+        }}>{t('settings_title')}</div>
         <div style={{display:'flex', flexDirection:'column', gap:2, position:'relative'}}>
           <div style={{
             position:'absolute', left:0, right:0, borderRadius:9, pointerEvents:'none',
@@ -1162,6 +1299,7 @@ function AvatarFlyClone({ fly, exiting }) {
 
 /* ── SoundCloudView ──────────────────────────────────────────────────────── */
 function SoundCloudView({ visible, scAuth, onLogin, onLogout, avatarRef }) {
+  const t = useLang();
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState(null);
 
@@ -1172,8 +1310,8 @@ function SoundCloudView({ visible, scAuth, onLogin, onLogout, avatarRef }) {
       if (!creds) { setLoading(false); return; }
       const res = await window.electronAPI.scFetch('https://api-v2.soundcloud.com/me', creds.token, creds.clientId);
       if (res.data) onLogin({ ...creds, userId: res.data.id, username: res.data.username, avatarUrl: res.data.avatar_url || null });
-      else setError('не удалось получить данные профиля');
-    } catch { setError('ошибка подключения'); }
+      else setError(t('profile_error'));
+    } catch { setError(t('conn_error')); }
     setLoading(false);
   };
 
@@ -1203,7 +1341,7 @@ function SoundCloudView({ visible, scAuth, onLogin, onLogout, avatarRef }) {
         </div>
         <div style={{textAlign:'center'}}>
           <div style={{fontSize:11, color:'rgba(255,255,255,0.28)', letterSpacing:'0.08em', textTransform:'uppercase', marginBottom:8}}>signed as</div>
-          <div style={{fontSize:20, fontWeight:600, letterSpacing:'-0.02em', color:'rgba(255,255,255,0.85)'}}>{scAuth.username || 'неизвестно'}</div>
+          <div style={{fontSize:20, fontWeight:600, letterSpacing:'-0.02em', color:'rgba(255,255,255,0.85)'}}>{scAuth.username || t('unknown')}</div>
         </div>
         <button onClick={onLogout} style={{
           background:'rgba(255,255,255,0.04)', border:'none',
@@ -1214,7 +1352,7 @@ function SoundCloudView({ visible, scAuth, onLogin, onLogout, avatarRef }) {
         }}
           onMouseEnter={e=>{ e.currentTarget.style.background='rgba(255,255,255,0.07)'; e.currentTarget.style.color='rgba(255,255,255,0.75)'; }}
           onMouseLeave={e=>{ e.currentTarget.style.background='rgba(255,255,255,0.04)'; e.currentTarget.style.color='rgba(255,255,255,0.5)'; }}
-        >выйти</button>
+        >{t('logout')}</button>
       </div>
     </div>
   );
@@ -1230,8 +1368,8 @@ function SoundCloudView({ visible, scAuth, onLogin, onLogout, avatarRef }) {
           {SC_ICON}
         </div>
         <div style={{textAlign:'center'}}>
-          <div style={{fontSize:15,fontWeight:600,letterSpacing:'-0.015em',color:'rgba(255,255,255,0.6)',marginBottom:7}}>soundcloud не подключён</div>
-          <div style={{fontSize:12,color:'rgba(255,255,255,0.22)',lineHeight:1.6}}>войди чтобы видеть лайки,<br/>артистов и подписки</div>
+          <div style={{fontSize:15,fontWeight:600,letterSpacing:'-0.015em',color:'rgba(255,255,255,0.6)',marginBottom:7}}>{t('sc_not_connected')}</div>
+          <div style={{fontSize:12,color:'rgba(255,255,255,0.22)',lineHeight:1.6}}>{t('sc_hint').split('\n').map((l,i)=><span key={i}>{l}{i===0&&<br/>}</span>)}</div>
         </div>
         {error && <div style={{fontSize:11,color:'rgba(255,80,60,0.7)'}}>{error}</div>}
         <button onClick={handleLogin} disabled={loading} style={{
@@ -1244,7 +1382,7 @@ function SoundCloudView({ visible, scAuth, onLogin, onLogout, avatarRef }) {
         }}
           onMouseEnter={e=>{ if(!loading){ e.currentTarget.style.background='rgba(255,85,0,0.17)'; }}}
           onMouseLeave={e=>{ e.currentTarget.style.background=loading?'rgba(255,85,0,0.06)':'rgba(255,85,0,0.1)'; }}
-        >{loading ? 'открываем браузер...' : 'войти через браузер'}</button>
+        >{loading ? t('opening_browser') : t('login_browser')}</button>
       </div>
     </div>
   );
@@ -1295,6 +1433,7 @@ function SearchTrackRow({ track, isLiked, onLike, onClick, onCoverClick }) {
 
 /* ── SearchView ──────────────────────────────────────────────────────────── */
 const SearchView = React.forwardRef(function SearchView({ visible, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, onResultsLoaded }, ref) {
+  const T = useLang();
   const inputRef = useRef(null);
   const [query,   setQuery]   = useState('');
   const [results, setResults] = useState([]);
@@ -1338,7 +1477,7 @@ const SearchView = React.forwardRef(function SearchView({ visible, scAuth, liked
     if (queryRef.current !== q) return;
     const newTracks = (tracksRes.data?.collection || []).map(t => ({
       id: t.id,
-      title: t.title || 'Без названия',
+      title: t.title || T('no_title'),
       artist: t.publisher_metadata?.artist || t.user?.username || '',
       duration: Math.floor((t.duration || 0) / 1000),
       color: scHashColor(t.id),
@@ -1404,7 +1543,7 @@ const SearchView = React.forwardRef(function SearchView({ visible, scAuth, liked
           <input
             ref={inputRef}
             value={query} onChange={handleInput}
-            placeholder="поиск треков, исполнителей..."
+            placeholder={T('search_ph')}
             style={{
               flex:1, background:'transparent', border:'none', outline:'none',
               color:'#ededf4', fontSize:18, fontFamily:'inherit',
@@ -1426,7 +1565,7 @@ const SearchView = React.forwardRef(function SearchView({ visible, scAuth, liked
           }}>
           {users.length > 0 && (
             <div style={{marginBottom:22}}>
-              <div style={{fontSize:10.5,letterSpacing:'0.09em',textTransform:'uppercase',color:'rgba(255,255,255,0.22)',marginBottom:10}}>Исполнители</div>
+              <div style={{fontSize:10.5,letterSpacing:'0.09em',textTransform:'uppercase',color:'rgba(255,255,255,0.22)',marginBottom:10}}>{T('artists')}</div>
               <div style={{display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:10}}>
                 {users.slice(0, 4).map(u => (
                   <div key={u.id} style={{
@@ -1442,7 +1581,7 @@ const SearchView = React.forwardRef(function SearchView({ visible, scAuth, liked
                     }
                     <div>
                       <div style={{fontSize:12,color:'rgba(255,255,255,0.8)'}}>{u.username}</div>
-                      {u.followersCount > 0 && <div style={{fontSize:10,color:'rgba(255,255,255,0.28)',marginTop:1}}>{u.followersCount.toLocaleString()} подписчиков</div>}
+                      {u.followersCount > 0 && <div style={{fontSize:10,color:'rgba(255,255,255,0.28)',marginTop:1}}>{u.followersCount.toLocaleString()} {T('followers')}</div>}
                     </div>
                   </div>
                 ))}
@@ -1451,7 +1590,7 @@ const SearchView = React.forwardRef(function SearchView({ visible, scAuth, liked
           )}
           {results.length > 0 && (
             <div>
-              <div style={{fontSize:10.5,letterSpacing:'0.09em',textTransform:'uppercase',color:'rgba(255,255,255,0.22)',marginBottom:8}}>Треки</div>
+              <div style={{fontSize:10.5,letterSpacing:'0.09em',textTransform:'uppercase',color:'rgba(255,255,255,0.22)',marginBottom:8}}>{T('tracks_label')}</div>
               {results.map(t => (
                 <SearchTrackRow key={t.id} track={t}
                   isLiked={likedIds.has(t.id)}
@@ -1459,7 +1598,7 @@ const SearchView = React.forwardRef(function SearchView({ visible, scAuth, liked
                   onClick={() => onSelectTrack(t, results)}
                   onCoverClick={() => onPlayTrack(t, results)}/>
               ))}
-              {loading && <div style={{textAlign:'center',color:'rgba(255,255,255,0.2)',padding:'16px 0',fontSize:12}}>загрузка...</div>}
+              {loading && <div style={{textAlign:'center',color:'rgba(255,255,255,0.2)',padding:'16px 0',fontSize:12}}>{T('loading')}</div>}
             </div>
           )}
         </div>
@@ -1515,6 +1654,17 @@ function App() {
   const [libScrollTargetId, setLibScrollTargetId] = useState(null);
   const [searchFocused,    setSearchFocused]    = useState(false);
   const editCancelRef  = useRef(false);
+
+  const lang = (settings.language || 'RU').toLowerCase();
+  const langRef = useRef(lang);
+  langRef.current = lang;
+  const t = key => STRINGS[lang]?.[key] ?? STRINGS.ru[key] ?? key;
+
+  useEffect(() => {
+    const btns = document.querySelectorAll('#titlebar .win-btn');
+    const titles = [t('minimize'), t('maximize'), t('close')];
+    btns.forEach((b, i) => { if (titles[i]) b.title = titles[i]; });
+  }, [lang]);
 
   const customTitlesRef = useRef({});
   customTitlesRef.current = settings.customTitles || {};
@@ -1947,7 +2097,8 @@ function App() {
       const me = await window.electronAPI.scFetch('https://api-v2.soundcloud.com/me', auth.token, auth.clientId);
       if (me.data?.id) userId = me.data.id;
       else {
-        setScError(`не удалось получить userId: ${me.error ?? 'нет данных'}`);
+        const tL = k => STRINGS[langRef.current]?.[k] ?? STRINGS.ru[k] ?? k;
+        setScError(`${tL('userid_err')}: ${me.error ?? '—'}`);
         if (silent) setScUpdating(false); else setScLoading(false);
         return;
       }
@@ -1957,7 +2108,7 @@ function App() {
     try {
       while (url && pages < 20) {
         const res = await window.electronAPI.scFetch(url, auth.token, auth.clientId);
-        if (res.error) { setScError(`ошибка api: ${res.error}`); break; }
+        if (res.error) { setScError(`${STRINGS[langRef.current]?.api_err ?? 'api error'}: ${res.error}`); break; }
         if (!res.data?.collection) break;
         for (const item of res.data.collection) {
           const t = item.track;
@@ -1966,7 +2117,7 @@ function App() {
           const hls = t.media?.transcodings?.find(tc => tc.format?.protocol === 'hls');
           all.push({
             id: t.id,
-            title: t.title || 'Без названия',
+            title: t.title || (STRINGS[langRef.current]?.no_title ?? 'Без названия'),
             artist: t.publisher_metadata?.artist || t.user?.username || '',
             duration: Math.floor((t.duration || 0) / 1000),
             color: scHashColor(t.id),
@@ -2035,7 +2186,7 @@ function App() {
     try {
       while (url && pages < 20 && !foundKnown) {
         const res = await window.electronAPI.scFetch(url, auth.token, auth.clientId);
-        if (res.error) { setScError(`ошибка api: ${res.error}`); break; }
+        if (res.error) { setScError(`${STRINGS[langRef.current]?.api_err ?? 'api error'}: ${res.error}`); break; }
         if (!res.data?.collection) break;
         for (const item of res.data.collection) {
           const t = item.track;
@@ -2045,7 +2196,7 @@ function App() {
           const hls = t.media?.transcodings?.find(tc => tc.format?.protocol === 'hls');
           newest.push({
             id: t.id,
-            title: t.title || 'Без названия',
+            title: t.title || (STRINGS[langRef.current]?.no_title ?? 'Без названия'),
             artist: t.publisher_metadata?.artist || t.user?.username || '',
             duration: Math.floor((t.duration || 0) / 1000),
             color: scHashColor(t.id),
@@ -2331,7 +2482,7 @@ function App() {
         `https://api-v2.soundcloud.com/users/${auth.userId}/track_likes/${track.id}`,
         auth.token, auth.clientId, 'DELETE'
       );
-      if (res.error) { showToast('ошибка: не удалось убрать лайк'); return; }
+      if (res.error) { showToast(t('unlike_err')); return; }
       setScTracks(prev => prev.filter(t => t.id !== track.id));
       scCacheRef.current = scCacheRef.current.filter(t => t.id !== track.id);
       scCacheMapRef.current.delete(track.id);
@@ -2340,7 +2491,7 @@ function App() {
         `https://api-v2.soundcloud.com/users/${auth.userId}/track_likes/${track.id}`,
         auth.token, auth.clientId, 'PUT'
       );
-      if (res.error) { showToast('ошибка: не удалось поставить лайк'); return; }
+      if (res.error) { showToast(t('like_err')); return; }
       setScTracks(prev => [track, ...prev]);
       scCacheRef.current = [track, ...scCacheRef.current];
       scCacheMapRef.current.set(track.id, track);
@@ -2471,6 +2622,7 @@ function App() {
   if (!track) return null;
 
   return (
+    <LangContext.Provider value={lang}>
     <div style={{display:'flex', width:'100%', height:'100%', overflow:'hidden'}}>
       {hero && hero.targetRect && <HeroClone hero={hero} exiting={heroExiting}/>}
       {reverseHero && reverseHero.targetRect && <HeroClone hero={reverseHero} exiting={reverseHeroExiting} reverse={true}/>}
@@ -2493,13 +2645,13 @@ function App() {
             {!showWelcome && <div style={{display:'flex', alignItems:'center', gap:16, marginBottom:24}}>
               <div style={{fontSize:12, fontWeight:500, color:'rgba(255,255,255,0.22)',
                 letterSpacing:'0.06em', textTransform:'uppercase', flexShrink:0}}>
-                {sourceMode === 'sc' ? 'Лайки' : 'Все треки'}
+                {sourceMode === 'sc' ? t('likes') : t('all_tracks')}
               </div>
               {sourceMode === 'sc' && scLoading && (
-                <div style={{fontSize:11, color:'rgba(255,255,255,0.32)'}}>загружаем...</div>
+                <div style={{fontSize:11, color:'rgba(255,255,255,0.32)'}}>{t('loading_dots')}</div>
               )}
               {sourceMode === 'sc' && !scLoading && scUpdating && (
-                <div style={{fontSize:11, color:'rgba(255,255,255,0.32)'}}>обновляем...</div>
+                <div style={{fontSize:11, color:'rgba(255,255,255,0.32)'}}>{t('updating')}</div>
               )}
               {sourceMode === 'sc' && !scLoading && !scUpdating && scTracks.length > 0 && (
                 <div style={{fontSize:11, color:'rgba(255,255,255,0.16)'}}>{scTracks.length}</div>
@@ -2507,7 +2659,7 @@ function App() {
               {sourceMode === 'sc' && scError && (
                 <div style={{fontSize:11, color:'rgba(255,80,60,0.75)', maxWidth:320, lineHeight:1.5, wordBreak:'break-all'}}>
                   {scError} — <span style={{cursor:'pointer', textDecoration:'underline'}}
-                    onClick={() => loadScLikes(settings.soundcloudAuth)}>повторить</span>
+                    onClick={() => loadScLikes(settings.soundcloudAuth)}>{t('retry')}</span>
                 </div>
               )}
               <div style={{
@@ -2523,7 +2675,7 @@ function App() {
                 <input
                   ref={homeSearchRef}
                   type="text"
-                  placeholder="поиск..."
+                  placeholder={t('search_short')}
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   onFocus={() => setSearchFocused(true)}
@@ -2543,7 +2695,7 @@ function App() {
               </div>
               {sourceMode !== 'sc' && (
                 <div style={{display:'flex', gap:3, marginLeft:'auto'}}>
-                  {[['added','по дате'],['artist','по артисту'],['title','по названию'],['duration','по длине']].map(([k,label]) => (
+                  {[['added',t('sort_added')],['artist',t('sort_artist')],['title',t('sort_title')],['duration',t('sort_dur')]].map(([k,label]) => (
                     <button key={k} onClick={() => setSort(k)} style={{
                       background: sort===k ? 'rgba(255,255,255,0.07)' : 'none',
                       border: 'none',
@@ -2575,10 +2727,10 @@ function App() {
                 <div>
                   <div style={{fontSize:20, fontWeight:600, letterSpacing:'-0.02em',
                     color:'rgba(255,255,255,0.78)', marginBottom:8}}>
-                    добро пожаловать в seWer
+                    {t('welcome_title')}
                   </div>
                   <div style={{fontSize:13, color:'rgba(255,255,255,0.32)', lineHeight:1.6, maxWidth:340}}>
-                    выбери папку с локальной музыкой<br/>или войди в soundcloud чтобы начать
+                    {t('welcome_sub').split('\n').map((l,i) => <span key={i}>{l}{i===0 && <br/>}</span>)}
                   </div>
                 </div>
                 <div style={{display:'flex', gap:10, marginTop:6, flexWrap:'wrap', justifyContent:'center'}}>
@@ -2596,7 +2748,7 @@ function App() {
                     <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
                       <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
                     </svg>
-                    выбрать папку
+                    {t('pick_folder')}
                   </button>
                   <button onClick={() => handleNav('soundcloud')} style={{
                     display:'flex', alignItems:'center', gap:8,
@@ -2610,7 +2762,7 @@ function App() {
                     onMouseLeave={e=>{ e.currentTarget.style.background='rgba(255,85,0,0.1)'; }}
                   >
                     <SoundCloudIcon size={14} fill="rgba(255,130,60,0.9)"/>
-                    войти в soundcloud
+                    {t('login_sc')}
                   </button>
                 </div>
               </div>
@@ -2621,10 +2773,10 @@ function App() {
                 textAlign:'center',
               }}>
                 {scLoading
-                  ? 'загружаем лайки...'
+                  ? t('loading_likes')
                   : scError
-                    ? 'не удалось загрузить'
-                    : (search ? 'ничего не найдено' : 'лайков нет')}
+                    ? t('load_failed')
+                    : (search ? t('not_found') : t('no_likes'))}
               </div>
             ) : (
               <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(128px, 1fr))', gap:18}}>
@@ -2679,7 +2831,7 @@ function App() {
                 onChange={e=>setSearch(e.target.value)}
                 onFocus={() => setSearchFocused(true)}
                 onBlur={() => setSearchFocused(false)}
-                placeholder="поиск..."
+                placeholder={t('search_short')}
                 style={{flex:1, background:'none', border:'none', outline:'none',
                         color:'rgba(255,255,255,0.78)', fontSize:12.5, fontFamily:'inherit'}}/>
               {search && (
@@ -2856,6 +3008,7 @@ function App() {
 
       </div>
     </div>
+    </LangContext.Provider>
   );
 }
 
