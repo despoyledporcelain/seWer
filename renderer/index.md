@@ -1,6 +1,6 @@
 # карта renderer/index.html
 
-весь ui — один файл ~2700 строк. jsx компилируется babel standalone в браузере.
+весь ui — один файл ~2800 строк. jsx компилируется babel standalone в браузере.
 
 ## структура файла
 
@@ -17,7 +17,7 @@
 --text: #ededf4   --accent: #b2b2b2   --titlebar-h: 28px
 ```
 
-**анимации:** `breathe`, `spin`, `fadeInUp`, `fadeOutDown`, `artEntrance`
+**анимации:** `breathe`, `spin`, `fadeInUp`, `fadeOutDown`, `artEntrance`, `marqueeScroll`
 
 **скроллбары:** `.scroll-thin` (8px зона, 2px визуально), `.scroll-home` (отступы под хедер сетки)
 
@@ -47,7 +47,7 @@ assets/
 ## i18n
 
 ```
-STRINGS        — объект { ru: {...}, en: {...} }, ~60 ключей
+STRINGS        — объект { ru: {...}, en: {...} }, ~70 ключей
 LangContext    — React.createContext('ru')
 useLang()      — хук: возвращает t(key), читает LangContext
 ```
@@ -60,9 +60,18 @@ useLang()      — хук: возвращает t(key), читает LangContext
 
 ## компоненты
 
+### `MarqueeText`
+пропсы: `{text, style, onClick}`
+прокрутка длинного текста. `useLayoutEffect` измеряет overflow после каждого изменения `text`. если текст влазит — `textAlign:'center'`; если нет — `textAlign:'left'` + CSS анимация `marqueeScroll` (пауза 1.8с → едет → пауза → возврат). скорость ~38px/s, длительность динамическая.
+
+### `PlayerLikeBtn`
+пропсы: `{liked, onLike}`
+сердечко 19px в плеере (только для SC треков). hover через `useState`. filled/outline зависит от `liked`. scale 1.18 при hover.
+
 ### `WaveProgressBar`
 пропсы: `{progress, elapsed, total, onSeek, isPlaying, visible}`
 canvas-волна H=52. drag → onSeek. анимация замораживается на паузе. rAF останавливается при `visible=false`.
+**прогресс**: при `isPlaying` — `dispProg` двигается по реальному времени (`dt / total` за кадр) + мягкая коррекция дрейфа `* 0.015` к `progRef`. при паузе — только сглаживание.
 
 ### `ThinVolumeSlider`
 пропсы: `{volume [0–1], onChange}`
@@ -114,12 +123,20 @@ portal → document.body. CSS transition 340ms. заглушка — `assets/not
 
 ### `CrossfadeSlider`
 пропсы: `{value [0–12], onChange}`
-**перереализован**: drag через `setPointerCapture` (onPointerDown/Move/Up) — надёжнее window-listeners. wheel (passive:false). визуал: 6px трек без thumb, `#c8c8c8` fill с glow, hit-зона 24px.
+drag через `setPointerCapture` (onPointerDown/Move/Up). wheel (passive:false). визуал: 6px трек без thumb, `#c8c8c8` fill с glow, hit-зона 24px.
 
 ### `SettingsView`
-пропсы: `{settings, onSettings, visible, onScanTracks, onClearFolder}`
+пропсы: `{settings, onSettings, visible, onScanTracks, onClearFolder, onClearCoversCache, onClearLikesCache}`
 секции: `playback`→`vosproizvedenie.png`, `appearance`→`theme.png`, `system`→`system.png`, `about`→`about.png`.
-секция `system` содержит карточку **Язык интерфейса** с переключателем RU/EN сверху.
+
+**playback**: только CrossfadeSlider (autoplay и defaultRepeat удалены — были мёртвым кодом).
+
+**appearance**: карточка «Интерфейс» (hideDividers) + карточка «Discord» с toggle discordRpc и анимированным блоком кастомизации:
+- **Таймстамп**: чипы `progress` / `elapsed` / `none`
+- **При паузе**: чипы `show` / `hide`
+- **Обложка трека**: toggle discordCover
+
+**system**: язык (RU/EN), кэш, запуск (startWithWindows → `app.setLoginItemSettings`, minimizeToTray), локальная музыка.
 
 ### `AvatarFlyClone`
 portal-анимация аватара (SoundCloudView → Sidebar), 440мс.
@@ -161,6 +178,26 @@ const lang = (settings.language || 'RU').toLowerCase(); // 'ru' | 'en'
 const t = key => STRINGS[lang]?.[key] ?? STRINGS.ru[key] ?? key;
 ```
 
+**settings**:
+```js
+{
+  crossfade: 0,                  // 0–12 сек
+  startWithWindows: false,       // app.setLoginItemSettings
+  minimizeToTray: false,
+  musicFolder: '',
+  customTitles: {},
+  minDuration: 30,
+  soundcloudAuth: null,
+  sourceMode: 'local',
+  language: 'RU',
+  hideDividers: false,
+  discordRpc: true,
+  discordTimestamp: 'progress',  // 'progress' | 'elapsed' | 'none'
+  discordPause: 'show',          // 'show' | 'hide'
+  discordCover: true,
+}
+```
+
 ### `App` — refs
 
 ```
@@ -173,9 +210,10 @@ homeScrollRef, scAvatarRef, sidebarProfileRef
 scTracksRef, scAuthRef, scCacheRef, scCacheMapRef
 filteredRef, filteredScRef, searchRef
 volumeRef                 — синхронизируется каждый рендер (для crossfade)
-settingsRef               — синхронизируется каждый рендер (для crossfade)
-langRef                   — синхронизируется каждый рендер (для async-функций loadScLikes и др.)
+settingsRef               — синхронизируется каждый рендер (для crossfade/discord)
+langRef                   — синхронизируется каждый рендер (для async-функций)
 crossfadeRafRef           — rAF handle для fade-in/fade-out анимации громкости
+trackSwitchingRef         — true пока handleScTrackClick грузит трек; блокирует сброс громкости в isPlaying=false эффекте
 toastTimerRef             — таймер скрытия тоста
 discordTimerRef, discordProgressRef
 prevSearchRef, homeSearchRef, libSearchRef
@@ -192,19 +230,21 @@ customTitlesRef, minDurationRef, editCancelRef
 ### `App` — crossfade (локальные треки и SC)
 
 - **fade-out**: в `timeupdate` — если `remaining <= crossfade`, `audio.volume = volume * (remaining/crossfade)`; seek восстанавливает volume
-- **fade-in**: `startFadeIn(audio)` вызывается перед `audio.play()` при смене трека (local useEffect) и в `handleScTrackClick`
-- **пауза**: при `isPlaying=false` — отменяет rAF + восстанавливает `audio.volume = volumeRef.current`
+- **fade-in SC**: `trackSwitchingRef=true` перед `setIsPlaying(false)`; `audio.volume=0` выставляется до play; `startFadeIn` вызывается в обработчике события `playing` (когда аудио реально начало воспроизводиться, не во время буферизации); `trackSwitchingRef=false` сбрасывается там же
+- **fade-in local**: `startFadeIn(audio)` вызывается перед `audio.play()` в useEffect смены трека
+- **пауза**: при `isPlaying=false` — отменяет rAF; восстанавливает `audio.volume` только если `!trackSwitchingRef.current`
 
 ### `App` — handleScTrackClick
 
-1. `setLoadingTrackId(scTrack.id)` — спиннер в TrackRow
-2. fetch `streamUrl` → если 404/error → fetch `hlsUrl` (fallback)
-3. если оба недоступны → `showToast('трек недоступен')`, `setLoadingTrackId(null)`
+1. `trackSwitchingRef=true`, `setIsPlaying(false)`, `setLoadingTrackId(scTrack.id)`
+2. fetch `streamUrl` → если нет → fetch `hlsUrl` (fallback)
+3. если оба недоступны → `trackSwitchingRef=false`, markError, skipInDirection если autoSkip
 4. `setScPlayingTrack(resolved)`
-5. если HLS (`!streamUrl && hlsUrl`) → hls.js: `loadSource` → `attachMedia` → `MANIFEST_PARSED` → play
-6. иначе progressive → `audio.src` → play
-7. `startFadeIn(audio)` перед play в обоих случаях
-8. `setLoadingTrackId(null)` в `.then()` от `audio.play()` — спиннер гаснет только при реальном старте воспроизведения
+5. `audio.volume = cf>0 ? 0 : volumeRef.current`
+6. регистрирует `audio.addEventListener('playing', ..., {once:true})` → `trackSwitchingRef=false`, `startFadeIn`
+7. если HLS → hls.js: `loadSource` → `attachMedia` → `MANIFEST_PARSED` → play
+8. иначе progressive → `audio.src` → `audio.load()` → play
+9. `setLoadingTrackId(null)` в `.then()` от `audio.play()`
 
 ### `App` — handleLike
 
@@ -223,6 +263,15 @@ customTitlesRef, minDurationRef, editCancelRef
   resolvedUrl, // только у scPlayingTrack — финальный CDN URL
 }
 ```
+
+### `App` — Discord RPC
+
+useEffect зависит от `[track?.id, isPlaying, settings.discordRpc, settings.discordTimestamp, settings.discordPause, settings.discordCover]`.
+- `discordRpc=false` или `!track` → `discordClear`
+- `discordPause='hide'` и `!isPlaying` → `discordClear`
+- иначе → `discordUpdate({ title, artist, duration, progress, coverUrl, isPlaying, timestamp })`
+
+`timestamp` в main.js: `'progress'` → start+end (progress bar), `'elapsed'` → только start, `'none'` → без timestamp.
 
 ### `App` — анимации
 
