@@ -33,11 +33,16 @@ ipcMain.handle('discord-update', async (_, data) => {
     if (data.coverUrl?.startsWith('https://')) {
       activity.largeImageKey = data.coverUrl
     }
-    if (data.isPlaying && data.duration > 0) {
+    if (data.isPlaying && data.duration > 0 && (data.timestamp || 'progress') !== 'none') {
       const elapsed = Math.max(0, data.progress) * data.duration * 1000
       const now = Date.now()
-      activity.startTimestamp = Math.floor(now - elapsed)
-      activity.endTimestamp   = Math.floor(now - elapsed + data.duration * 1000)
+      const ts = data.timestamp || 'progress'
+      if (ts === 'progress') {
+        activity.startTimestamp = Math.floor(now - elapsed)
+        activity.endTimestamp   = Math.floor(now - elapsed + data.duration * 1000)
+      } else {
+        activity.startTimestamp = Math.floor(now - elapsed)
+      }
     }
     await discordClient.user.setActivity(activity)
   } catch {}

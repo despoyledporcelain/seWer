@@ -93,6 +93,11 @@
   @keyframes fadeInUp   { from{opacity:0;transform:translateX(-50%) translateY(6px)} to{opacity:1;transform:translateX(-50%) translateY(0)} }
   @keyframes fadeOutDown{ from{opacity:1;transform:translateX(-50%) translateY(0)} to{opacity:0;transform:translateX(-50%) translateY(5px)} }
   @keyframes artEntrance{ from{opacity:0;transform:scale(0.86)} to{opacity:1;transform:scale(1)} }
+  @keyframes marqueeScroll {
+    0%,18%  { transform:translateX(0); }
+    50%,68% { transform:translateX(var(--mq-d)); }
+    100%    { transform:translateX(0); }
+  }
 </style>
 </head>
 <body>
@@ -185,6 +190,13 @@ const STRINGS = {
     crossfade:'Кроссфейд', crossfade_sub:'Плавное перекрытие треков',
     card_interface:'Интерфейс',
     hide_dividers:'Отключить разделители', hide_dividers_sub:'Убирает линии между пунктами настроек',
+    discord_rpc:'Discord Rich Presence', discord_rpc_sub:'Показывать текущий трек в Discord',
+    card_discord:'Discord',
+    discord_timestamp:'Таймстамп',
+    discord_ts_progress:'Прогресс', discord_ts_elapsed:'Прошло', discord_ts_none:'Нет',
+    discord_on_pause:'При паузе',
+    discord_pause_show:'Показывать', discord_pause_hide:'Скрывать',
+    discord_cover:'Обложка трека', discord_cover_sub:'Показывать art в присутствии',
     card_language:'Язык интерфейса', language_label:'Язык', language_sub:'Язык элементов управления',
     card_startup:'Запуск',
     start_windows:'Запускать при старте Windows', minimize_tray:'Сворачивать в трей',
@@ -235,6 +247,13 @@ const STRINGS = {
     crossfade:'Crossfade', crossfade_sub:'Smooth overlap between tracks',
     card_interface:'Interface',
     hide_dividers:'Hide dividers', hide_dividers_sub:'Removes lines between settings items',
+    discord_rpc:'Discord Rich Presence', discord_rpc_sub:'Show current track in Discord',
+    card_discord:'Discord',
+    discord_timestamp:'Timestamp',
+    discord_ts_progress:'Progress', discord_ts_elapsed:'Elapsed', discord_ts_none:'None',
+    discord_on_pause:'On pause',
+    discord_pause_show:'Show', discord_pause_hide:'Hide',
+    discord_cover:'Track artwork', discord_cover_sub:'Show art in presence',
     card_language:'Interface language', language_label:'Language', language_sub:'Language of UI elements',
     card_startup:'Startup',
     start_windows:'Launch at Windows startup', minimize_tray:'Minimize to tray',
@@ -280,6 +299,69 @@ function buildScShuffle(list, currentId) {
     [rest[i], rest[j]] = [rest[j], rest[i]];
   }
   return currentId != null ? [currentId, ...rest] : rest;
+}
+
+/* ── MarqueeText ─────────────────────────────────────────────────────────── */
+function MarqueeText({ text, style, onClick }) {
+  const outerRef = useRef(null);
+  const innerRef = useRef(null);
+  const [dist, setDist] = useState(0);
+
+  useLayoutEffect(() => {
+    const outer = outerRef.current;
+    const inner = innerRef.current;
+    if (!outer || !inner) { setDist(0); return; }
+    // сбрасываем анимацию чтобы измерить честную ширину
+    inner.style.animation = 'none';
+    const overflow = inner.scrollWidth - outer.clientWidth;
+    inner.style.animation = '';
+    setDist(overflow > 6 ? overflow : 0);
+  }, [text]);
+
+  const duration = dist > 0 ? (Math.max(3, dist / 38) + 2.5).toFixed(1) : 0;
+
+  return (
+    <div ref={outerRef} onClick={onClick}
+      style={{
+        overflow:'hidden', flex:1, minWidth:0,
+        cursor: onClick ? 'pointer' : 'default',
+        // центруем inline-block когда нет скролла; при скролле — лево
+        textAlign: dist > 0 ? 'left' : 'center',
+      }}>
+      <div ref={innerRef} style={{
+        display:'inline-block', whiteSpace:'nowrap',
+        '--mq-d': `-${dist}px`,
+        animation: dist > 0 ? `marqueeScroll ${duration}s ease-in-out 1.8s infinite` : 'none',
+        ...style,
+      }}>{text}</div>
+    </div>
+  );
+}
+
+/* ── PlayerLikeBtn ───────────────────────────────────────────────────────── */
+function PlayerLikeBtn({ liked, onLike }) {
+  const [hov, setHov] = useState(false);
+  return (
+    <div
+      onClick={onLike}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      style={{
+        flexShrink:0, cursor:'pointer', padding:4, lineHeight:0,
+        color: liked
+          ? (hov ? 'rgba(255,255,255,1)'    : 'rgba(255,255,255,0.85)')
+          : (hov ? 'rgba(255,255,255,0.6)'  : 'rgba(255,255,255,0.25)'),
+        transform: hov ? 'scale(1.18)' : 'scale(1)',
+        transition:'color 0.18s ease, transform 0.15s ease',
+      }}
+    >
+      <svg width="19" height="19" viewBox="0 0 24 24"
+        fill={liked ? 'currentColor' : 'none'}
+        stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+      </svg>
+    </div>
+  );
 }
 
 /* ── Wave Progress Bar ───────────────────────────────────────────────────── */
@@ -1120,11 +1202,100 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
         </Row>
       </Card>
     ),
-    appearance: (
+    appearance: (<>
       <Card title={t('card_interface')}>
         <Row label={t('hide_dividers')} sub={t('hide_dividers_sub')} last><Toggle k="hideDividers"/></Row>
       </Card>
-    ),
+      <Card title={t('card_discord')}>
+        <Row label={t('discord_rpc')} sub={t('discord_rpc_sub')} last={!settings.discordRpc}>
+          <Toggle k="discordRpc"/>
+        </Row>
+        <div style={{
+          maxHeight: settings.discordRpc ? 400 : 0,
+          opacity: settings.discordRpc ? 1 : 0,
+          overflow: 'hidden',
+          transition: 'max-height 0.38s cubic-bezier(0.4,0,0.2,1), opacity 0.25s ease',
+        }}>
+          <div style={{
+            margin:'0 14px 14px',
+            background:'rgba(255,255,255,0.028)',
+            borderRadius:10,
+            overflow:'hidden',
+          }}>
+            {/* таймстамп */}
+            <div style={{
+              display:'flex', alignItems:'center', justifyContent:'space-between',
+              padding:'11px 14px',
+              borderBottom: settings.hideDividers ? 'none' : '1px solid rgba(255,255,255,0.04)',
+            }}>
+              <div style={{fontSize:12, color:'rgba(255,255,255,0.5)'}}>{t('discord_timestamp')}</div>
+              <div style={{display:'flex', gap:4, flexShrink:0}}>
+                {[
+                  {v:'progress', l:t('discord_ts_progress')},
+                  {v:'elapsed',  l:t('discord_ts_elapsed')},
+                  {v:'none',     l:t('discord_ts_none')},
+                ].map(({v,l}) => {
+                  const active = (settings.discordTimestamp||'progress') === v;
+                  return (
+                    <div key={v} onClick={()=>set('discordTimestamp',v)} style={{
+                      fontSize:11, fontWeight:500, letterSpacing:'0.03em',
+                      padding:'4px 11px', borderRadius:7, cursor:'pointer', userSelect:'none',
+                      background: active ? 'rgba(255,255,255,0.13)' : 'rgba(255,255,255,0.04)',
+                      color: active ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.3)',
+                      border: active ? '1px solid rgba(255,255,255,0.14)' : '1px solid transparent',
+                      transition:'background 0.15s, color 0.15s, border-color 0.15s',
+                    }}
+                      onMouseEnter={e=>{ if(!active) e.currentTarget.style.background='rgba(255,255,255,0.07)'; }}
+                      onMouseLeave={e=>{ if(!active) e.currentTarget.style.background='rgba(255,255,255,0.04)'; }}
+                    >{l}</div>
+                  );
+                })}
+              </div>
+            </div>
+            {/* при паузе */}
+            <div style={{
+              display:'flex', alignItems:'center', justifyContent:'space-between',
+              padding:'11px 14px',
+              borderBottom: settings.hideDividers ? 'none' : '1px solid rgba(255,255,255,0.04)',
+            }}>
+              <div style={{fontSize:12, color:'rgba(255,255,255,0.5)'}}>{t('discord_on_pause')}</div>
+              <div style={{display:'flex', gap:4, flexShrink:0}}>
+                {[
+                  {v:'show', l:t('discord_pause_show')},
+                  {v:'hide', l:t('discord_pause_hide')},
+                ].map(({v,l}) => {
+                  const active = (settings.discordPause||'show') === v;
+                  return (
+                    <div key={v} onClick={()=>set('discordPause',v)} style={{
+                      fontSize:11, fontWeight:500, letterSpacing:'0.03em',
+                      padding:'4px 11px', borderRadius:7, cursor:'pointer', userSelect:'none',
+                      background: active ? 'rgba(255,255,255,0.13)' : 'rgba(255,255,255,0.04)',
+                      color: active ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.3)',
+                      border: active ? '1px solid rgba(255,255,255,0.14)' : '1px solid transparent',
+                      transition:'background 0.15s, color 0.15s, border-color 0.15s',
+                    }}
+                      onMouseEnter={e=>{ if(!active) e.currentTarget.style.background='rgba(255,255,255,0.07)'; }}
+                      onMouseLeave={e=>{ if(!active) e.currentTarget.style.background='rgba(255,255,255,0.04)'; }}
+                    >{l}</div>
+                  );
+                })}
+              </div>
+            </div>
+            {/* обложка */}
+            <div style={{
+              display:'flex', alignItems:'center', justifyContent:'space-between',
+              padding:'11px 14px',
+            }}>
+              <div>
+                <div style={{fontSize:12, color:'rgba(255,255,255,0.5)'}}>{t('discord_cover')}</div>
+                <div style={{fontSize:10.5, color:'rgba(255,255,255,0.22)', marginTop:2}}>{t('discord_cover_sub')}</div>
+              </div>
+              <Toggle k="discordCover"/>
+            </div>
+          </div>
+        </div>
+      </Card>
+    </>),
     system: (<>
       <Card title={t('card_language')}>
         <Row label={t('language_label')} sub={t('language_sub')} last>
@@ -1634,7 +1805,8 @@ function App() {
     autoplay:false, crossfade:0, defaultRepeat:false,
     startWithWindows:false, minimizeToTray:false, musicFolder:'',
     customTitles: {}, minDuration: 30, soundcloudAuth: null,
-    sourceMode: 'local',
+    sourceMode: 'local', discordRpc: true,
+    discordTimestamp: 'progress', discordPause: 'show', discordCover: true,
   });
   const [sort,         setSort]         = useState('added');
   const [editingTitle, setEditingTitle] = useState(false);
@@ -1863,22 +2035,29 @@ function App() {
   useEffect(() => {
     clearTimeout(discordTimerRef.current);
     discordTimerRef.current = setTimeout(() => {
+      const s = settingsRef.current;
+      if (!s.discordRpc) { window.electronAPI?.discordClear?.(); return; }
       if (!track) { window.electronAPI?.discordClear?.(); return; }
-      let coverUrl = (track.coverUrl || '').startsWith('https://') ? track.coverUrl : null;
-      if (!coverUrl && scPlayingTrack) {
-        const cached = scCacheMapRef.current.get(track.id);
-        if (cached?.coverUrl?.startsWith('https://')) coverUrl = cached.coverUrl;
+      if (!isPlaying && s.discordPause === 'hide') { window.electronAPI?.discordClear?.(); return; }
+      let coverUrl = null;
+      if (s.discordCover !== false) {
+        coverUrl = (track.coverUrl || '').startsWith('https://') ? track.coverUrl : null;
+        if (!coverUrl && scPlayingTrack) {
+          const cached = scCacheMapRef.current.get(track.id);
+          if (cached?.coverUrl?.startsWith('https://')) coverUrl = cached.coverUrl;
+        }
       }
       window.electronAPI?.discordUpdate?.({
-        title:    track.title,
-        artist:   track.artist,
-        duration: track.duration,
-        progress: discordProgressRef.current,
+        title:     track.title,
+        artist:    track.artist,
+        duration:  track.duration,
+        progress:  discordProgressRef.current,
         coverUrl,
         isPlaying,
+        timestamp: s.discordTimestamp || 'progress',
       });
     }, 800);
-  }, [track?.id, isPlaying]);
+  }, [track?.id, isPlaying, settings.discordRpc, settings.discordTimestamp, settings.discordPause, settings.discordCover]);
 
   useEffect(() => () => window.electronAPI?.discordClear?.(), []);
 
@@ -1986,16 +2165,23 @@ function App() {
     }
     clearTimeout(discordTimerRef.current);
     discordTimerRef.current = setTimeout(() => {
+      const s = settingsRef.current;
+      if (!s.discordRpc) return;
       const t = track;
       if (!t) return;
-      let coverUrl = (t.coverUrl || '').startsWith('https://') ? t.coverUrl : null;
-      if (!coverUrl && scPlayingTrack) {
-        const cached = scCacheMapRef.current.get(t.id);
-        if (cached?.coverUrl?.startsWith('https://')) coverUrl = cached.coverUrl;
+      if (!isPlayingRef.current && s.discordPause === 'hide') { window.electronAPI?.discordClear?.(); return; }
+      let coverUrl = null;
+      if (s.discordCover !== false) {
+        coverUrl = (t.coverUrl || '').startsWith('https://') ? t.coverUrl : null;
+        if (!coverUrl && scPlayingTrack) {
+          const cached = scCacheMapRef.current.get(t.id);
+          if (cached?.coverUrl?.startsWith('https://')) coverUrl = cached.coverUrl;
+        }
       }
       window.electronAPI?.discordUpdate?.({
         title: t.title, artist: t.artist, duration: t.duration,
         progress: v, coverUrl, isPlaying: isPlayingRef.current,
+        timestamp: s.discordTimestamp || 'progress',
       });
     }, 400);
   }, [track, scPlayingTrack]);
@@ -2916,18 +3102,25 @@ function App() {
                   </div>
                 </div>
               ) : (
-                <div
-                  onClick={e => {
-                    if (e.shiftKey) { editCancelRef.current = false; setEditValue(track.title); setEditingTitle(true); }
-                    else { setLibScrollTargetId(track.id); setLibScrollTrigger(v => v + 1); }
-                  }}
-                  style={{
-                    fontSize:22, fontWeight:600, letterSpacing:'-0.022em',
-                    whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis',
-                    opacity: playerVisible ? 1 : 0,
-                    transition: playerVisible ? 'opacity 0.36s ease 0.12s' : 'opacity 0.1s ease',
-                    cursor:'pointer',
-                  }}>{track.title}</div>
+                <div style={{
+                  display:'flex', alignItems:'center', justifyContent:'center', gap:10,
+                  width:'100%', minWidth:0,
+                  opacity: playerVisible ? 1 : 0,
+                  transition: playerVisible ? 'opacity 0.36s ease 0.12s' : 'opacity 0.1s ease',
+                }}>
+                  <MarqueeText
+                    text={track.title}
+                    onClick={e => {
+                      if (e.shiftKey) { editCancelRef.current = false; setEditValue(track.title); setEditingTitle(true); }
+                      else { setLibScrollTargetId(track.id); setLibScrollTrigger(v => v + 1); }
+                    }}
+                    style={{fontSize:22, fontWeight:600, letterSpacing:'-0.022em'}}
+                  />
+                  {scPlayingTrack && (() => {
+                    const liked = likedIds.has(scPlayingTrack.id);
+                    return <PlayerLikeBtn liked={liked} onLike={() => handleLike(scPlayingTrack)}/>;
+                  })()}
+                </div>
               )}
               <div style={{
                 fontSize:12, color:'rgba(255,255,255,0.28)', marginTop:4,

@@ -44,6 +44,20 @@ assets/
 - `SoundCloudIcon({ size, fill })` — инлайн SVG логотип SC
 - `scHashColor(id)` → `hsl(...)` по id трека
 
+## i18n
+
+```
+STRINGS        — объект { ru: {...}, en: {...} }, ~60 ключей
+LangContext    — React.createContext('ru')
+useLang()      — хук: возвращает t(key), читает LangContext
+```
+
+язык берётся из `settings.language` ('RU' | 'EN', default 'RU'), нормализуется в lowercase.  
+`App` вычисляет `lang` и `t` на каждом рендере, оборачивает JSX в `<LangContext.Provider value={lang}>`.  
+компоненты вызывают `const t = useLang()` внутри себя.  
+**исключение**: `SearchView` использует `const T = useLang()` — буква `t` занята переменной трека в `.map(t => ...)`.  
+`useEffect` в `App` обновляет `title` у кнопок тайтлбара при смене языка (статичный HTML вне React).
+
 ## компоненты
 
 ### `WaveProgressBar`
@@ -104,13 +118,23 @@ portal → document.body. CSS transition 340ms. заглушка — `assets/not
 
 ### `SettingsView`
 пропсы: `{settings, onSettings, visible, onScanTracks, onClearFolder}`
-секции: `playback`→`vosproizvedenie.png`, `system`→`system.png`, `about`→`about.png`.
+секции: `playback`→`vosproizvedenie.png`, `appearance`→`theme.png`, `system`→`system.png`, `about`→`about.png`.
+секция `system` содержит карточку **Язык интерфейса** с переключателем RU/EN сверху.
 
 ### `AvatarFlyClone`
 portal-анимация аватара (SoundCloudView → Sidebar), 440мс.
 
-### `SoundCloudView`, `SearchTrackRow`, `SearchView`
-без изменений по сравнению с предыдущей версией.
+### `SearchTrackRow`
+пропсы: `{track, isLiked, onLike, onClick, onCoverClick}`
+строка результата поиска. сердечко при hover или `isLiked`.
+
+### `SearchView`
+пропсы: `{visible, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, onResultsLoaded}`
+рефы: `hasMoreRef`, `offsetRef` — синхронизируются каждый рендер для доступа из колбэков.
+`useImperativeHandle` экспортирует:
+- `focus()` — фокус на input
+- `loadMore()` — подгружает следующую страницу; нет-оп если `loadingRef.current` или `!hasMoreRef.current`
+`onResultsLoaded(newTracks)` — вызывается только при пагинации (не при первом поиске).
 
 ---
 
@@ -131,6 +155,12 @@ loadingTrackId  — id SC трека пока идёт fetch+буферизац�
 artEntranceKey  — счётчик, инкремент → ремаунт обёртки AlbumArt → artEntrance анимация
 ```
 
+`lang` и `t` — не state, вычисляются при каждом рендере из `settings.language`:
+```js
+const lang = (settings.language || 'RU').toLowerCase(); // 'ru' | 'en'
+const t = key => STRINGS[lang]?.[key] ?? STRINGS.ru[key] ?? key;
+```
+
 ### `App` — refs
 
 ```
@@ -144,6 +174,7 @@ scTracksRef, scAuthRef, scCacheRef, scCacheMapRef
 filteredRef, filteredScRef, searchRef
 volumeRef                 — синхронизируется каждый рендер (для crossfade)
 settingsRef               — синхронизируется каждый рендер (для crossfade)
+langRef                   — синхронизируется каждый рендер (для async-функций loadScLikes и др.)
 crossfadeRafRef           — rAF handle для fade-in/fade-out анимации громкости
 toastTimerRef             — таймер скрытия тоста
 discordTimerRef, discordProgressRef
@@ -156,6 +187,7 @@ customTitlesRef, minDurationRef, editCancelRef
 - **`startFadeIn(audio)`** — отменяет текущий rAF, если `crossfade>0` устанавливает `audio.volume=0` и rAF-анимацию до `volumeRef.current` за N сек; иначе просто восстанавливает volume
 - **`destroyHls()`** — уничтожает hls.js инстанс и обнуляет `hlsRef`
 - **`showToast(msg)`** — показывает тост 2.2с, затем fade-out 0.24с, затем убирает из DOM
+- **`handleSearchResultsLoaded(newTracks)`** — вызывается из `SearchView.onResultsLoaded`; дописывает треки в `searchQueueRef`, дошафливает в конец `scShuffleOrderRef` если shuffle активен
 
 ### `App` — crossfade (локальные треки и SC)
 
@@ -173,6 +205,10 @@ customTitlesRef, minDurationRef, editCancelRef
 6. иначе progressive → `audio.src` → play
 7. `startFadeIn(audio)` перед play в обоих случаях
 8. `setLoadingTrackId(null)` в `.then()` от `audio.play()` — спиннер гаснет только при реальном старте воспроизведения
+
+### `App` — handleLike
+
+`PUT /users/{userId}/track_likes/{id}` — лайк, `DELETE` — анлайк. запросы идут через `sc-fetch` (main process) с DataDome cookie из сессии `persist:soundcloud`. при ошибке — тост, UI не обновляется.
 
 ### `App` — initScLikes (кеш-миграция)
 
