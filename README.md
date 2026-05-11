@@ -17,13 +17,17 @@
 
 <br/>
 
+<a href="README.ru.md">🇷🇺 русский</a>
+
+<br/>
+
 </div>
 
 ---
 
 <br/>
 
-seWer — музыкальный плеер с поддержкой логина через soundcloud, локального воспроизведения музыки с прекрасным пользовательским интерфейсом.
+seWer is a music player for Windows with SoundCloud login support and local music playback, wrapped in a clean and minimal UI.
 
 <br/>
 <div align="center">
@@ -32,15 +36,15 @@ seWer — музыкальный плеер с поддержкой логина
 
 ---
 
-## стек
+## stack
 
 | | |
 |---|---|
 | runtime | electron 41 |
-| ui | react 18 · babel standalone (без бандлера) |
-| аудио | html5 audio · music-metadata |
-| шрифт | space grotesk |
-| сборка | electron-builder · nsis |
+| ui | react 18 · babel standalone (no bundler) |
+| audio | html5 audio · music-metadata |
+| font | space grotesk |
+| build | electron-builder · nsis |
 
 <br/>
 </div>
