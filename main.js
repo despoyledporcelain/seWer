@@ -252,9 +252,35 @@ ipcMain.handle('sc-login', () => new Promise((resolve) => {
   authWin.on('closed', () => { if (!resolved) resolve(null) })
 }))
 
-ipcMain.handle('sc-fetch', (_, url, token, clientId, method = 'GET') => new Promise((resolve) => {
+ipcMain.handle('sc-fetch', async (_, url, token, clientId, method = 'GET') => {
+  const isWrite = method === 'PUT' || method === 'DELETE'
   const fullUrl = url.includes('client_id=') ? url
-    : `${url}${url.includes('?') ? '&' : '?'}client_id=${encodeURIComponent(clientId)}`
+    : `${url}${url.includes('?') ? '&' : '?'}client_id=${encodeURIComponent(clientId)}${isWrite ? '&app_locale=en' : ''}`
+
+  if (isWrite) {
+    try {
+      const ses = require('electron').session.fromPartition('persist:soundcloud')
+      const cookies = await ses.cookies.get({ url: 'https://soundcloud.com' })
+      const datadome = cookies.find(c => c.name === 'datadome')
+      const res = await ses.fetch(fullUrl, {
+        method,
+        headers: {
+          'Authorization': `OAuth ${token}`,
+          'Accept': 'application/json, text/javascript, */*; q=0.1',
+          'Origin': 'https://soundcloud.com',
+          'Referer': 'https://soundcloud.com/',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36',
+          ...(datadome ? { 'x-datadome-clientid': datadome.value } : {}),
+        },
+      })
+      const text = await res.text()
+      if (res.status !== 200 && res.status !== 201 && res.status !== 204) return { error: res.status }
+      if (!text.trim()) return { data: null }
+      try { return { data: JSON.parse(text) } } catch { return { error: 'parse_error' } }
+    } catch (e) { return { error: String(e) } }
+  }
+
+  return new Promise((resolve) => {
   const parsed = new URL(fullUrl)
   const req = require('https').request({
     hostname: parsed.hostname,
@@ -280,7 +306,8 @@ ipcMain.handle('sc-fetch', (_, url, token, clientId, method = 'GET') => new Prom
   })
   req.on('error', e => resolve({ error: String(e) }))
   req.end()
-}))
+  })
+})
 
 app.whenReady().then(() => {
   createWindow()

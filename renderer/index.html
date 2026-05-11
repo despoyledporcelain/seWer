@@ -1294,18 +1294,28 @@ function SearchTrackRow({ track, isLiked, onLike, onClick, onCoverClick }) {
 }
 
 /* ── SearchView ──────────────────────────────────────────────────────────── */
-const SearchView = React.forwardRef(function SearchView({ visible, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack }, ref) {
+const SearchView = React.forwardRef(function SearchView({ visible, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, onResultsLoaded }, ref) {
   const inputRef = useRef(null);
-  React.useImperativeHandle(ref, () => ({ focus: () => { inputRef.current?.focus(); inputRef.current?.select(); } }));
   const [query,   setQuery]   = useState('');
   const [results, setResults] = useState([]);
   const [users,   setUsers]   = useState([]);
   const [loading, setLoading] = useState(false);
   const [offset,  setOffset]  = useState(0);
   const [hasMore, setHasMore] = useState(false);
-  const debounceRef = useRef(null);
-  const queryRef    = useRef('');
-  const loadingRef  = useRef(false);
+  const debounceRef  = useRef(null);
+  const queryRef     = useRef('');
+  const loadingRef   = useRef(false);
+  const hasMoreRef   = useRef(false);
+  const offsetRef    = useRef(0);
+  hasMoreRef.current = hasMore;
+  offsetRef.current  = offset;
+  React.useImperativeHandle(ref, () => ({
+    focus: () => { inputRef.current?.focus(); inputRef.current?.select(); },
+    loadMore: () => {
+      if (!hasMoreRef.current || loadingRef.current) return;
+      doSearch(queryRef.current, offsetRef.current);
+    },
+  }));
 
   const hasResults = results.length > 0 || users.length > 0;
 
@@ -1345,6 +1355,7 @@ const SearchView = React.forwardRef(function SearchView({ visible, scAuth, liked
       })));
     } else {
       setResults(prev => [...prev, ...newTracks]);
+      if (newTracks.length > 0) onResultsLoaded?.(newTracks);
     }
     setHasMore(!!tracksRes.data?.next_href);
     setOffset(off + 20);
@@ -1744,6 +1755,8 @@ function App() {
     if (scPlayingTrack) {
       const list = searchQueueRef.current || (searchRef.current ? filteredScRef.current : scTracksRef.current);
       if (shuffle) {
+        const remaining = scShuffleOrderRef.current.length - 1 - scShuffleIdxRef.current;
+        if (searchQueueRef.current && remaining <= 3) searchViewRef.current?.loadMore();
         scShuffleIdxRef.current++;
         if (scShuffleIdxRef.current >= scShuffleOrderRef.current.length) {
           if (repeat === 'all') {
@@ -1758,6 +1771,7 @@ function App() {
       }
       const curIdx = list.findIndex(t => t.id === scPlayingTrack.id);
       const ni = curIdx + 1;
+      if (searchQueueRef.current && ni >= list.length - 3) searchViewRef.current?.loadMore();
       if (ni < list.length) handleScTrackClick(list[ni], scTracksRef.current.indexOf(list[ni]), true);
       else if (repeat === 'all') handleScTrackClick(list[0], scTracksRef.current.indexOf(list[0]), true);
       else setIsPlaying(false);
@@ -2112,6 +2126,15 @@ function App() {
   const sourceMode = (settings.soundcloudAuth && settings.sourceMode === 'sc') ? 'sc' : 'local';
 
   const toastTimerRef = useRef(null);
+  function handleSearchResultsLoaded(newTracks) {
+    if (!searchQueueRef.current) return;
+    searchQueueRef.current = [...searchQueueRef.current, ...newTracks];
+    if (scShuffleOrderRef.current.length > 0) {
+      const shuffledNew = buildScShuffle(newTracks, null);
+      scShuffleOrderRef.current = [...scShuffleOrderRef.current, ...shuffledNew];
+    }
+  }
+
   function showToast(msg) {
     setToast(msg);
     setToastExiting(false);
@@ -2304,18 +2327,20 @@ function App() {
     if (!auth) return;
     const already = scTracksRef.current.some(t => t.id === track.id);
     if (already) {
-      await window.electronAPI.scFetch(
-        `https://api-v2.soundcloud.com/me/track_likes/${track.id}`,
+      const res = await window.electronAPI.scFetch(
+        `https://api-v2.soundcloud.com/users/${auth.userId}/track_likes/${track.id}`,
         auth.token, auth.clientId, 'DELETE'
       );
+      if (res.error) { showToast('ошибка: не удалось убрать лайк'); return; }
       setScTracks(prev => prev.filter(t => t.id !== track.id));
       scCacheRef.current = scCacheRef.current.filter(t => t.id !== track.id);
       scCacheMapRef.current.delete(track.id);
     } else {
-      await window.electronAPI.scFetch(
-        `https://api-v2.soundcloud.com/me/track_likes/${track.id}`,
+      const res = await window.electronAPI.scFetch(
+        `https://api-v2.soundcloud.com/users/${auth.userId}/track_likes/${track.id}`,
         auth.token, auth.clientId, 'PUT'
       );
+      if (res.error) { showToast('ошибка: не удалось поставить лайк'); return; }
       setScTracks(prev => [track, ...prev]);
       scCacheRef.current = [track, ...scCacheRef.current];
       scCacheMapRef.current.set(track.id, track);
@@ -2813,7 +2838,8 @@ function App() {
         <SearchView ref={searchViewRef} visible={view==='search'} scAuth={settings.soundcloudAuth||null}
           likedIds={likedIds} onLike={handleLike}
           onPlayTrack={(t, queue) => { searchQueueRef.current = queue || null; handleScTrackClick(t, -1); }}
-          onSelectTrack={(t, queue) => { searchQueueRef.current = queue || null; handleScTrackClick(t, -1); setPlayerVisible(true); setView('player'); setNavActive('library'); }}/>
+          onSelectTrack={(t, queue) => { searchQueueRef.current = queue || null; handleScTrackClick(t, -1); setPlayerVisible(true); setView('player'); setNavActive('library'); }}
+          onResultsLoaded={handleSearchResultsLoaded}/>
 
         {toast && (
           <div style={{
