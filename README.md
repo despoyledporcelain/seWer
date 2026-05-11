@@ -23,14 +23,28 @@
 
 <br/>
 
-seWer is a music player for Windows with SoundCloud login support and local music playback, wrapped in a clean and minimal UI.
+seWer is a music player for Windows. stream your SoundCloud likes or play local files — all in one place, with a UI that doesn't look like every other electron app.
 
 <br/>
 <div align="center">
 
 ![main screen](https://i.ibb.co/XxStjQ6n/67.png)
 
----
+</div>
+
+<br/>
+
+## features
+
+- **soundcloud** — log in with your account, sync and stream your liked tracks
+- **local library** — scan a folder, reads tags and cover art automatically
+- **discord rich presence** — shows what you're listening to in your Discord status
+- **crossfade** — smooth transitions between tracks, adjustable from 0 to 12 seconds
+- **shuffle** — randomized queue for both SoundCloud and local playback
+- **media keys** — play, pause, next, previous work globally from your keyboard
+- **system tray** — minimize to tray, double-click to bring back
+
+<br/>
 
 ## stack
 
@@ -43,13 +57,7 @@ seWer is a music player for Windows with SoundCloud login support and local musi
 | build | electron-builder · nsis |
 
 <br/>
-</div>
+
 <div align="center">
-
-<br/>
-
 <sub>made with 🖤</sub>
-
-<br/>
-
 </div>
