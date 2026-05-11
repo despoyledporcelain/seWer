@@ -140,6 +140,13 @@ function fmt(s) {
   return `${m}:${sec.toString().padStart(2,'0')}`;
 }
 
+function fmtCount(n) {
+  if (!n) return null;
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, '') + 'K';
+  return String(n);
+}
+
 function SoundCloudIcon({ size = 16, fill = 'currentColor' }) {
   return (
     <svg width={size} height={size} viewBox="-271 345.8 256 111.2" fill={fill}>
@@ -165,6 +172,19 @@ function scHashColor(id) {
   let h = 0; const s = String(id);
   for (const c of s) h = ((h << 5) - h + c.charCodeAt(0)) | 0;
   return `hsl(${Math.abs(h) % 360},48%,38%)`;
+}
+
+function splitArtists(str) {
+  if (!str) return [{ name: '', sep: null }];
+  const re = /(\s*[&×,.]\s*|\s+(?:ft\.?|feat\.?|with|vs\.?)\s+)/gi;
+  const raw = str.split(re);
+  const result = [];
+  for (let i = 0; i < raw.length; i += 2) {
+    const name = raw[i]?.trim();
+    const sep  = raw[i + 1] || null;
+    if (name) result.push({ name, sep });
+  }
+  return result.length ? result : [{ name: str, sep: null }];
 }
 
 
@@ -226,6 +246,7 @@ const STRINGS = {
     unlike_err:'ошибка: не удалось убрать лайк', like_err:'ошибка: не удалось поставить лайк',
     track_unavailable:'трек недоступен', no_title:'Без названия',
     userid_err:'не удалось получить userId', api_err:'ошибка api',
+    artist_popular:'Популярные', artist_tracks:'Треки', artist_albums:'Альбомы', artist_reposts:'Репосты',
   },
   en: {
     minimize:'Minimize', maximize:'Maximize', close:'Close',
@@ -283,6 +304,7 @@ const STRINGS = {
     unlike_err:'error: could not remove like', like_err:'error: could not add like',
     track_unavailable:'track unavailable', no_title:'Untitled',
     userid_err:'could not get userId', api_err:'api error',
+    artist_popular:'Popular', artist_tracks:'Tracks', artist_albums:'Albums', artist_reposts:'Reposts',
   },
 };
 const LangContext = React.createContext('ru');
@@ -325,8 +347,13 @@ function MarqueeText({ text, style, onClick }) {
       style={{
         overflow:'hidden', flex:1, minWidth:0,
         cursor: onClick ? 'pointer' : 'default',
-        // центруем inline-block когда нет скролла; при скролле — лево
         textAlign: dist > 0 ? 'left' : 'center',
+        WebkitMaskImage: dist > 0
+          ? 'linear-gradient(to right, transparent 0%, black 10px, black calc(100% - 14px), transparent 100%)'
+          : 'none',
+        maskImage: dist > 0
+          ? 'linear-gradient(to right, transparent 0%, black 10px, black calc(100% - 14px), transparent 100%)'
+          : 'none',
       }}>
       <div ref={innerRef} style={{
         display:'inline-block', whiteSpace:'nowrap',
@@ -339,7 +366,7 @@ function MarqueeText({ text, style, onClick }) {
 }
 
 /* ── PlayerLikeBtn ───────────────────────────────────────────────────────── */
-function PlayerLikeBtn({ liked, onLike }) {
+function PlayerLikeBtn({ liked, onLike, style: extraStyle }) {
   const [hov, setHov] = useState(false);
   return (
     <div
@@ -348,6 +375,7 @@ function PlayerLikeBtn({ liked, onLike }) {
       onMouseLeave={() => setHov(false)}
       style={{
         flexShrink:0, cursor:'pointer', padding:4, lineHeight:0,
+        ...extraStyle,
         color: liked
           ? (hov ? 'rgba(255,255,255,1)'    : 'rgba(255,255,255,0.85)')
           : (hov ? 'rgba(255,255,255,0.6)'  : 'rgba(255,255,255,0.25)'),
@@ -382,7 +410,7 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying, visible 
   const remainingSpanRef = useRef(null);
   const totalRef   = useRef(total);
   totalRef.current = total;
-  const H = 52;
+  const H = 38;
 
   useEffect(() => { progRef.current = progress; }, [progress]);
   useEffect(() => { playRef.current = isPlaying; }, [isPlaying]);
@@ -1562,50 +1590,78 @@ function SoundCloudView({ visible, scAuth, onLogin, onLogout, avatarRef }) {
 }
 
 /* ── SearchTrackRow ──────────────────────────────────────────────────────── */
-function SearchTrackRow({ track, isLiked, onLike, onClick, onCoverClick }) {
+function SearchTrackRow({ track, isLiked, onLike, onClick, onCoverClick, isLoading, isError }) {
+  const t = useLang();
   const [hov, setHov] = useState(false);
+  const lc = fmtCount(track.likesCount);
+  const pc = fmtCount(track.playCount);
   return (
     <div onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
       style={{
-        display:'flex', alignItems:'center', gap:12, padding:'6px 0',
-        borderBottom:'1px solid rgba(255,255,255,0.038)',
+        display:'flex', alignItems:'center', gap:12, padding:'7px 0',
+        borderBottom:'1px solid rgba(255,255,255,0.032)',
+        opacity: isError ? 0.55 : 1, transition:'opacity 0.2s',
       }}>
-      <div onClick={e=>{e.stopPropagation();onCoverClick();}} style={{
+      {/* cover */}
+      <div onClick={e=>{e.stopPropagation(); if(!isLoading) onCoverClick();}} style={{
         width:44, height:44, borderRadius:8, flexShrink:0,
-        background:'#111116', overflow:'hidden', position:'relative', cursor:'pointer',
+        background:'#111116', overflow:'hidden', position:'relative',
+        cursor: isLoading ? 'default' : 'pointer',
       }}>
         {track.coverUrl && <img src={track.coverUrl} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}
           onError={e=>{e.currentTarget.style.display='none'}}/>}
-        <div style={{
-          position:'absolute', inset:0, background:'rgba(0,0,0,0.45)',
-          display:'flex', alignItems:'center', justifyContent:'center',
-          opacity: hov ? 1 : 0, transition:'opacity 0.15s',
-        }}>
-          <svg width="14" height="14" fill="white" viewBox="0 0 24 24" style={{marginLeft:2}}><polygon points="5,3 19,12 5,21"/></svg>
-        </div>
+        {isLoading
+          ? <div style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.55)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+              <div style={{width:14,height:14,border:'2px solid rgba(255,255,255,0.15)',borderTopColor:'rgba(255,255,255,0.6)',borderRadius:'50%',animation:'spin 0.75s linear infinite'}}/>
+            </div>
+          : <div style={{
+              position:'absolute', inset:0, background:'rgba(0,0,0,0.5)',
+              display:'flex', alignItems:'center', justifyContent:'center',
+              opacity: hov ? 1 : 0, transition:'opacity 0.15s',
+            }}>
+              <svg width="13" height="13" fill="white" viewBox="0 0 24 24" style={{marginLeft:2}}><polygon points="5,3 19,12 5,21"/></svg>
+            </div>
+        }
       </div>
+      {/* title + artist */}
       <div style={{flex:1, minWidth:0, cursor:'pointer'}} onClick={onClick}>
-        <div style={{fontSize:13, color:'rgba(255,255,255,0.85)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{track.title}</div>
-        <div style={{fontSize:11, color:'rgba(255,255,255,0.32)', marginTop:2}}>{track.artist}</div>
+        <div style={{fontSize:13, color:'rgba(255,255,255,0.86)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{track.title}</div>
+        <div style={{fontSize:11, color:'rgba(255,255,255,0.3)', marginTop:2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{track.artist}</div>
       </div>
-      <div style={{fontSize:12, color:'rgba(255,255,255,0.28)', flexShrink:0}}>{fmt(track.duration)}</div>
-      <div onClick={e=>{e.stopPropagation();onLike();}} style={{
-        opacity: hov || isLiked ? 1 : 0, transition:'opacity 0.15s',
-        cursor:'pointer', padding:6, flexShrink:0,
-        color: isLiked ? 'var(--accent)' : 'rgba(255,255,255,0.4)',
-      }}>
-        <svg width="15" height="15" viewBox="0 0 24 24"
-          fill={isLiked ? 'currentColor' : 'none'}
-          stroke="currentColor" strokeWidth="2">
-          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-        </svg>
+      {/* stats */}
+      <div style={{display:'flex', alignItems:'center', gap:16, flexShrink:0}}>
+        {/* likes */}
+        {onLike && <div onClick={e=>{e.stopPropagation();onLike();}}
+          style={{
+            display:'flex', alignItems:'center', gap:4, cursor:'pointer',
+            color: isLiked ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.2)',
+            transition:'color 0.15s', minWidth: lc ? 36 : 'auto',
+          }}
+          onMouseEnter={e=>e.currentTarget.style.color=isLiked?'rgba(255,255,255,0.95)':'rgba(255,255,255,0.5)'}
+          onMouseLeave={e=>e.currentTarget.style.color=isLiked?'rgba(255,255,255,0.75)':'rgba(255,255,255,0.2)'}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill={isLiked?'currentColor':'none'} stroke="currentColor" strokeWidth="2">
+            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+          </svg>
+          {lc && <span style={{fontSize:11}}>{lc}</span>}
+        </div>}
+        {/* plays */}
+        {pc && <div style={{display:'flex', alignItems:'center', gap:4, color:'rgba(255,255,255,0.18)'}}>
+          <svg width="10" height="10" fill="currentColor" viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>
+          <span style={{fontSize:11}}>{pc}</span>
+        </div>}
+        {/* duration / unavailable */}
+        {isError
+          ? <div style={{fontSize:11, color:'rgba(255,80,80,0.7)', minWidth:30, textAlign:'right'}}>{t('unavailable')}</div>
+          : <div style={{fontSize:11, color:'rgba(255,255,255,0.22)', minWidth:30, textAlign:'right'}}>{fmt(track.duration)}</div>
+        }
       </div>
     </div>
   );
 }
 
 /* ── SearchView ──────────────────────────────────────────────────────────── */
-const SearchView = React.forwardRef(function SearchView({ visible, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, onResultsLoaded }, ref) {
+const SearchView = React.forwardRef(function SearchView({ visible, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, onResultsLoaded, onArtistClick, loadingTrackId, errorTrackId }, ref) {
   const T = useLang();
   const inputRef = useRef(null);
   const [query,   setQuery]   = useState('');
@@ -1652,9 +1708,14 @@ const SearchView = React.forwardRef(function SearchView({ visible, scAuth, liked
       id: t.id,
       title: t.title || T('no_title'),
       artist: t.publisher_metadata?.artist || t.user?.username || '',
+      artistId: t.user?.id || null,
+      artistAvatarUrl: t.user?.avatar_url || null,
+      uploaderUsername: t.user?.username || null,
       duration: Math.floor((t.duration || 0) / 1000),
       color: scHashColor(t.id),
       coverUrl: t.artwork_url ? t.artwork_url.replace('-large', '-t500x500') : null,
+      likesCount: t.likes_count || 0,
+      playCount: t.playback_count || 0,
       streamUrl: t.media?.transcodings?.find(tc => tc.format?.protocol === 'progressive')?.url || null,
       hlsUrl: t.media?.transcodings?.find(tc => tc.format?.protocol === 'hls')?.url || null,
     }));
@@ -1664,6 +1725,7 @@ const SearchView = React.forwardRef(function SearchView({ visible, scAuth, liked
         id: u.id, username: u.username,
         avatarUrl: u.avatar_url,
         followersCount: u.followers_count,
+        bannerUrl: u.visuals?.visuals?.[0]?.visual_url || null,
       })));
     } else {
       setResults(prev => [...prev, ...newTracks]);
@@ -1741,11 +1803,17 @@ const SearchView = React.forwardRef(function SearchView({ visible, scAuth, liked
               <div style={{fontSize:10.5,letterSpacing:'0.09em',textTransform:'uppercase',color:'rgba(255,255,255,0.22)',marginBottom:10}}>{T('artists')}</div>
               <div style={{display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:10}}>
                 {users.slice(0, 4).map(u => (
-                  <div key={u.id} style={{
+                  <div key={u.id}
+                    onClick={() => onArtistClick?.(u)}
+                    style={{
                     display:'flex', alignItems:'center', gap:10,
                     background:'rgba(255,255,255,0.034)',
                     borderRadius:12, padding:'8px 14px',
-                  }}>
+                    cursor:'pointer', transition:'background 0.15s',
+                  }}
+                    onMouseEnter={e => e.currentTarget.style.background='rgba(255,255,255,0.065)'}
+                    onMouseLeave={e => e.currentTarget.style.background='rgba(255,255,255,0.034)'}
+                  >
                     {u.avatarUrl
                       ? <img src={u.avatarUrl} style={{width:30,height:30,borderRadius:'50%',objectFit:'cover'}}/>
                       : <div style={{width:30,height:30,borderRadius:'50%',background:'#111116',display:'flex',alignItems:'center',justifyContent:'center'}}>
@@ -1769,7 +1837,9 @@ const SearchView = React.forwardRef(function SearchView({ visible, scAuth, liked
                   isLiked={likedIds.has(t.id)}
                   onLike={() => onLike(t)}
                   onClick={() => onSelectTrack(t, results)}
-                  onCoverClick={() => onPlayTrack(t, results)}/>
+                  onCoverClick={() => onPlayTrack(t, results)}
+                  isLoading={loadingTrackId === t.id}
+                  isError={errorTrackId === t.id}/>
               ))}
               {loading && <div style={{textAlign:'center',color:'rgba(255,255,255,0.2)',padding:'16px 0',fontSize:12}}>{T('loading')}</div>}
             </div>
@@ -1779,6 +1849,474 @@ const SearchView = React.forwardRef(function SearchView({ visible, scAuth, liked
     </div>
   );
 });
+
+/* ── ArtistView ──────────────────────────────────────────────────────────── */
+function ArtistView({ artist, visible, onClose, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, loadingTrackId, errorTrackId, onAlbumClick }) {
+  const t = useLang();
+  const [tab, setTab] = useState('popular');
+  const tabsRef = useRef({});
+  const [pill, setPill] = useState({ left: 0, width: 0 });
+  const [fetched, setFetched] = useState(null);
+  const [artistTracks, setArtistTracks] = useState([]);
+  const [tracksLoading, setTracksLoading] = useState(false);
+  const [nextHref, setNextHref] = useState(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadingMoreRef = useRef(false);
+
+  const mapTrack = tr => ({
+    id: tr.id, title: tr.title || '—',
+    artist: tr.publisher_metadata?.artist || tr.user?.username || '',
+    duration: Math.floor((tr.duration || 0) / 1000),
+    coverUrl: tr.artwork_url ? tr.artwork_url.replace('-large', '-t500x500') : null,
+    likesCount: tr.likes_count || 0,
+    playCount: tr.playback_count || 0,
+    streamUrl: tr.media?.transcodings?.find(tc => tc.format?.protocol === 'progressive')?.url || null,
+    hlsUrl: tr.media?.transcodings?.find(tc => tc.format?.protocol === 'hls')?.url || null,
+  });
+
+  const TABS = [
+    { id: 'popular', label: t('artist_popular') },
+    { id: 'tracks',  label: t('artist_tracks')  },
+    { id: 'albums',  label: t('artist_albums')  },
+  ];
+
+  useLayoutEffect(() => {
+    const el = tabsRef.current[tab];
+    if (el) setPill({ left: el.offsetLeft, width: el.offsetWidth });
+  }, [tab, visible]);
+
+  useEffect(() => {
+    if (!artist) return;
+    setTab('popular'); setFetched(null); setArtistTracks([]);
+  }, [artist?.id, artist?.username]);
+
+  useEffect(() => {
+    if (!visible || !scAuth || (!artist?.id && !artist?.username)) return;
+    (async () => {
+      try {
+        let userId = artist.id;
+        if (!userId) {
+          const s = await window.electronAPI.scFetch(
+            `https://api-v2.soundcloud.com/search/users?q=${encodeURIComponent(artist.username)}&limit=1`,
+            scAuth.token, scAuth.clientId
+          );
+          userId = s.data?.collection?.[0]?.id;
+          if (!userId) return;
+        }
+        const res = await window.electronAPI.scFetch(
+          `https://api-v2.soundcloud.com/users/${userId}`,
+          scAuth.token, scAuth.clientId
+        );
+        const u = res.data;
+        if (!u) return;
+        setFetched({
+          id: u.id,
+          username: u.username,
+          avatarUrl: u.avatar_url ? u.avatar_url.replace('-large', '-t500x500') : null,
+          followersCount: u.followers_count,
+          bannerUrl: u.visuals?.visuals?.[0]?.visual_url || null,
+        });
+      } catch {}
+    })();
+  }, [visible, artist?.id, artist?.username]);
+
+  const profileId = fetched?.id || artist?.id || null;
+
+  useEffect(() => {
+    if (!visible || !scAuth || !profileId) return;
+    setArtistTracks([]);
+    setNextHref(null);
+    setTracksLoading(true);
+    const urls = {
+      popular: `https://api-v2.soundcloud.com/users/${profileId}/toptracks?limit=20`,
+      tracks:  `https://api-v2.soundcloud.com/users/${profileId}/tracks?limit=20`,
+      albums:  `https://api-v2.soundcloud.com/users/${profileId}/albums?limit=20`,
+    };
+    const url = urls[tab];
+    if (!url) { setTracksLoading(false); return; }
+    window.electronAPI.scFetch(url, scAuth.token, scAuth.clientId).then(res => {
+      const items = res.data?.collection || [];
+      if (tab === 'albums') {
+        setArtistTracks(items.map(p => ({
+          id: p.id, title: p.title || '—',
+          artist: p.user?.username || '',
+          duration: Math.floor((p.duration || 0) / 1000),
+          coverUrl: p.artwork_url ? p.artwork_url.replace('-large', '-t500x500') : null,
+          likesCount: p.likes_count || 0,
+          playCount: null, trackCount: p.track_count || 0, isAlbum: true,
+        })));
+      } else {
+        setArtistTracks(items.map(mapTrack));
+        setNextHref(res.data?.next_href || null);
+      }
+    }).catch(() => {}).finally(() => setTracksLoading(false));
+  }, [tab, profileId, visible]);
+
+  const loadMore = async () => {
+    if (!nextHref || loadingMoreRef.current || !scAuth) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    try {
+      const res = await window.electronAPI.scFetch(nextHref, scAuth.token, scAuth.clientId);
+      const items = res.data?.collection || [];
+      setArtistTracks(prev => [...prev, ...items.map(mapTrack)]);
+      setNextHref(res.data?.next_href || null);
+    } catch {}
+    loadingMoreRef.current = false;
+    setLoadingMore(false);
+  };
+
+  const profile = fetched ? { ...artist, ...fetched } : artist;
+  const avatarUrl = profile?.avatarUrl || null;
+  const bannerUrl = profile?.bannerUrl || null;
+
+  return (
+    <div style={{
+      position: 'absolute', inset: 0,
+      display: 'flex', flexDirection: 'column',
+      overflow: 'hidden',
+      opacity: visible ? 1 : 0,
+      pointerEvents: visible ? 'auto' : 'none',
+      transition: 'opacity 0.18s ease',
+    }}>
+      {/* banner + info inside */}
+      <div style={{ position: 'relative', flexShrink: 0, height: 220, overflow: 'hidden' }}>
+          {/* banner image — only when available */}
+        {bannerUrl && (
+          <img src={bannerUrl} style={{
+            position: 'absolute', inset: 0,
+            width: '100%', height: '100%',
+            objectFit: 'cover', objectPosition: 'center',
+          }}/>
+        )}
+        {/* overlay — only when banner is present */}
+        {bannerUrl && (
+          <div style={{
+            position: 'absolute', inset: 0,
+            background: 'linear-gradient(to bottom, rgba(7,7,10,0.18) 0%, rgba(7,7,10,0.52) 60%, rgba(7,7,10,0.82) 100%)',
+          }}/>
+        )}
+
+        {/* back button */}
+        <div onClick={onClose} style={{
+          position: 'absolute', top: 14, left: 18, zIndex: 10,
+          display: 'flex', alignItems: 'center', gap: 5,
+          cursor: 'pointer', color: 'rgba(255,255,255,0.45)',
+          fontSize: 12.5, letterSpacing: '0.03em',
+          transition: 'color 0.15s',
+        }}
+          onMouseEnter={e => e.currentTarget.style.color = 'rgba(255,255,255,0.85)'}
+          onMouseLeave={e => e.currentTarget.style.color = 'rgba(255,255,255,0.45)'}
+        >
+          <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.2"
+            strokeLinecap="round" viewBox="0 0 24 24">
+            <path d="M15 18l-6-6 6-6"/>
+          </svg>
+          назад
+        </div>
+
+        {/* avatar + name — top-aligned inside banner */}
+        <div style={{
+          position: 'absolute', inset: 0,
+          display: 'flex', alignItems: 'flex-start',
+          padding: '38px 36px 14px', gap: 22, zIndex: 2,
+        }}>
+          {/* square avatar */}
+          <div style={{
+            width: 148, height: 148, borderRadius: 14,
+            overflow: 'hidden', flexShrink: 0,
+            background: '#111116',
+            boxShadow: bannerUrl ? '0 4px 28px rgba(0,0,0,0.65)' : 'none',
+            border: '1.5px solid rgba(255,255,255,0.07)',
+          }}>
+            {avatarUrl
+              ? <img src={avatarUrl} style={{ width: '100%', height: '100%', objectFit: 'cover' }}/>
+              : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <svg width="52" height="52" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="1.4" viewBox="0 0 24 24">
+                    <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+                  </svg>
+                </div>
+            }
+          </div>
+          {/* name + followers */}
+          <div style={{ minWidth: 0, paddingTop: 28 }}>
+            <div style={{
+              fontSize: 26, fontWeight: 700, letterSpacing: '-0.028em', lineHeight: 1.15,
+              overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
+              background: 'rgba(0,0,0,0.28)', borderRadius: 6,
+              padding: '2px 8px', display: 'inline-block',
+            }}>
+              {profile?.username || artist?.username || '—'}
+            </div>
+            {(profile?.followersCount > 0) && (
+              <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', marginTop: 10, letterSpacing: '0.01em', marginLeft: 8 }}>
+                {profile.followersCount.toLocaleString()} {t('followers')}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* tabs */}
+      <div style={{ flexShrink: 0, position: 'relative', borderBottom: '1px solid rgba(255,255,255,0.055)' }}>
+        <div style={{ display: 'flex', paddingLeft: 28 }}>
+          {TABS.map(tb => (
+            <button key={tb.id}
+              ref={el => { tabsRef.current[tb.id] = el; }}
+              onClick={() => setTab(tb.id)}
+              style={{
+                background: 'none', border: 'none',
+                padding: '11px 15px',
+                fontSize: 13, fontWeight: 500,
+                color: tab === tb.id ? 'rgba(255,255,255,0.82)' : 'rgba(255,255,255,0.26)',
+                cursor: 'pointer', fontFamily: 'inherit',
+                transition: 'color 0.16s ease',
+                letterSpacing: '0.01em',
+              }}
+            >{tb.label}</button>
+          ))}
+        </div>
+        <div style={{
+          position: 'absolute', bottom: -1, height: 2,
+          background: 'rgba(255,255,255,0.72)', borderRadius: 2,
+          left: pill.left, width: pill.width,
+          transition: 'left 0.2s cubic-bezier(0.4,0,0.2,1), width 0.2s cubic-bezier(0.4,0,0.2,1)',
+        }}/>
+      </div>
+
+      {/* content */}
+      <div className="scroll-thin" style={{ flex: 1, overflowY: 'auto', padding: '8px 32px 32px' }}
+        onScroll={e => {
+          const el = e.currentTarget;
+          if (el.scrollTop + el.clientHeight >= el.scrollHeight - 180) loadMore();
+        }}>
+        {tracksLoading ? (
+          <div style={{ display:'flex', justifyContent:'center', padding:'48px 0' }}>
+            <div style={{ width:26, height:26, border:'2px solid rgba(255,255,255,0.07)', borderTopColor:'rgba(255,255,255,0.22)', borderRadius:'50%', animation:'spin 1s linear infinite' }}/>
+          </div>
+        ) : tab === 'reposts' ? (
+          <div style={{ textAlign:'center', padding:'48px 0', fontSize:12, color:'rgba(255,255,255,0.15)', letterSpacing:'0.05em' }}>soon™</div>
+        ) : artistTracks.length === 0 ? (
+          <div style={{ textAlign:'center', padding:'48px 0', fontSize:12, color:'rgba(255,255,255,0.15)' }}>{t('not_found')}</div>
+        ) : artistTracks.map(tr => (
+          tr.isAlbum
+            ? <div key={tr.id}
+                onClick={() => onAlbumClick?.(tr)}
+                onMouseEnter={e => e.currentTarget.style.background='rgba(255,255,255,0.028)'}
+                onMouseLeave={e => e.currentTarget.style.background='transparent'}
+                style={{ display:'flex', alignItems:'center', gap:12, padding:'7px 8px', borderRadius:8, borderBottom:'1px solid rgba(255,255,255,0.032)', cursor:'pointer', transition:'background 0.15s' }}>
+                <div style={{ width:44, height:44, borderRadius:8, flexShrink:0, background:'#111116', overflow:'hidden' }}>
+                  {tr.coverUrl && <img src={tr.coverUrl} style={{ width:'100%', height:'100%', objectFit:'cover' }}/>}
+                </div>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:13, color:'rgba(255,255,255,0.86)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{tr.title}</div>
+                  <div style={{ fontSize:11, color:'rgba(255,255,255,0.28)', marginTop:2 }}>{tr.trackCount} {t('tracks_label').toLowerCase()}</div>
+                </div>
+                <div style={{ display:'flex', alignItems:'center', gap:4, color:'rgba(255,255,255,0.2)' }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+                  {fmtCount(tr.likesCount) && <span style={{ fontSize:11 }}>{fmtCount(tr.likesCount)}</span>}
+                </div>
+              </div>
+            : <SearchTrackRow key={tr.id} track={tr}
+                isLiked={likedIds?.has(tr.id) || false}
+                onLike={onLike ? () => onLike(tr) : null}
+                onClick={() => onSelectTrack?.(tr)}
+                onCoverClick={() => onPlayTrack?.(tr)}
+                isLoading={loadingTrackId === tr.id}
+                isError={errorTrackId === tr.id}/>
+        ))}
+        {loadingMore && (
+          <div style={{ display:'flex', justifyContent:'center', padding:'16px 0' }}>
+            <div style={{ width:20, height:20, border:'2px solid rgba(255,255,255,0.07)', borderTopColor:'rgba(255,255,255,0.22)', borderRadius:'50%', animation:'spin 1s linear infinite' }}/>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── AlbumTrackRow ───────────────────────────────────────────────────────── */
+function AlbumTrackRow({ track, index, isLoading, isError, isLiked, onLike, onClick, onPlayTrack }) {
+  const t = useLang();
+  const [hov, setHov] = useState(false);
+  const lc = fmtCount(track.likesCount);
+  const pc = fmtCount(track.playCount);
+  return (
+    <div onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
+      style={{
+        display:'flex', alignItems:'center', gap:14,
+        padding:'11px 0', borderBottom:'1px solid rgba(255,255,255,0.032)',
+        opacity: isError ? 0.52 : 1, transition:'opacity 0.2s',
+      }}>
+      {/* number / spinner */}
+      <div onClick={() => { if (!isLoading) onPlayTrack?.(); }}
+        style={{ width:26, textAlign:'center', flexShrink:0, cursor: isLoading ? 'default' : 'pointer' }}>
+        {isLoading
+          ? <div style={{ width:13, height:13, border:'1.5px solid rgba(255,255,255,0.12)', borderTopColor:'rgba(255,255,255,0.55)', borderRadius:'50%', animation:'spin 0.75s linear infinite', display:'inline-block' }}/>
+          : hov
+            ? <svg width="12" height="12" fill="rgba(255,255,255,0.7)" viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>
+            : <span style={{ fontSize:12, color:'rgba(255,255,255,0.22)' }}>{index + 1}</span>
+        }
+      </div>
+      {/* title */}
+      <div style={{ flex:1, minWidth:0, cursor:'pointer' }} onClick={onClick}>
+        <div style={{ fontSize:13, color:'rgba(255,255,255,0.86)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+          {track.title}
+        </div>
+      </div>
+      {/* stats */}
+      <div style={{ display:'flex', alignItems:'center', gap:14, flexShrink:0 }}>
+        {onLike && <div onClick={e=>{e.stopPropagation();onLike();}}
+          style={{ display:'flex', alignItems:'center', gap:4, cursor:'pointer',
+            color: isLiked ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.18)',
+            transition:'color 0.15s', minWidth: lc ? 34 : 'auto' }}
+          onMouseEnter={e=>e.currentTarget.style.color=isLiked?'rgba(255,255,255,0.95)':'rgba(255,255,255,0.5)'}
+          onMouseLeave={e=>e.currentTarget.style.color=isLiked?'rgba(255,255,255,0.75)':'rgba(255,255,255,0.18)'}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill={isLiked?'currentColor':'none'} stroke="currentColor" strokeWidth="2">
+            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+          </svg>
+          {lc && <span style={{fontSize:11}}>{lc}</span>}
+        </div>}
+        {pc && <div style={{ display:'flex', alignItems:'center', gap:3, color:'rgba(255,255,255,0.16)' }}>
+          <svg width="9" height="9" fill="currentColor" viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>
+          <span style={{fontSize:11}}>{pc}</span>
+        </div>}
+        {isError
+          ? <div style={{fontSize:11,color:'rgba(255,80,80,0.7)',minWidth:30,textAlign:'right'}}>{t('unavailable')}</div>
+          : <div style={{fontSize:11,color:'rgba(255,255,255,0.2)',minWidth:30,textAlign:'right'}}>{fmt(track.duration)}</div>
+        }
+      </div>
+    </div>
+  );
+}
+
+/* ── AlbumView ───────────────────────────────────────────────────────────── */
+function AlbumView({ album, visible, onClose, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, loadingTrackId, errorTrackId }) {
+  const t = useLang();
+  const [tracks, setTracks] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [meta, setMeta] = useState(null);
+
+  useEffect(() => {
+    if (!album) return;
+    setTracks([]); setMeta(null);
+  }, [album?.id]);
+
+  useEffect(() => {
+    if (!visible || !album?.id || !scAuth) return;
+    setLoading(true);
+    window.electronAPI.scFetch(
+      `https://api-v2.soundcloud.com/playlists/${album.id}`,
+      scAuth.token, scAuth.clientId
+    ).then(res => {
+      const d = res.data;
+      if (!d) return;
+      setMeta({
+        title: d.title,
+        artist: d.user?.username || '',
+        coverUrl: d.artwork_url ? d.artwork_url.replace('-large', '-t500x500') : null,
+        totalDuration: Math.floor((d.duration || 0) / 1000),
+        trackCount: d.track_count || 0,
+        likesCount: d.likes_count || 0,
+      });
+      setTracks((d.tracks || []).map(tr => ({
+        id: tr.id,
+        title: tr.title || '—',
+        artist: tr.publisher_metadata?.artist || tr.user?.username || '',
+        duration: Math.floor((tr.duration || 0) / 1000),
+        coverUrl: tr.artwork_url ? tr.artwork_url.replace('-large', '-t500x500') : null,
+        likesCount: tr.likes_count || 0,
+        playCount: tr.playback_count || 0,
+        streamUrl: tr.media?.transcodings?.find(tc => tc.format?.protocol === 'progressive')?.url || null,
+        hlsUrl: tr.media?.transcodings?.find(tc => tc.format?.protocol === 'hls')?.url || null,
+      })));
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, [visible, album?.id]);
+
+  const coverUrl = meta?.coverUrl || album?.coverUrl || null;
+  const title    = meta?.title   || album?.title   || '—';
+  const artist   = meta?.artist  || album?.artist  || '';
+
+  return (
+    <div style={{
+      position:'absolute', inset:0, display:'flex', flexDirection:'column',
+      overflow:'hidden', opacity: visible ? 1 : 0,
+      pointerEvents: visible ? 'auto' : 'none', transition:'opacity 0.18s ease',
+    }}>
+      {/* hero */}
+      <div style={{ position:'relative', flexShrink:0, height:252, overflow:'hidden',
+        display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'flex-end', paddingBottom:22 }}>
+        {coverUrl
+          ? <img src={coverUrl} style={{ position:'absolute', inset:'-30px', width:'calc(100% + 60px)', height:'calc(100% + 60px)', objectFit:'cover', filter:'blur(52px) saturate(1.25) brightness(0.55)', transform:'scale(1.04)' }}/>
+          : null
+        }
+        <div style={{ position:'absolute', inset:0, background:'linear-gradient(to bottom, rgba(7,7,10,0.25) 0%, rgba(7,7,10,0.6) 55%, #07070a 100%)' }}/>
+
+        {/* back */}
+        <div onClick={onClose} style={{ position:'absolute', top:14, left:18, zIndex:10,
+          display:'flex', alignItems:'center', gap:5, cursor:'pointer',
+          color:'rgba(255,255,255,0.45)', fontSize:12.5, letterSpacing:'0.03em', transition:'color 0.15s' }}
+          onMouseEnter={e=>e.currentTarget.style.color='rgba(255,255,255,0.85)'}
+          onMouseLeave={e=>e.currentTarget.style.color='rgba(255,255,255,0.45)'}>
+          <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
+          назад
+        </div>
+
+        {/* cover art */}
+        <div style={{ position:'relative', zIndex:2, width:128, height:128, borderRadius:10, overflow:'hidden',
+          background:'#111116', boxShadow:'0 20px 56px rgba(0,0,0,0.75)', border:'1px solid rgba(255,255,255,0.07)', marginBottom:16 }}>
+          {coverUrl
+            ? <img src={coverUrl} style={{ width:'100%', height:'100%', objectFit:'cover' }}/>
+            : <div style={{ width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                <svg width="38" height="38" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="1.4" viewBox="0 0 24 24">
+                  <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+                </svg>
+              </div>
+          }
+        </div>
+
+        {/* title + artist */}
+        <div style={{ position:'relative', zIndex:2, textAlign:'center', padding:'0 48px', maxWidth:640 }}>
+          <div style={{ fontSize:21, fontWeight:700, letterSpacing:'-0.024em', lineHeight:1.2,
+            overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{title}</div>
+          <div style={{ fontSize:12, color:'rgba(255,255,255,0.32)', marginTop:5 }}>{artist}</div>
+        </div>
+      </div>
+
+      {/* meta strip */}
+      {meta && (
+        <div style={{ flexShrink:0, display:'flex', alignItems:'center', gap:18,
+          padding:'9px 36px 9px', borderBottom:'1px solid rgba(255,255,255,0.04)' }}>
+          {meta.trackCount > 0 && <span style={{fontSize:11,color:'rgba(255,255,255,0.2)'}}>{meta.trackCount} {t('tracks_label').toLowerCase()}</span>}
+          {fmtCount(meta.likesCount) && (
+            <div style={{display:'flex',alignItems:'center',gap:4,color:'rgba(255,255,255,0.2)'}}>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+              <span style={{fontSize:11}}>{fmtCount(meta.likesCount)}</span>
+            </div>
+          )}
+          {meta.totalDuration > 0 && <span style={{fontSize:11,color:'rgba(255,255,255,0.2)'}}>{fmt(meta.totalDuration)}</span>}
+        </div>
+      )}
+
+      {/* track list */}
+      <div className="scroll-thin" style={{ flex:1, overflowY:'auto', padding:'4px 36px 32px' }}>
+        {loading ? (
+          <div style={{display:'flex',justifyContent:'center',padding:'48px 0'}}>
+            <div style={{width:26,height:26,border:'2px solid rgba(255,255,255,0.07)',borderTopColor:'rgba(255,255,255,0.22)',borderRadius:'50%',animation:'spin 1s linear infinite'}}/>
+          </div>
+        ) : tracks.map((tr, i) => (
+          <AlbumTrackRow key={tr.id} track={tr} index={i}
+            isLoading={loadingTrackId === tr.id}
+            isError={errorTrackId === tr.id}
+            isLiked={likedIds?.has(tr.id) || false}
+            onLike={onLike ? () => onLike(tr) : null}
+            onClick={() => onSelectTrack?.(tr)}
+            onPlayTrack={() => onPlayTrack?.(tr)}/>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 /* ── App ─────────────────────────────────────────────────────────────────── */
 function App() {
@@ -1802,6 +2340,8 @@ function App() {
   const [avatarFly,          setAvatarFly]          = useState(null);
   const [avatarFlyExiting,   setAvatarFlyExiting]   = useState(false);
   const [avatarFlying,       setAvatarFlying]       = useState(false);
+  const [artistView,         setArtistView]         = useState(null);
+  const [albumView,          setAlbumView]          = useState(null);
   const [libCollapsed,  setLibCollapsed]  = useState(false);
   const [settings,      setSettings]      = useState({
     autoplay:false, crossfade:0, defaultRepeat:false,
@@ -1868,6 +2408,7 @@ function App() {
   const scCacheRef        = useRef([]);
   const scCacheMapRef     = useRef(new Map());
   const prevSearchRef     = useRef('');
+  const prevViewRef       = useRef('search');
   const homeSearchRef     = useRef(null);
   const libSearchRef      = useRef(null);
   const searchViewRef     = useRef(null);
@@ -2312,9 +2853,14 @@ function App() {
             id: t.id,
             title: t.title || (STRINGS[langRef.current]?.no_title ?? 'Без названия'),
             artist: t.publisher_metadata?.artist || t.user?.username || '',
+            artistId: t.user?.id || null,
+            artistAvatarUrl: t.user?.avatar_url || null,
+            uploaderUsername: t.user?.username || null,
             duration: Math.floor((t.duration || 0) / 1000),
             color: scHashColor(t.id),
             coverUrl: t.artwork_url ? t.artwork_url.replace('-large', '-t500x500') : null,
+            likesCount: t.likes_count || 0,
+            playCount: t.playback_count || 0,
             streamUrl: progressive?.url || null,
             hlsUrl: hls?.url || null,
           });
@@ -2391,9 +2937,14 @@ function App() {
             id: t.id,
             title: t.title || (STRINGS[langRef.current]?.no_title ?? 'Без названия'),
             artist: t.publisher_metadata?.artist || t.user?.username || '',
+            artistId: t.user?.id || null,
+            artistAvatarUrl: t.user?.avatar_url || null,
+            uploaderUsername: t.user?.username || null,
             duration: Math.floor((t.duration || 0) / 1000),
             color: scHashColor(t.id),
             coverUrl: t.artwork_url ? t.artwork_url.replace('-large', '-t500x500') : null,
+            likesCount: t.likes_count || 0,
+            playCount: t.playback_count || 0,
             streamUrl: progressive?.url || null,
             hlsUrl: hls?.url || null,
           });
@@ -2468,6 +3019,30 @@ function App() {
   }, []);
   const handleToggleSource = useCallback(() => setSettings(s => ({ ...s, sourceMode: s.sourceMode === 'sc' ? 'local' : 'sc' })), []);
   const sourceMode = (settings.soundcloudAuth && settings.sourceMode === 'sc') ? 'sc' : 'local';
+
+  const handleOpenAlbum = useCallback((album) => {
+    setAlbumView(album);
+    setView('album');
+  }, []);
+
+  const handleCloseAlbum = useCallback(() => {
+    setView('artist');
+  }, []);
+
+  const handleOpenArtist = useCallback((artist) => {
+    prevViewRef.current = view;
+    setArtistView(artist);
+    if (view === 'player') setPlayerVisible(false);
+    if (view === 'home')   setHomeVisible(false);
+    setView('artist');
+  }, [view]);
+
+  const handleCloseArtist = useCallback(() => {
+    const prev = prevViewRef.current || 'search';
+    setView(prev);
+    if (prev === 'player') setPlayerVisible(true);
+    if (prev === 'home')   setHomeVisible(true);
+  }, []);
 
   const toastTimerRef = useRef(null);
   function handleSearchResultsLoaded(newTracks) {
@@ -2770,7 +3345,7 @@ function App() {
         setPlayerVisible(false);
         setHomeVisible(true);
         setView('home');
-      } else if (view === 'settings' || view === 'soundcloud' || view === 'search') {
+      } else if (view === 'settings' || view === 'soundcloud' || view === 'search' || view === 'artist' || view === 'album') {
         setHomeVisible(true);
         setView('home');
       }
@@ -3070,12 +3645,16 @@ function App() {
           display:'flex', alignItems:'center', justifyContent:'center',
         }}>
           <div style={{
-            width:'min(calc(100% - 64px), calc(100vh - 320px))',
-            maxWidth:480, minWidth:220,
+            width:'calc(100% - 48px)',
+            maxWidth:600, minWidth:220,
             display:'flex', flexDirection:'column',
             alignItems:'center', gap:0,
           }}>
-            <div id="player-album-art" ref={playerArtRef} style={{width:'100%', marginBottom:22, opacity: ((hero && !heroExiting) || reverseHero) ? 0 : 1}}>
+            <div id="player-album-art" ref={playerArtRef} style={{
+              width:'min(100%, 300px)',
+              marginBottom:22,
+              opacity: ((hero && !heroExiting) || reverseHero) ? 0 : 1,
+            }}>
               <div key={artEntranceKey} style={{animation: artEntranceKey > 0 ? 'artEntrance 0.42s cubic-bezier(0.34,1.56,0.64,1)' : 'none'}}>
                 <AlbumArt track={track} isPlaying={isPlaying}/>
               </div>
@@ -3134,18 +3713,43 @@ function App() {
                   />
                   {scPlayingTrack && (() => {
                     const liked = likedIds.has(scPlayingTrack.id);
-                    return <PlayerLikeBtn liked={liked} onLike={() => handleLike(scPlayingTrack)}/>;
+                    return <PlayerLikeBtn liked={liked} onLike={() => handleLike(scPlayingTrack)} style={{marginLeft:8}}/>;
                   })()}
                 </div>
               )}
               <div style={{
-                fontSize:12, color:'rgba(255,255,255,0.28)', marginTop:4,
+                display:'flex', alignItems:'center', flexWrap:'wrap', justifyContent:'center', gap:'0px',
+                fontSize:12, marginTop:4,
                 opacity: playerVisible ? 1 : 0,
                 transition: playerVisible ? 'opacity 0.36s ease 0.2s' : 'opacity 0.1s ease',
-              }}>{track.artist}</div>
+              }}>
+                {scPlayingTrack
+                  ? splitArtists(track.artist).map(({ name, sep }, i) => {
+                      const isUploader = track.uploaderUsername
+                        ? name.toLowerCase() === track.uploaderUsername.toLowerCase()
+                        : i === 0;
+                      return (
+                        <React.Fragment key={i}>
+                          <span
+                            onClick={() => handleOpenArtist(
+                              isUploader
+                                ? { id: track.artistId, username: name, avatarUrl: track.artistAvatarUrl }
+                                : { username: name }
+                            )}
+                            onMouseEnter={e => e.currentTarget.style.color='rgba(255,255,255,0.65)'}
+                            onMouseLeave={e => e.currentTarget.style.color='rgba(255,255,255,0.28)'}
+                            style={{ color:'rgba(255,255,255,0.28)', cursor:'pointer', transition:'color 0.15s' }}
+                          >{name}</span>
+                          {sep && <span style={{ color:'rgba(255,255,255,0.16)' }}>{/^[,.]$/.test(sep.trim()) ? ', ' : ` ${sep.trim()} `}</span>}
+                        </React.Fragment>
+                      );
+                    })
+                  : <span style={{ color:'rgba(255,255,255,0.28)' }}>{track.artist}</span>
+                }
+              </div>
             </div>
             <div style={{
-              width:'100%', marginBottom:20,
+              width:'min(100%, 320px)', margin:'0 auto 20px',
               opacity: playerVisible ? 1 : 0,
               transform: playerVisible ? 'translateY(0)' : 'translateY(10px)',
               transition: playerVisible ? 'opacity 0.36s ease 0.28s, transform 0.48s cubic-bezier(0.22,1,0.36,1) 0.28s' : 'opacity 0.1s ease, transform 0.1s ease',
@@ -3200,7 +3804,20 @@ function App() {
           likedIds={likedIds} onLike={handleLike}
           onPlayTrack={(t, queue) => { searchQueueRef.current = queue || null; handleScTrackClick(t, -1); }}
           onSelectTrack={(t, queue) => { searchQueueRef.current = queue || null; handleScTrackClick(t, -1); setPlayerVisible(true); setView('player'); setNavActive('library'); }}
-          onResultsLoaded={handleSearchResultsLoaded}/>
+          onResultsLoaded={handleSearchResultsLoaded}
+          onArtistClick={handleOpenArtist}
+          loadingTrackId={loadingTrackId} errorTrackId={errorTrackId}/>
+        <ArtistView artist={artistView} visible={view==='artist'} onClose={handleCloseArtist} scAuth={settings.soundcloudAuth||null}
+          likedIds={likedIds} onLike={handleLike}
+          onPlayTrack={t => handleScTrackClick(t, -1)}
+          onSelectTrack={t => { handleScTrackClick(t, -1); setPlayerVisible(true); setView('player'); }}
+          loadingTrackId={loadingTrackId} errorTrackId={errorTrackId}
+          onAlbumClick={handleOpenAlbum}/>
+        <AlbumView album={albumView} visible={view==='album'} onClose={handleCloseAlbum} scAuth={settings.soundcloudAuth||null}
+          likedIds={likedIds} onLike={handleLike}
+          onPlayTrack={t => handleScTrackClick(t, -1)}
+          onSelectTrack={t => { handleScTrackClick(t, -1); setPlayerVisible(true); setView('player'); }}
+          loadingTrackId={loadingTrackId} errorTrackId={errorTrackId}/>
 
         {toast && (
           <div style={{
