@@ -17,10 +17,6 @@
 
 <br/>
 
-<a href="README.ru.md">🇷🇺 русский</a>
-
-<br/>
-
 </div>
 
 ---
