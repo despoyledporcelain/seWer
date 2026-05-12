@@ -454,11 +454,7 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying, visible 
       const W = canvas.width, HH = canvas.height;
       ctx.clearRect(0, 0, W, HH);
 
-      if (playRef.current && lastNow.current !== null && totalRef.current > 0) {
-        const dt = (now - lastNow.current) * 0.001;
-        dispProg.current += dt / totalRef.current;
-      }
-      dispProg.current += (progRef.current - dispProg.current) * 0.015;
+      dispProg.current += (progRef.current - dispProg.current) * 0.12;
       const p   = dispProg.current;
       const barH = 5 * dpr;
       const r    = barH / 2;
