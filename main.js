@@ -283,6 +283,7 @@ ipcMain.handle('sc-fetch', async (_, url, token, clientId, method = 'GET') => {
         },
       })
       const text = await res.text()
+      console.log(`[sc-fetch] ${method} ${fullUrl.split('?')[0]} → ${res.status}`, text.slice(0, 200))
       if (res.status !== 200 && res.status !== 201 && res.status !== 204) return { error: res.status }
       if (!text.trim()) return { data: null }
       try { return { data: JSON.parse(text) } } catch { return { error: 'parse_error' } }

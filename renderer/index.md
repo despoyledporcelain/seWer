@@ -1,6 +1,6 @@
 # карта renderer/index.html
 
-весь ui — один файл ~2800 строк. jsx компилируется babel standalone в браузере.
+весь ui — один файл ~3600 строк. jsx компилируется babel standalone в браузере.
 
 ## структура файла
 
@@ -41,13 +41,15 @@ assets/
 
 - `smoothScroll(el, targetTop, duration)` — плавный скролл easeInOutQuad
 - `fmt(s)` → `M:SS`
+- `fmtCount(n)` → `12.4K` / `1.2M` / `null` если 0 — форматирование больших чисел
+- `splitArtists(str)` → `[{name, sep}]` — парсит мультиартистную строку по разделителям (`&`, `,`, `.`, `x`, `feat.`, `vs.` и т.д.)
 - `SoundCloudIcon({ size, fill })` — инлайн SVG логотип SC
 - `scHashColor(id)` → `hsl(...)` по id трека
 
 ## i18n
 
 ```
-STRINGS        — объект { ru: {...}, en: {...} }, ~70 ключей
+STRINGS        — объект { ru: {...}, en: {...} }, ~80 ключей
 LangContext    — React.createContext('ru')
 useLang()      — хук: возвращает t(key), читает LangContext
 ```
@@ -62,15 +64,16 @@ useLang()      — хук: возвращает t(key), читает LangContext
 
 ### `MarqueeText`
 пропсы: `{text, style, onClick}`
-прокрутка длинного текста. `useLayoutEffect` измеряет overflow после каждого изменения `text`. если текст влазит — `textAlign:'center'`; если нет — `textAlign:'left'` + CSS анимация `marqueeScroll` (пауза 1.8с → едет → пауза → возврат). скорость ~38px/s, длительность динамическая.
+прокрутка длинного текста. `useLayoutEffect` измеряет overflow после каждого изменения `text`. если текст влазит — `textAlign:'center'`; если нет — `textAlign:'left'` + CSS анимация `marqueeScroll` (пауза 1.8с → едет → пауза → возврат). скорость ~38px/s, длительность динамическая.  
+при скролле применяется `mask-image` градиент (10px слева, 14px справа) — плавное затухание вместо жёсткого обрезания.
 
 ### `PlayerLikeBtn`
-пропсы: `{liked, onLike}`
-сердечко 19px в плеере (только для SC треков). hover через `useState`. filled/outline зависит от `liked`. scale 1.18 при hover.
+пропсы: `{liked, onLike, style?}`
+сердечко 19px в плеере (только для SC треков). hover через `useState`. filled/outline зависит от `liked`. scale 1.18 при hover. принимает `style` для дополнительного позиционирования.
 
 ### `WaveProgressBar`
 пропсы: `{progress, elapsed, total, onSeek, isPlaying, visible}`
-canvas-волна H=52. drag → onSeek. анимация замораживается на паузе. rAF останавливается при `visible=false`.
+canvas-волна H=38. drag → onSeek. анимация замораживается на паузе. rAF останавливается при `visible=false`.
 **прогресс**: при `isPlaying` — `dispProg` двигается по реальному времени (`dt / total` за кадр) + мягкая коррекция дрейфа `* 0.015` к `progRef`. при паузе — только сглаживание.
 
 ### `ThinVolumeSlider`
@@ -94,13 +97,14 @@ canvas TW=28px, вертикальный. drag вверх = больше. `#c8c8
 кнопка сайдбара 38px. **активность через `opacity`**: active=1, inactive=0.3 (не через `color` — работает с PNG иконками).
 
 ### `TrackRow`
-пропсы: `{track, isActive, isLoading, onClick}`
+пропсы: `{track, isActive, isLoading, isError, onClick}`
 строка библиотеки. высота жёстко 50px. миниатюра 34px — если нет обложки: `assets/note.png` (opacity меняется с active).
 **спиннер загрузки**: справа от текста, слева от времени — 14px кружок (`border-top` акцент), `opacity` 0→1 по `isLoading`, `animation: spin 0.75s linear infinite`.
+**ошибка**: `isError` — вместо времени «недоступен» красным.
 
 ### `VirtualTrackList`
-пропсы: `{items, activeId, loadingId, onClickItem, scrollToActive, scrollTargetId}`
-ROW_H=50. CSS `content-visibility:auto`. абсолютный пилл с transition `0.42s cubic-bezier`. `loadingId` пробрасывается в `TrackRow.isLoading`.
+пропсы: `{items, activeId, loadingId, errorId, onClickItem, scrollToActive, scrollTargetId}`
+ROW_H=50. CSS `content-visibility:auto`. абсолютный пилл с transition `0.42s cubic-bezier`. `loadingId`/`errorId` пробрасываются в `TrackRow`.
 
 ### `HomeCard`
 пропсы: `{track, onSelect, artRef, artHidden, isLiked, onLike}`
@@ -129,7 +133,7 @@ drag через `setPointerCapture` (onPointerDown/Move/Up). wheel (passive:fals
 пропсы: `{settings, onSettings, visible, onScanTracks, onClearFolder, onClearCoversCache, onClearLikesCache}`
 секции: `playback`→`vosproizvedenie.png`, `appearance`→`theme.png`, `system`→`system.png`, `about`→`about.png`.
 
-**playback**: только CrossfadeSlider (autoplay и defaultRepeat удалены — были мёртвым кодом).
+**playback**: только CrossfadeSlider.
 
 **appearance**: карточка «Интерфейс» (hideDividers) + карточка «Discord» с toggle discordRpc и анимированным блоком кастомизации:
 - **Таймстамп**: чипы `progress` / `elapsed` / `none`
@@ -142,23 +146,72 @@ drag через `setPointerCapture` (onPointerDown/Move/Up). wheel (passive:fals
 portal-анимация аватара (SoundCloudView → Sidebar), 440мс.
 
 ### `SearchTrackRow`
-пропсы: `{track, isLiked, onLike, onClick, onCoverClick}`
-строка результата поиска. сердечко при hover или `isLiked`.
+пропсы: `{track, isLiked, onLike, onClick, onCoverClick, isLoading, isError}`
+строка результата поиска/профиля артиста.
+- обложка 44px с play-оверлеем (hover) или спиннером (`isLoading`)
+- title + artist (flex:1)
+- справа: сердечко (интерактивное) + кол-во лайков `fmtCount`, кол-во прослушиваний + иконка, длина трека
+- `isError` → вместо длины «недоступен» красным, строка затухает (opacity 0.55)
 
 ### `SearchView`
-пропсы: `{visible, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, onResultsLoaded}`
+пропсы: `{visible, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, onResultsLoaded, onArtistClick, loadingTrackId, errorTrackId}`
 рефы: `hasMoreRef`, `offsetRef` — синхронизируются каждый рендер для доступа из колбэков.
 `useImperativeHandle` экспортирует:
 - `focus()` — фокус на input
 - `loadMore()` — подгружает следующую страницу; нет-оп если `loadingRef.current` или `!hasMoreRef.current`
 `onResultsLoaded(newTracks)` — вызывается только при пагинации (не при первом поиске).
+карточки артистов кликабельны → `onArtistClick(user)`.
+`loadingTrackId`/`errorTrackId` пробрасываются в `SearchTrackRow`.
+
+### `ArtistView`
+пропсы: `{artist, visible, onClose, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, loadingTrackId, errorTrackId, onAlbumClick}`
+
+**artist объект**: `{ id?, username, avatarUrl?, followersCount?, bannerUrl? }`
+
+при открытии: если `artist.id` есть — фетчит `/users/{id}` → получает полный профиль (аватар, баннер, фолловеры). если только `username` — сначала `/search/users?q=username&limit=1` → затем `/users/{id}`.
+
+**лейаут**:
+- баннер 220px — если есть `bannerUrl`: изображение + тёмный градиент; иначе просто `#07070a`
+- кнопка «назад» top-left
+- внутри баннера: квадратная аватарка 148px (border-radius 14px) + имя (26px bold) + фолловеры справа
+
+**табы**: Популярные / Треки / Альбомы (3 вкладки, sliding underline pill).
+
+**загрузка треков** (useEffect на `[tab, profileId, visible]`):
+- Popular → `/users/{id}/toptracks?limit=20`
+- Tracks → `/users/{id}/tracks?limit=20` (+ пагинация через `next_href` при скролле)
+- Albums → `/users/{id}/albums?limit=20` → отдельные карточки альбомов, кликабельны → `onAlbumClick`
+
+**клик по обложке** → `onPlayTrack` (воспроизведение без перехода).
+**клик по строке** → `onSelectTrack` (воспроизведение + переход в плеер).
+
+### `AlbumTrackRow`
+пропсы: `{track, index, isLoading, isError, isLiked, onLike, onClick, onPlayTrack}`
+нумерованная строка трека в альбоме.
+- номер (hover → play-стрелка) → `onPlayTrack` (без перехода)
+- title (flex:1) → `onClick` (переход в плеер)
+- справа: сердечко + лайки, прослушивания, длина / «недоступен»
+
+### `AlbumView`
+пропсы: `{album, visible, onClose, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, loadingTrackId, errorTrackId}`
+
+**album объект**: `{ id, title, artist?, coverUrl?, trackCount?, likesCount? }`
+
+фетчит `/playlists/{id}` при открытии → получает полный список треков и метаданные.
+
+**лейаут**:
+- hero 252px: размытая обложка как фон + тёмный градиент; обложка 128px по центру; название + артист
+- мета-полоска: кол-во треков, лайки, общая длина
+- список треков через `AlbumTrackRow`
+- кнопка «назад» → возврат в ArtistView
 
 ---
 
 ### `App` — state
 
 ```
-view, tracks, trackIdx, isPlaying, progress, shuffle, repeat
+view              — 'home'|'player'|'search'|'soundcloud'|'settings'|'artist'|'album'
+tracks, trackIdx, isPlaying, progress, shuffle, repeat
 navActive, search, volume, hero, playerVisible, homeVisible
 heroExiting, reverseHero, reverseHeroExiting
 avatarFly, avatarFlyExiting, avatarFlying
@@ -169,7 +222,10 @@ libScrollTrigger, libScrollTargetId, searchFocused
 toast           — строка тоста или null
 toastExiting    — bool, true во время fade-out анимации
 loadingTrackId  — id SC трека пока идёт fetch+буферизация
+errorTrackId    — id SC трека если недоступен (2.2с, затем null)
 artEntranceKey  — счётчик, инкремент → ремаунт обёртки AlbumArt → artEntrance анимация
+artistView      — null | { id?, username, avatarUrl?, followersCount?, bannerUrl? }
+albumView       — null | { id, title, artist?, coverUrl?, trackCount?, likesCount? }
 ```
 
 `lang` и `t` — не state, вычисляются при каждом рендере из `settings.language`:
@@ -217,6 +273,7 @@ trackSwitchingRef         — true пока handleScTrackClick грузит тр
 toastTimerRef             — таймер скрытия тоста
 discordTimerRef, discordProgressRef
 prevSearchRef, homeSearchRef, libSearchRef
+prevViewRef               — view из которого открылся ArtistView (для handleCloseArtist)
 customTitlesRef, minDurationRef, editCancelRef
 ```
 
@@ -226,6 +283,10 @@ customTitlesRef, minDurationRef, editCancelRef
 - **`destroyHls()`** — уничтожает hls.js инстанс и обнуляет `hlsRef`
 - **`showToast(msg)`** — показывает тост 2.2с, затем fade-out 0.24с, затем убирает из DOM
 - **`handleSearchResultsLoaded(newTracks)`** — вызывается из `SearchView.onResultsLoaded`; дописывает треки в `searchQueueRef`, дошафливает в конец `scShuffleOrderRef` если shuffle активен
+- **`handleOpenArtist(artist)`** — сохраняет `prevViewRef.current = view`, устанавливает `artistView`, `view='artist'`
+- **`handleCloseArtist()`** — возвращает к `prevViewRef.current` (search/player/home)
+- **`handleOpenAlbum(album)`** — `setAlbumView(album)`, `setView('album')`; всегда из ArtistView
+- **`handleCloseAlbum()`** — `setView('artist')`
 
 ### `App` — crossfade (локальные треки и SC)
 
@@ -258,11 +319,22 @@ customTitlesRef, minDurationRef, editCancelRef
 
 ```js
 { id, title, artist, duration, color, coverUrl,
-  streamUrl,   // progressive endpoint (может быть null)
-  hlsUrl,      // HLS endpoint (может быть null)
-  resolvedUrl, // только у scPlayingTrack — финальный CDN URL
+  artistId,          // SC user id аплоадера (для открытия профиля)
+  artistAvatarUrl,   // аватарка аплоадера
+  uploaderUsername,  // username аплоадера (для splitArtists matching)
+  likesCount,        // кол-во лайков трека
+  playCount,         // кол-во прослушиваний
+  streamUrl,         // progressive endpoint (может быть null)
+  hlsUrl,            // HLS endpoint (может быть null)
+  resolvedUrl,       // только у scPlayingTrack — финальный CDN URL
 }
 ```
+
+### `App` — имя артиста в плеере
+
+`splitArtists(track.artist)` разбивает строку на `[{name, sep}]`. каждый `name` — отдельный кликабельный спан.
+- если `name.toLowerCase() === track.uploaderUsername.toLowerCase()` → `handleOpenArtist({ id: track.artistId, username: name, avatarUrl: track.artistAvatarUrl })`
+- иначе → `handleOpenArtist({ username: name })` (ArtistView сам найдёт через поиск)
 
 ### `App` — Discord RPC
 
@@ -272,6 +344,14 @@ useEffect зависит от `[track?.id, isPlaying, settings.discordRpc, setti
 - иначе → `discordUpdate({ title, artist, duration, progress, coverUrl, isPlaying, timestamp })`
 
 `timestamp` в main.js: `'progress'` → start+end (progress bar), `'elapsed'` → только start, `'none'` → без timestamp.
+
+### `App` — лейаут плеера
+
+центральный блок (flex column, alignItems:center):
+- `width: 'calc(100% - 48px)', maxWidth: 600` — широкий контейнер для заголовка
+- **обложка**: `width: 'min(100%, 300px)'` — ограничена 300px, центрируется
+- **заголовок**: `width: '100%'` — на всю ширину контейнера (600px max)
+- **прогресс-бар**: `width: 'min(100%, 320px)', margin: '0 auto'` — центрированный, уже обложки
 
 ### `App` — анимации
 
