@@ -174,6 +174,26 @@ function scHashColor(id) {
   return `hsl(${Math.abs(h) % 360},48%,38%)`;
 }
 
+function mapScTrack(t, noTitle) {
+  const progressive = t.media?.transcodings?.find(tc => tc.format?.protocol === 'progressive');
+  const hls = t.media?.transcodings?.find(tc => tc.format?.protocol === 'hls');
+  return {
+    id: t.id,
+    title: t.title || noTitle || '—',
+    artist: t.publisher_metadata?.artist || t.user?.username || '',
+    artistId: t.user?.id || null,
+    artistAvatarUrl: t.user?.avatar_url || null,
+    uploaderUsername: t.user?.username || null,
+    duration: Math.floor((t.duration || 0) / 1000),
+    color: scHashColor(t.id),
+    coverUrl: t.artwork_url ? t.artwork_url.replace('-large', '-t500x500') : null,
+    likesCount: t.likes_count || 0,
+    playCount: t.playback_count || 0,
+    streamUrl: progressive?.url || null,
+    hlsUrl: hls?.url || null,
+  };
+}
+
 function splitArtists(str) {
   if (!str) return [{ name: '', sep: null }];
   const re = /(\s*[&×,.]\s*|\s+(?:ft\.?|feat\.?|with|vs\.?)\s+)/gi;
@@ -1700,21 +1720,7 @@ const SearchView = React.forwardRef(function SearchView({ visible, scAuth, liked
         : Promise.resolve(null),
     ]);
     if (queryRef.current !== q) return;
-    const newTracks = (tracksRes.data?.collection || []).map(t => ({
-      id: t.id,
-      title: t.title || T('no_title'),
-      artist: t.publisher_metadata?.artist || t.user?.username || '',
-      artistId: t.user?.id || null,
-      artistAvatarUrl: t.user?.avatar_url || null,
-      uploaderUsername: t.user?.username || null,
-      duration: Math.floor((t.duration || 0) / 1000),
-      color: scHashColor(t.id),
-      coverUrl: t.artwork_url ? t.artwork_url.replace('-large', '-t500x500') : null,
-      likesCount: t.likes_count || 0,
-      playCount: t.playback_count || 0,
-      streamUrl: t.media?.transcodings?.find(tc => tc.format?.protocol === 'progressive')?.url || null,
-      hlsUrl: t.media?.transcodings?.find(tc => tc.format?.protocol === 'hls')?.url || null,
-    }));
+    const newTracks = (tracksRes.data?.collection || []).map(t => mapScTrack(t, T('no_title')));
     if (off === 0) {
       setResults(newTracks);
       setUsers((usersRes?.data?.collection || []).map(u => ({
@@ -1847,7 +1853,7 @@ const SearchView = React.forwardRef(function SearchView({ visible, scAuth, liked
 });
 
 /* ── ArtistView ──────────────────────────────────────────────────────────── */
-function ArtistView({ artist, visible, onClose, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, loadingTrackId, errorTrackId, onAlbumClick }) {
+function ArtistView({ artist, visible, onClose, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, loadingTrackId, errorTrackId, onAlbumClick, artistCacheRef }) {
   const t = useLang();
   const [tab, setTab] = useState('popular');
   const tabsRef = useRef({});
@@ -1855,20 +1861,17 @@ function ArtistView({ artist, visible, onClose, scAuth, likedIds, onLike, onPlay
   const [fetched, setFetched] = useState(null);
   const [artistTracks, setArtistTracks] = useState([]);
   const [tracksLoading, setTracksLoading] = useState(false);
+  const [tracksError, setTracksError] = useState(null);
+  const [fetchKey, setFetchKey] = useState(0);
   const [nextHref, setNextHref] = useState(null);
+  const nextHrefRef = useRef(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const loadingMoreRef = useRef(false);
+  const tabCacheRef = useRef({});
+  const scrollContainerRef = useRef(null);
+  const tabReqRef = useRef(0);
 
-  const mapTrack = tr => ({
-    id: tr.id, title: tr.title || '—',
-    artist: tr.publisher_metadata?.artist || tr.user?.username || '',
-    duration: Math.floor((tr.duration || 0) / 1000),
-    coverUrl: tr.artwork_url ? tr.artwork_url.replace('-large', '-t500x500') : null,
-    likesCount: tr.likes_count || 0,
-    playCount: tr.playback_count || 0,
-    streamUrl: tr.media?.transcodings?.find(tc => tc.format?.protocol === 'progressive')?.url || null,
-    hlsUrl: tr.media?.transcodings?.find(tc => tc.format?.protocol === 'hls')?.url || null,
-  });
+  const mapTrack = tr => mapScTrack(tr);
 
   const TABS = [
     { id: 'popular', label: t('artist_popular') },
@@ -1883,11 +1886,16 @@ function ArtistView({ artist, visible, onClose, scAuth, likedIds, onLike, onPlay
 
   useEffect(() => {
     if (!artist) return;
+    tabCacheRef.current = {};
     setTab('popular'); setFetched(null); setArtistTracks([]);
   }, [artist?.id, artist?.username]);
 
   useEffect(() => {
     if (!visible || !scAuth || (!artist?.id && !artist?.username)) return;
+    const cacheKey = artist.id ? String(artist.id) : artist.username?.toLowerCase();
+    const cached = artistCacheRef?.current?.get(cacheKey);
+    if (cached) { setFetched(cached); return; }
+    let cancelled = false;
     (async () => {
       try {
         let userId = artist.id;
@@ -1896,6 +1904,7 @@ function ArtistView({ artist, visible, onClose, scAuth, likedIds, onLike, onPlay
             `https://api-v2.soundcloud.com/search/users?q=${encodeURIComponent(artist.username)}&limit=1`,
             scAuth.token, scAuth.clientId
           );
+          if (cancelled) return;
           userId = s.data?.collection?.[0]?.id;
           if (!userId) return;
         }
@@ -1903,24 +1912,42 @@ function ArtistView({ artist, visible, onClose, scAuth, likedIds, onLike, onPlay
           `https://api-v2.soundcloud.com/users/${userId}`,
           scAuth.token, scAuth.clientId
         );
+        if (cancelled) return;
         const u = res.data;
         if (!u) return;
-        setFetched({
+        const data = {
           id: u.id,
           username: u.username,
           avatarUrl: u.avatar_url ? u.avatar_url.replace('-large', '-t500x500') : null,
           followersCount: u.followers_count,
           bannerUrl: u.visuals?.visuals?.[0]?.visual_url || null,
-        });
+        };
+        artistCacheRef?.current?.set(cacheKey, data);
+        setFetched(data);
       } catch {}
     })();
+    return () => { cancelled = true; };
   }, [visible, artist?.id, artist?.username]);
 
   const profileId = fetched?.id || artist?.id || null;
 
   useEffect(() => {
     if (!visible || !scAuth || !profileId) return;
+
+    const cached = tabCacheRef.current[tab];
+    if (cached) {
+      setTracksLoading(false);
+      setTracksError(null);
+      setArtistTracks(cached.tracks);
+      nextHrefRef.current = cached.nextHref;
+      setNextHref(cached.nextHref);
+      return;
+    }
+
+    const reqId = ++tabReqRef.current;
     setArtistTracks([]);
+    setTracksError(null);
+    nextHrefRef.current = null;
     setNextHref(null);
     setTracksLoading(true);
     const urls = {
@@ -1931,32 +1958,58 @@ function ArtistView({ artist, visible, onClose, scAuth, likedIds, onLike, onPlay
     const url = urls[tab];
     if (!url) { setTracksLoading(false); return; }
     window.electronAPI.scFetch(url, scAuth.token, scAuth.clientId).then(res => {
+      if (tabReqRef.current !== reqId) return;
       const items = res.data?.collection || [];
       if (tab === 'albums') {
-        setArtistTracks(items.map(p => ({
+        const mapped = items.map(p => ({
           id: p.id, title: p.title || '—',
           artist: p.user?.username || '',
           duration: Math.floor((p.duration || 0) / 1000),
           coverUrl: p.artwork_url ? p.artwork_url.replace('-large', '-t500x500') : null,
           likesCount: p.likes_count || 0,
           playCount: null, trackCount: p.track_count || 0, isAlbum: true,
-        })));
+        }));
+        tabCacheRef.current[tab] = { tracks: mapped, nextHref: null };
+        setArtistTracks(mapped);
       } else {
-        setArtistTracks(items.map(mapTrack));
-        setNextHref(res.data?.next_href || null);
+        const mapped = items.map(mapTrack);
+        const nh = res.data?.next_href || null;
+        tabCacheRef.current[tab] = { tracks: mapped, nextHref: nh };
+        setArtistTracks(mapped);
+        nextHrefRef.current = nh;
+        setNextHref(nh);
       }
-    }).catch(() => {}).finally(() => setTracksLoading(false));
-  }, [tab, profileId, visible]);
+    }).catch(() => {
+      if (tabReqRef.current === reqId) setTracksError(t('error_retry') || 'Ошибка загрузки');
+    }).finally(() => { if (tabReqRef.current === reqId) setTracksLoading(false); });
+  }, [tab, profileId, visible, fetchKey]);
+
+  useEffect(() => {
+    if (tracksLoading || loadingMore || !nextHrefRef.current) return;
+    const el = scrollContainerRef.current;
+    if (!el || el.scrollHeight > el.clientHeight) return;
+    loadMore();
+  }, [tracksLoading, loadingMore]);
 
   const loadMore = async () => {
-    if (!nextHref || loadingMoreRef.current || !scAuth) return;
+    if (!nextHrefRef.current || loadingMoreRef.current || !scAuth) return;
     loadingMoreRef.current = true;
     setLoadingMore(true);
+    const href = nextHrefRef.current;
+    const currentTab = tab;
     try {
-      const res = await window.electronAPI.scFetch(nextHref, scAuth.token, scAuth.clientId);
-      const items = res.data?.collection || [];
-      setArtistTracks(prev => [...prev, ...items.map(mapTrack)]);
-      setNextHref(res.data?.next_href || null);
+      const res = await window.electronAPI.scFetch(href, scAuth.token, scAuth.clientId);
+      const newTracks = (res.data?.collection || []).map(mapTrack);
+      const nh = res.data?.next_href || null;
+      nextHrefRef.current = nh;
+      setNextHref(nh);
+      setArtistTracks(prev => {
+        const updated = [...prev, ...newTracks];
+        if (tabCacheRef.current[currentTab]) {
+          tabCacheRef.current[currentTab] = { tracks: updated, nextHref: nh };
+        }
+        return updated;
+      });
     } catch {}
     loadingMoreRef.current = false;
     setLoadingMore(false);
@@ -2081,7 +2134,7 @@ function ArtistView({ artist, visible, onClose, scAuth, likedIds, onLike, onPlay
       </div>
 
       {/* content */}
-      <div className="scroll-thin" style={{ flex: 1, overflowY: 'auto', padding: '8px 32px 32px' }}
+      <div ref={scrollContainerRef} className="scroll-thin" style={{ flex: 1, overflowY: 'auto', padding: '8px 32px 32px' }}
         onScroll={e => {
           const el = e.currentTarget;
           if (el.scrollTop + el.clientHeight >= el.scrollHeight - 180) loadMore();
@@ -2089,6 +2142,15 @@ function ArtistView({ artist, visible, onClose, scAuth, likedIds, onLike, onPlay
         {tracksLoading ? (
           <div style={{ display:'flex', justifyContent:'center', padding:'48px 0' }}>
             <div style={{ width:26, height:26, border:'2px solid rgba(255,255,255,0.07)', borderTopColor:'rgba(255,255,255,0.22)', borderRadius:'50%', animation:'spin 1s linear infinite' }}/>
+          </div>
+        ) : tracksError ? (
+          <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:12, padding:'48px 0' }}>
+            <div style={{ fontSize:12, color:'rgba(255,255,255,0.3)' }}>{tracksError}</div>
+            <button onClick={() => { delete tabCacheRef.current[tab]; setFetchKey(k => k + 1); }}
+              style={{ background:'rgba(255,255,255,0.06)', border:'none', borderRadius:8, padding:'6px 16px',
+                fontSize:12, color:'rgba(255,255,255,0.55)', cursor:'pointer', fontFamily:'inherit' }}>
+              {t('retry') || 'Повторить'}
+            </button>
           </div>
         ) : tab === 'reposts' ? (
           <div style={{ textAlign:'center', padding:'48px 0', fontSize:12, color:'rgba(255,255,255,0.15)', letterSpacing:'0.05em' }}>soon™</div>
@@ -2192,19 +2254,24 @@ function AlbumView({ album, visible, onClose, scAuth, likedIds, onLike, onPlayTr
   const [tracks, setTracks] = useState([]);
   const [loading, setLoading] = useState(false);
   const [meta, setMeta] = useState(null);
+  const [error, setError] = useState(null);
+  const [fetchKey, setFetchKey] = useState(0);
 
   useEffect(() => {
     if (!album) return;
-    setTracks([]); setMeta(null);
+    setTracks([]); setMeta(null); setError(null);
   }, [album?.id]);
 
   useEffect(() => {
     if (!visible || !album?.id || !scAuth) return;
+    let cancelled = false;
+    setError(null);
     setLoading(true);
     window.electronAPI.scFetch(
       `https://api-v2.soundcloud.com/playlists/${album.id}`,
       scAuth.token, scAuth.clientId
     ).then(res => {
+      if (cancelled) return;
       const d = res.data;
       if (!d) return;
       setMeta({
@@ -2215,19 +2282,12 @@ function AlbumView({ album, visible, onClose, scAuth, likedIds, onLike, onPlayTr
         trackCount: d.track_count || 0,
         likesCount: d.likes_count || 0,
       });
-      setTracks((d.tracks || []).map(tr => ({
-        id: tr.id,
-        title: tr.title || '—',
-        artist: tr.publisher_metadata?.artist || tr.user?.username || '',
-        duration: Math.floor((tr.duration || 0) / 1000),
-        coverUrl: tr.artwork_url ? tr.artwork_url.replace('-large', '-t500x500') : null,
-        likesCount: tr.likes_count || 0,
-        playCount: tr.playback_count || 0,
-        streamUrl: tr.media?.transcodings?.find(tc => tc.format?.protocol === 'progressive')?.url || null,
-        hlsUrl: tr.media?.transcodings?.find(tc => tc.format?.protocol === 'hls')?.url || null,
-      })));
-    }).catch(() => {}).finally(() => setLoading(false));
-  }, [visible, album?.id]);
+      setTracks((d.tracks || []).map(tr => mapScTrack(tr)));
+    }).catch(() => {
+      if (!cancelled) setError(t('error_retry') || 'Ошибка загрузки');
+    }).finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [visible, album?.id, fetchKey]);
 
   const coverUrl = meta?.coverUrl || album?.coverUrl || null;
   const title    = meta?.title   || album?.title   || '—';
@@ -2299,6 +2359,15 @@ function AlbumView({ album, visible, onClose, scAuth, likedIds, onLike, onPlayTr
         {loading ? (
           <div style={{display:'flex',justifyContent:'center',padding:'48px 0'}}>
             <div style={{width:26,height:26,border:'2px solid rgba(255,255,255,0.07)',borderTopColor:'rgba(255,255,255,0.22)',borderRadius:'50%',animation:'spin 1s linear infinite'}}/>
+          </div>
+        ) : error ? (
+          <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:12,padding:'48px 0'}}>
+            <div style={{fontSize:12,color:'rgba(255,255,255,0.3)'}}>{error}</div>
+            <button onClick={() => { setError(null); setFetchKey(k => k + 1); }}
+              style={{background:'rgba(255,255,255,0.06)',border:'none',borderRadius:8,padding:'6px 16px',
+                fontSize:12,color:'rgba(255,255,255,0.55)',cursor:'pointer',fontFamily:'inherit'}}>
+              {t('retry') || 'Повторить'}
+            </button>
           </div>
         ) : tracks.map((tr, i) => (
           <AlbumTrackRow key={tr.id} track={tr} index={i}
@@ -2403,6 +2472,7 @@ function App() {
   const scAuthRef         = useRef(null);
   const scCacheRef        = useRef([]);
   const scCacheMapRef     = useRef(new Map());
+  const artistCacheRef    = useRef(new Map());
   const prevSearchRef     = useRef('');
   const prevViewRef       = useRef('search');
   const homeSearchRef     = useRef(null);
@@ -2843,23 +2913,7 @@ function App() {
         for (const item of res.data.collection) {
           const t = item.track;
           if (!t?.id) continue;
-          const progressive = t.media?.transcodings?.find(tc => tc.format?.protocol === 'progressive');
-          const hls = t.media?.transcodings?.find(tc => tc.format?.protocol === 'hls');
-          all.push({
-            id: t.id,
-            title: t.title || (STRINGS[langRef.current]?.no_title ?? 'Без названия'),
-            artist: t.publisher_metadata?.artist || t.user?.username || '',
-            artistId: t.user?.id || null,
-            artistAvatarUrl: t.user?.avatar_url || null,
-            uploaderUsername: t.user?.username || null,
-            duration: Math.floor((t.duration || 0) / 1000),
-            color: scHashColor(t.id),
-            coverUrl: t.artwork_url ? t.artwork_url.replace('-large', '-t500x500') : null,
-            likesCount: t.likes_count || 0,
-            playCount: t.playback_count || 0,
-            streamUrl: progressive?.url || null,
-            hlsUrl: hls?.url || null,
-          });
+          all.push(mapScTrack(t, STRINGS[langRef.current]?.no_title ?? 'Без названия'));
         }
         url = res.data.next_href || null;
         pages++;
@@ -2927,23 +2981,7 @@ function App() {
           const t = item.track;
           if (!t?.id) continue;
           if (knownIds.has(t.id)) { foundKnown = true; break; }
-          const progressive = t.media?.transcodings?.find(tc => tc.format?.protocol === 'progressive');
-          const hls = t.media?.transcodings?.find(tc => tc.format?.protocol === 'hls');
-          newest.push({
-            id: t.id,
-            title: t.title || (STRINGS[langRef.current]?.no_title ?? 'Без названия'),
-            artist: t.publisher_metadata?.artist || t.user?.username || '',
-            artistId: t.user?.id || null,
-            artistAvatarUrl: t.user?.avatar_url || null,
-            uploaderUsername: t.user?.username || null,
-            duration: Math.floor((t.duration || 0) / 1000),
-            color: scHashColor(t.id),
-            coverUrl: t.artwork_url ? t.artwork_url.replace('-large', '-t500x500') : null,
-            likesCount: t.likes_count || 0,
-            playCount: t.playback_count || 0,
-            streamUrl: progressive?.url || null,
-            hlsUrl: hls?.url || null,
-          });
+          newest.push(mapScTrack(t, STRINGS[langRef.current]?.no_title ?? 'Без названия'));
         }
         if (foundKnown) break;
         url = res.data.next_href || null;
@@ -3803,7 +3841,7 @@ function App() {
           onResultsLoaded={handleSearchResultsLoaded}
           onArtistClick={handleOpenArtist}
           loadingTrackId={loadingTrackId} errorTrackId={errorTrackId}/>
-        <ArtistView artist={artistView} visible={view==='artist'} onClose={handleCloseArtist} scAuth={settings.soundcloudAuth||null}
+        <ArtistView artist={artistView} visible={view==='artist'} onClose={handleCloseArtist} scAuth={settings.soundcloudAuth||null} artistCacheRef={artistCacheRef}
           likedIds={likedIds} onLike={handleLike}
           onPlayTrack={t => handleScTrackClick(t, -1)}
           onSelectTrack={t => { handleScTrackClick(t, -1); setPlayerVisible(true); setView('player'); }}
