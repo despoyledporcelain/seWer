@@ -6,7 +6,7 @@
 
 | строки    | что                                                        |
 |-----------|------------------------------------------------------------|
-| 1–76      | `<head>`: cdn-скрипты (react production + babel), `hls.min.js` локальный, css (`:root` vars, `#app-shell`, titlebar, scrollbar) |
+| 1–76      | `<head>`: cdn-скрипты (react production + babel), `hls.min.js` локальный, `gsap.min.js` (CDN), css (`:root` vars, `#app-shell`, titlebar, scrollbar) |
 | 77–93     | `#app-shell` + `#titlebar` html |
 | 94–end    | `<script type="text/babel">`: весь react |
 
@@ -17,7 +17,7 @@
 --text: #ededf4   --accent: #b2b2b2   --titlebar-h: 28px
 ```
 
-**анимации:** `breathe`, `spin`, `fadeInUp`, `fadeOutDown`, `artEntrance`, `marqueeScroll`
+**анимации:** `breathe`, `spin`, `fadeInUp`, `fadeOutDown`, `artEntrance`
 
 **скроллбары:** `.scroll-thin` (8px зона, 2px визуально), `.scroll-home` (отступы под хедер сетки)
 
@@ -63,9 +63,8 @@ useLang()      — хук: возвращает t(key), читает LangContext
 ## компоненты
 
 ### `MarqueeText`
-пропсы: `{text, style, onClick}`
-прокрутка длинного текста. `useLayoutEffect` измеряет overflow после каждого изменения `text`. если текст влазит — `textAlign:'center'`; если нет — `textAlign:'left'` + CSS анимация `marqueeScroll` (пауза 1.8с → едет → пауза → возврат). скорость ~38px/s, длительность динамическая.  
-при скролле применяется `mask-image` градиент (10px слева, 14px справа) — плавное затухание вместо жёсткого обрезания.
+пропсы: `{text, style, onClick, maxWidth?}`
+ellipsis + tooltip. `useLayoutEffect` проверяет overflow после изменения `text`/`maxWidth`. если текст обрезан — при hover показывает кастомный тултип (абсолютный div, `fadeInUp 0.15s`). если `maxWidth` задан — `width:fit-content, maxWidth`; иначе `flex:1, minWidth:0`.
 
 ### `PlayerLikeBtn`
 пропсы: `{liked, onLike, style?}`
@@ -73,8 +72,7 @@ useLang()      — хук: возвращает t(key), читает LangContext
 
 ### `WaveProgressBar`
 пропсы: `{progress, elapsed, total, onSeek, isPlaying, visible}`
-canvas-волна H=38. drag → onSeek. анимация замораживается на паузе. rAF останавливается при `visible=false`.
-**прогресс**: при `isPlaying` — `dispProg` двигается по реальному времени (`dt / total` за кадр) + мягкая коррекция дрейфа `* 0.015` к `progRef`. при паузе — только сглаживание.
+div-based pill bar (H=8px, `borderRadius:8`). нет canvas. rAF обновляет `fillRef.style.transform = scaleX(p)` (GPU-only, без layout recalculation). drag → onSeek. таймкоды слева/справа через `elapsedSpanRef`/`remainingSpanRef` — обновляются тем же rAF. rAF останавливается при `visible=false`.
 
 ### `ThinVolumeSlider`
 пропсы: `{volume [0–1], onChange}`
@@ -82,15 +80,15 @@ canvas TW=28px, вертикальный. drag вверх = больше. `#c8c8
 
 ### `AlbumArt`
 пропсы: `{track, isPlaying}`
-если `track.coverUrl` — `<img>`. иначе: `#111116` фон + `assets/note.png` (opacity 0.13).
+если `track.coverUrl` — `<img>`. иначе: `#111116` фон + `assets/note.png` (opacity 0.13). `borderRadius:16` (совпадает с HomeCard и HeroClone для бесшовного hero-перехода).
 
 ### `MagBtn`
 пропсы: `{onClick, active, children, size=52}`
-круглая кнопка, press-scale 0.83.
+круглая кнопка, press-scale 0.83. в плеере `size` передаётся как CSS `clamp()` строка.
 
 ### `PlayBtn`
 пропсы: `{isPlaying, onToggle}`
-кнопка 66px. использует `assets/play.png` / `assets/pause.png` с crossfade-анимацией между ними.
+кнопка `clamp(50px, 6.2vw, 76px)`. иконка `clamp(28px, 3.6vw, 44px)`. crossfade-анимация между play/pause.
 
 ### `NavIcon`
 пропсы: `{icon, label, active, onClick, size=38, noActiveBg=false}`
@@ -108,11 +106,11 @@ ROW_H=50. CSS `content-visibility:auto`. абсолютный пилл с transi
 
 ### `HomeCard`
 пропсы: `{track, onSelect, artRef, artHidden, isLiked, onLike}`
-карточка сетки. hover-scale 1.03. заглушка — `assets/note.png`. сердечко при `sourceMode==='sc'`.
+карточка сетки. hover-scale 1.03. **порядок**: текст (артист→название) сверху с фоном `rgba(255,255,255,0.05)` и `borderRadius: 16 16 0 0`, затем обложка снизу. обложка имеет собственный `borderRadius:16, overflow:hidden`. карточка без `overflow:hidden` — клипинг только на арте.
 
 ### `HeroClone`
 пропсы: `{hero, exiting, reverse=false}`
-portal → document.body. CSS transition 340ms. заглушка — `assets/note.png`.
+portal → document.body. **GSAP** `sine.inOut` 0.42s (вперёд) / 0.38s (назад). `borderRadius:16` постоянный — inner div компенсирует scale (`borderRadius / sc` на старте → `16` в конце). `tl.kill()` при анмаунте. при `exiting` — `gsap.to(opacity:0)`. `hero` объект содержит `textStartRect` (позиция текста карточки, ~46px над артом).
 
 ### `Sidebar`
 пропсы: `{navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth, profileRef, sourceMode, onToggleSource, avatarFlying}`
@@ -259,6 +257,10 @@ const t = key => STRINGS[lang]?.[key] ?? STRINGS.ru[key] ?? key;
 ```
 artRefs, artRefCacheRef   — refs на обложки HomeCard
 playerArtRef              — ref на AlbumArt в плеере
+slideWrapRef              — ref на обёртку обложки в плеере (GSAP track slide)
+playerInfoRef             — ref на блок артист+название в плеере (GSAP анимация входа)
+trackDirRef               — 'next'|'prev' — направление для GSAP track slide
+slideReadyRef             — пропускает первый mount в track slide эффекте
 audioRef                  — HTML5 Audio
 hlsRef                    — hls.js инстанс (null если не HLS)
 handleNextRef, handlePrevRef, isPlayingRef
@@ -348,19 +350,23 @@ useEffect зависит от `[track?.id, isPlaying, settings.discordRpc, setti
 ### `App` — лейаут плеера
 
 центральный блок (flex column, alignItems:center):
-- `width: 'calc(100% - 48px)', maxWidth: 600` — широкий контейнер для заголовка
-- **обложка**: `width: 'min(100%, 300px)'` — ограничена 300px, центрируется
-- **заголовок**: `width: '100%'` — на всю ширину контейнера (600px max)
-- **прогресс-бар**: `width: 'min(100%, 320px)', margin: '0 auto'` — центрированный, уже обложки
+- `width: 'calc(100% - 48px)', maxWidth: clamp(380px, 55vw, 900px)` — адаптивный контейнер
+- **порядок**: `playerInfoRef` (артист→название) → обложка (`slideWrapRef`) → прогресс-бар → кнопки
+- **артист**: `fontSize: clamp(12px, 1.5vw, 16px)`
+- **название**: `fontSize: clamp(18px, 2.6vw, 28px)`, `maxWidth: min(clamp(280px, 38vw, 520px), 88%)`
+- **обложка**: `width: min(100%, clamp(320px, 54vw, 760px), clamp(240px, 58vh, 760px))` — масштабируется по ширине И высоте
+- **прогресс-бар**: `width: min(100%, clamp(260px, 34vw, 520px))`
+- **библиотека**: внутренний `width:260px` fixed wrapper предотвращает reflow при анимации collapse
 
 ### `App` — анимации
 
-- **home→player**: HeroClone 340мс (hero clone летит)
-- **player→home**: reverse HeroClone
+- **home→player**: HeroClone GSAP `sine.inOut` 0.42s + `playerInfoRef` fade+slide (`sine.out` 0.42s delay 0.08s)
+- **player→home**: reverse HeroClone GSAP `sine.inOut` 0.38s
+- **смена трека**: GSAP `fromTo` на `slideWrapRef` (`y: ±14 → 0`, `power2.out` 0.5s); направление из `trackDirRef`
 - **SC логин**: AvatarFlyClone 440мс
-- **artEntrance**: при `view→'player'` без hero → `artEntranceKey++` → внутренняя обёртка AlbumArt ремаунтится → `scale(0.86)→scale(1) + opacity 0→1`, 420мс, `cubic-bezier(0.34,1.56,0.64,1)`
-- **библиотека**: появление `opacity 0.36s ease 0.1s, transform 0.44s ... 0.1s` (синхронно с центральным контентом)
-- **тост**: fade-in `fadeInUp 0.18s` → через 2.2с fade-out `fadeOutDown 0.24s` → убирается из DOM
+- **artEntrance**: при `view→'player'` без hero → `artEntranceKey++` → `scale(0.86)→scale(1) + opacity 0→1`, 420мс
+- **библиотека**: появление `opacity 0.36s ease 0.1s, transform 0.44s ... 0.1s`
+- **тост**: `fadeInUp 0.18s` → через 2.2с `fadeOutDown 0.24s` → убирается из DOM
 
 ### рендер
 ```js
