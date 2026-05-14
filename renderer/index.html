@@ -17,6 +17,7 @@
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
 <script src="./hls.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js" crossorigin="anonymous"></script>
 <style>
   *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; user-select:none; }
   body.resizing * { transition: none !important; }
@@ -344,43 +345,49 @@ function buildScShuffle(list, currentId) {
 }
 
 /* ── MarqueeText ─────────────────────────────────────────────────────────── */
-function MarqueeText({ text, style, onClick }) {
+function MarqueeText({ text, style, onClick, maxWidth }) {
   const outerRef = useRef(null);
-  const innerRef = useRef(null);
-  const [dist, setDist] = useState(0);
+  const [clipped, setClipped] = useState(false);
+  const [showTip, setShowTip] = useState(false);
 
   useLayoutEffect(() => {
-    const outer = outerRef.current;
-    const inner = innerRef.current;
-    if (!outer || !inner) { setDist(0); return; }
-    // сбрасываем анимацию чтобы измерить честную ширину
-    inner.style.animation = 'none';
-    const overflow = inner.scrollWidth - outer.clientWidth;
-    inner.style.animation = '';
-    setDist(overflow > 6 ? overflow : 0);
-  }, [text]);
-
-  const duration = dist > 0 ? (Math.max(3, dist / 38) + 2.5).toFixed(1) : 0;
+    const el = outerRef.current;
+    if (!el) return;
+    setClipped(el.scrollWidth > el.clientWidth + 1);
+  }, [text, maxWidth]);
 
   return (
-    <div ref={outerRef} onClick={onClick}
-      style={{
-        overflow:'hidden', flex:1, minWidth:0,
-        cursor: onClick ? 'pointer' : 'default',
-        textAlign: dist > 0 ? 'left' : 'center',
-        WebkitMaskImage: dist > 0
-          ? 'linear-gradient(to right, transparent 0%, black 10px, black calc(100% - 14px), transparent 100%)'
-          : 'none',
-        maskImage: dist > 0
-          ? 'linear-gradient(to right, transparent 0%, black 10px, black calc(100% - 14px), transparent 100%)'
-          : 'none',
-      }}>
-      <div ref={innerRef} style={{
-        display:'inline-block', whiteSpace:'nowrap',
-        '--mq-d': `-${dist}px`,
-        animation: dist > 0 ? `marqueeScroll ${duration}s ease-in-out 1.8s infinite` : 'none',
-        ...style,
-      }}>{text}</div>
+    <div style={{
+      position:'relative',
+      ...(maxWidth != null ? { width:'fit-content', maxWidth } : { flex:1, minWidth:0 }),
+    }}>
+      <div ref={outerRef} onClick={onClick}
+        onMouseEnter={() => { if (clipped) setShowTip(true); }}
+        onMouseLeave={() => setShowTip(false)}
+        style={{
+          overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+          textAlign:'center',
+          cursor: onClick ? 'pointer' : 'default',
+          ...style,
+        }}>
+        {text}
+      </div>
+      {showTip && (
+        <div style={{
+          position:'absolute', bottom:'calc(100% + 8px)', left:'50%',
+          transform:'translateX(-50%)',
+          background:'rgba(18,18,24,0.97)',
+          border:'1px solid rgba(255,255,255,0.08)',
+          borderRadius:8, padding:'6px 12px',
+          fontSize:13, whiteSpace:'nowrap',
+          pointerEvents:'none', zIndex:1000,
+          color:'rgba(255,255,255,0.78)',
+          boxShadow:'0 4px 20px rgba(0,0,0,0.55)',
+          animation:'fadeInUp 0.15s ease',
+        }}>
+          {text}
+        </div>
+      )}
     </div>
   );
 }
@@ -412,131 +419,58 @@ function PlayerLikeBtn({ liked, onLike, style: extraStyle }) {
   );
 }
 
-/* ── Wave Progress Bar ───────────────────────────────────────────────────── */
+/* ── Progress Bar ────────────────────────────────────────────────────────── */
 function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying, visible }) {
-  const wrapRef    = useRef(null);
-  const canvasRef  = useRef(null);
-  const rafRef     = useRef(null);
-  const progRef    = useRef(progress);
-  const dispProg   = useRef(progress);
-  const playRef    = useRef(isPlaying);
-  const dragging   = useRef(false);
-  const pendingSize = useRef(null);
-  const accT       = useRef(0);
-  const lastNow    = useRef(null);
-  const visibleRef = useRef(visible);
-  const drawFnRef  = useRef(null);
+  const trackRef         = useRef(null);
+  const fillRef          = useRef(null);
+  const thumbRef         = useRef(null);
+  const rafRef           = useRef(null);
+  const progRef          = useRef(progress);
+  const dispProg         = useRef(progress);
+  const dragging         = useRef(false);
+  const visibleRef       = useRef(visible);
   const elapsedSpanRef   = useRef(null);
   const remainingSpanRef = useRef(null);
-  const totalRef   = useRef(total);
+  const totalRef         = useRef(total);
   totalRef.current = total;
-  const H = 38;
 
   useEffect(() => { progRef.current = progress; }, [progress]);
-  useEffect(() => { playRef.current = isPlaying; }, [isPlaying]);
+
+  const drawRef = useRef(null);
 
   useEffect(() => {
     visibleRef.current = visible;
-    if (visible && drawFnRef.current && !rafRef.current) {
-      lastNow.current = null;
-      rafRef.current = requestAnimationFrame(drawFnRef.current);
-    } else if (!visible) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    }
+    if (visible && !rafRef.current && drawRef.current) rafRef.current = requestAnimationFrame(drawRef.current);
+    else if (!visible) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
   }, [visible]);
 
   useEffect(() => {
-    const canvas = canvasRef.current, wrap = wrapRef.current;
-    if (!canvas || !wrap) return;
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width  = Math.round(wrap.clientWidth * dpr);
-    canvas.height = Math.round(H * dpr);
-    const resize = () => {
-      const nW = Math.round(wrap.clientWidth * dpr), nH = Math.round(H * dpr);
-      if (canvas.width !== nW || canvas.height !== nH) pendingSize.current = { w: nW, h: nH };
-    };
-    const ro = new ResizeObserver(resize);
-    ro.observe(wrap);
-
-    const draw = (now) => {
-      if (pendingSize.current) {
-        canvas.width  = pendingSize.current.w;
-        canvas.height = pendingSize.current.h;
-        pendingSize.current = null;
-      }
-      if (playRef.current && lastNow.current !== null)
-        accT.current += (now - lastNow.current) * 0.001;
-      lastNow.current = now;
-      const t = accT.current;
-
-      const ctx = canvas.getContext('2d');
-      const W = canvas.width, HH = canvas.height;
-      ctx.clearRect(0, 0, W, HH);
-
+    const draw = () => {
       dispProg.current += (progRef.current - dispProg.current) * 0.12;
-      const p   = dispProg.current;
-      const barH = 5 * dpr;
-      const r    = barH / 2;
-      const cy   = HH * 0.5;
-      const freq = 0.020/dpr, freq2 = 0.038/dpr;
-      const step = Math.max(1, Math.round(dpr));
-
-      const pts = [];
-      for (let x = 0; x <= W; x += step) {
-        const nx  = x / W;
-        const env = Math.min(nx/0.04, (1-nx)/0.04, 1) * Math.exp(-Math.pow((nx-0.5)*2.4, 2));
-        const a   = HH * 0.18 * env;
-        pts.push({ x, y: cy + a*Math.sin(x*freq - t*1.4) + a*0.38*Math.sin(x*freq2 - t*0.9 + 1.8) });
-      }
-
-      /* bg track */
-      ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y - r);
-      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y - r);
-      for (let i = pts.length - 1; i >= 0; i--) ctx.lineTo(pts[i].x, pts[i].y + r);
-      ctx.closePath();
-      ctx.fillStyle = 'rgba(255,255,255,0.07)';
-      ctx.fill();
-
-      /* fill */
-      if (p > 0.005) {
-        const piX = Math.min(Math.round(p * W / step), pts.length - 1);
-        ctx.beginPath();
-        ctx.moveTo(pts[0].x, pts[0].y - r);
-        for (let i = 1; i <= piX; i++) ctx.lineTo(pts[i].x, pts[i].y - r);
-        ctx.arc(pts[piX].x, pts[piX].y, r, -Math.PI/2, Math.PI/2, false);
-        for (let i = piX; i >= 0; i--) ctx.lineTo(pts[i].x, pts[i].y + r);
-        ctx.closePath();
-        ctx.shadowColor = 'rgba(178,178,178,0.5)';
-        ctx.shadowBlur  = 8 * dpr;
-        ctx.fillStyle   = '#c8c8c8';
-        ctx.fill();
-        ctx.shadowBlur  = 0;
-      }
-
+      const p = dispProg.current;
+      if (fillRef.current)  fillRef.current.style.transform = 'scaleX(' + p + ')';
+      if (thumbRef.current) thumbRef.current.style.left = (p * 100).toFixed(3) + '%';
       const dur = totalRef.current || 0;
-      const de = Math.floor(dispProg.current * dur);
+      const de = Math.floor(p * dur);
       if (elapsedSpanRef.current)   elapsedSpanRef.current.textContent   = fmt(de);
       if (remainingSpanRef.current) remainingSpanRef.current.textContent = '-' + fmt(dur - de);
-
       if (!visibleRef.current) { rafRef.current = null; return; }
       rafRef.current = requestAnimationFrame(draw);
     };
-    drawFnRef.current = draw;
+    drawRef.current = draw;
     if (visibleRef.current) rafRef.current = requestAnimationFrame(draw);
-    return () => { cancelAnimationFrame(rafRef.current); rafRef.current = null; ro.disconnect(); };
+    return () => { cancelAnimationFrame(rafRef.current); rafRef.current = null; };
   }, []);
 
   const getVal = (e) => {
-    const rect = canvasRef.current.getBoundingClientRect();
-    return Math.max(0, Math.min(1, (e.clientX - rect.left)/rect.width));
+    const rect = trackRef.current.getBoundingClientRect();
+    return Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
   };
   useEffect(() => {
     const onMove = (e) => { if (dragging.current) onSeek(getVal(e)); };
     const onUp   = () => { dragging.current = false; };
     document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup',   onUp);
+    document.addEventListener('mouseup', onUp);
     return () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
   }, [onSeek]);
 
@@ -545,14 +479,28 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying, visible 
     color: 'rgba(255,255,255,0.22)', letterSpacing: '0.02em',
     userSelect: 'none', flexShrink: 0,
   };
+  const p0 = (progress * 100).toFixed(3) + '%';
   return (
     <div style={{width:'100%', display:'flex', alignItems:'center', gap:9}}>
       <span ref={elapsedSpanRef} style={timeStyle}>{fmt(elapsed)}</span>
-      <div ref={wrapRef} style={{flex:1, minWidth:0, overflow:'hidden', cursor:'pointer',
-        WebkitMaskImage:'linear-gradient(to right, transparent, black 20px, black calc(100% - 20px), transparent)',
-        maskImage:'linear-gradient(to right, transparent, black 20px, black calc(100% - 20px), transparent)',
-      }} onMouseDown={e => { dragging.current = true; onSeek(getVal(e)); }}>
-        <canvas ref={canvasRef} style={{display:'block', width:'100%', height:H+'px'}}/>
+      <div ref={trackRef}
+        style={{
+          flex:1, minWidth:0, position:'relative',
+          height:8, borderRadius:8,
+          background:'rgba(255,255,255,0.09)',
+          cursor:'pointer',
+        }}
+        onMouseDown={e => { dragging.current = true; onSeek(getVal(e)); }}
+      >
+        <div ref={fillRef} style={{
+          position:'absolute', left:0, top:0,
+          height:'100%', borderRadius:8,
+          background:'rgba(220,220,220,0.9)',
+          boxShadow:'0 0 8px rgba(200,200,200,0.3)',
+          width:'100%', transformOrigin:'left center',
+          transform:'scaleX(' + progress + ')',
+          pointerEvents:'none',
+        }}/>
       </div>
       <span ref={remainingSpanRef} style={timeStyle}>-{fmt(total - elapsed)}</span>
     </div>
@@ -665,7 +613,7 @@ function ThinVolumeSlider({ volume, onChange }) {
 function AlbumArt({ track, isPlaying }) {
   if (track.coverUrl) {
     return (
-      <div style={{position:'relative',width:'100%',aspectRatio:'1',borderRadius:20,overflow:'hidden'}}>
+      <div style={{position:'relative',width:'100%',aspectRatio:'1',borderRadius:16,overflow:'hidden'}}>
         <img src={track.coverUrl} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}
           onError={e=>{e.currentTarget.style.display='none'}}/>
       </div>
@@ -673,7 +621,7 @@ function AlbumArt({ track, isPlaying }) {
   }
   return (
     <div style={{
-      position:'relative',width:'100%',aspectRatio:'1',borderRadius:20,overflow:'hidden',
+      position:'relative',width:'100%',aspectRatio:'1',borderRadius:16,overflow:'hidden',
       background:'#111116',
       display:'flex',alignItems:'center',justifyContent:'center',
     }}>
@@ -704,8 +652,10 @@ function MagBtn({ onClick, active, children, size=52 }) {
 /* ── PlayBtn ─────────────────────────────────────────────────────────────── */
 function PlayBtn({ isPlaying, onToggle }) {
   const [pressed, setPressed] = useState(false);
+  const BTN = 'clamp(58px, 7.2vw, 86px)';
+  const ICO = 'clamp(32px, 4.2vw, 50px)';
   const ico = (visible, rot) => ({
-    position:'absolute', top:0, left:0, width:38, height:38,
+    position:'absolute', top:0, left:0, width:ICO, height:ICO,
     filter:'brightness(0) invert(1)',
     opacity: visible ? 1 : 0,
     transform: visible ? 'scale(1) rotate(0deg)' : `scale(0.45) rotate(${rot}deg)`,
@@ -716,7 +666,7 @@ function PlayBtn({ isPlaying, onToggle }) {
     <button onClick={onToggle}
       onMouseDown={() => setPressed(true)} onMouseUp={() => setPressed(false)}
       style={{
-        width:66, height:66, borderRadius:'50%', border:'none',
+        width:BTN, height:BTN, borderRadius:'50%', border:'none',
         background: isPlaying ? 'rgba(178,178,178,0.1)' : 'rgba(255,255,255,0.06)',
         color:'var(--text)',
         display:'flex', alignItems:'center', justifyContent:'center',
@@ -724,7 +674,7 @@ function PlayBtn({ isPlaying, onToggle }) {
         transform:`scale(${pressed?0.89:1})`,
         transition: pressed ? 'transform 0.09s ease' : 'background 0.3s ease',
       }}>
-      <div style={{position:'relative', width:38, height:38}}>
+      <div style={{position:'relative', width:ICO, height:ICO}}>
         <img src="../assets/play.png"  style={ico(!isPlaying,  90)}/>
         <img src="../assets/pause.png" style={ico( isPlaying, -90)}/>
       </div>
@@ -848,17 +798,27 @@ const HomeCard = React.memo(function HomeCard({ track, onSelect, artRef, artHidd
     <div onClick={handleClick}
       onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
       style={{
-        borderRadius:16, overflow:'hidden', cursor:'pointer',
+        borderRadius:16, cursor:'pointer',
         transform:`scale(${hov?1.03:1})`,
         transition:'transform 0.35s cubic-bezier(0.34,1.56,0.64,1)',
         contentVisibility:'auto', containIntrinsicSize:'auto 128px',
       }}>
+      <div style={{
+        padding:'8px 8px 7px', textAlign:'center',
+        background:'rgba(255,255,255,0.05)',
+        borderRadius:'16px 16px 0 0',
+      }}>
+        <div style={{fontSize:10.5, color:'rgba(255,255,255,0.3)', marginBottom:2,
+          whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{track.artist}</div>
+        <div style={{fontSize:12, fontWeight:500, color:'rgba(255,255,255,0.88)',
+          whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{track.title}</div>
+      </div>
       <div ref={artRef} style={{
         opacity: artHidden ? 0 : 1,
         width:'100%', aspectRatio:'1', position:'relative',
         background:'#111116',
+        borderRadius:16, overflow:'hidden',
         display:'flex', alignItems:'center', justifyContent:'center',
-        overflow:'hidden',
       }}>
         {track.coverUrl ? (
           <img src={track.coverUrl} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}
@@ -890,52 +850,65 @@ const HomeCard = React.memo(function HomeCard({ track, onSelect, artRef, artHidd
           </div>
         )}
       </div>
-      <div style={{padding:'9px 4px 4px'}}>
-        <div style={{fontSize:12, fontWeight:500, color:'rgba(255,255,255,0.85)',
-          whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{track.title}</div>
-        <div style={{fontSize:10.5, color:'rgba(255,255,255,0.28)', marginTop:2}}>{track.artist}</div>
-      </div>
     </div>
   );
 });
 
 /* ── Hero clone ──────────────────────────────────────────────────────────── */
 function HeroClone({ hero, exiting, reverse = false }) {
+  const cloneRef = useRef(null);
+  const innerRef = useRef(null);
   const { left: tLeft, top: tTop, size } = hero.targetRect;
   const { left: sLeft, top: sTop, width: sW, height: sH } = hero.startRect;
 
   const dx = (sLeft + sW/2) - (tLeft + size/2);
   const dy = (sTop + sH/2) - (tTop + size/2);
   const sc = sW / size;
+  const BR = 16;
 
-  const startBR = reverse ? 20 : 16;
-  const endBR   = reverse ? 16 : 20;
-
-  const [ready, setReady] = useState(false);
   useEffect(() => {
-    requestAnimationFrame(() => requestAnimationFrame(() => setReady(true)));
+    const el = cloneRef.current;
+    const inner = innerRef.current;
+    if (!el || !inner) return;
+    const tl = gsap.timeline();
+    if (reverse) {
+      tl.fromTo(el,
+        { x: 0, y: 0, scale: 1 },
+        { x: dx, y: dy, scale: sc, duration: 0.38, ease: 'sine.inOut' }, 0
+      ).fromTo(inner,
+        { borderRadius: BR },
+        { borderRadius: BR / sc, duration: 0.38, ease: 'sine.inOut' }, 0
+      );
+    } else {
+      tl.fromTo(el,
+        { x: dx, y: dy, scale: sc },
+        { x: 0, y: 0, scale: 1, duration: 0.38, ease: 'sine.inOut' }, 0
+      ).fromTo(inner,
+        { borderRadius: BR / sc },
+        { borderRadius: BR, duration: 0.38, ease: 'sine.inOut' }, 0
+      );
+    }
+    return () => tl.kill();
   }, []);
 
-  const transform = ready
-    ? (reverse ? `translate(${dx}px,${dy}px) scale(${sc})` : 'translate(0,0) scale(1)')
-    : (reverse ? 'translate(0,0) scale(1)' : `translate(${dx}px,${dy}px) scale(${sc})`);
+  useEffect(() => {
+    if (!exiting || !cloneRef.current) return;
+    gsap.to(cloneRef.current, { opacity: 0, duration: 0.16, ease: 'none' });
+  }, [exiting]);
 
   return ReactDOM.createPortal(
-    <div style={{
+    <div ref={cloneRef} style={{
       position:'fixed',
       left: tLeft, top: tTop,
       width: size, height: size,
-      borderRadius: ready ? endBR : startBR,
-      zIndex:960, pointerEvents:'none', overflow:'hidden',
+      zIndex:960, pointerEvents:'none',
       transformOrigin:'center center',
-      transform,
-      opacity: exiting ? 0 : 1,
-      transition: ready ? 'transform 0.34s cubic-bezier(0.4,0,0.2,1), border-radius 0.34s cubic-bezier(0.4,0,0.2,1), opacity 0.12s ease' : 'none',
     }}>
-      <div style={{
-        position:'absolute', inset:0, borderRadius:20,
-        background:'#111116',
-        display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden',
+      <div ref={innerRef} style={{
+        position:'absolute', inset:0,
+        borderRadius: reverse ? BR : BR / sc,
+        background:'#111116', overflow:'hidden',
+        display:'flex', alignItems:'center', justifyContent:'center',
       }}>
         {hero.track.coverUrl ? (
           <img src={hero.track.coverUrl} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}
@@ -2464,6 +2437,10 @@ function App() {
   const hlsRef        = useRef(null);
   const handleNextRef  = useRef(null);
   const handlePrevRef  = useRef(null);
+  const slideWrapRef   = useRef(null);
+  const playerInfoRef  = useRef(null);
+  const trackDirRef    = useRef('next');
+  const slideReadyRef  = useRef(false);
   const isPlayingRef   = useRef(false);
   const homeScrollRef     = useRef(null);
   const scAvatarRef       = useRef(null);
@@ -2620,6 +2597,32 @@ function App() {
     if (view === 'player' && !hero) setArtEntranceKey(k => k + 1);
   }, [view]);
 
+  /* gsap — анимация info блока при входе/выходе из плеера */
+  useEffect(() => {
+    const el = playerInfoRef.current;
+    if (!el) return;
+    if (playerVisible) {
+      gsap.fromTo(el,
+        { opacity: 0, y: 14 },
+        { opacity: 1, y: 0, duration: 0.42, ease: 'sine.out', delay: 0.08, clearProps: 'y' }
+      );
+    } else {
+      gsap.to(el, { opacity: 0, duration: 0.1 });
+    }
+  }, [playerVisible]);
+
+  /* gsap — анимация смены трека */
+  useEffect(() => {
+    if (!slideReadyRef.current) { slideReadyRef.current = true; return; }
+    const el = slideWrapRef.current;
+    if (!el || (hero && !heroExiting)) return;
+    const y = trackDirRef.current === 'prev' ? 14 : -14;
+    gsap.fromTo(el,
+      { y },
+      { y: 0, duration: 0.5, ease: 'power2.out', clearProps: 'y' }
+    );
+  }, [trackIdx, scPlayingTrack?.id]);
+
   /* плавный ресайз — отключаем transitions пока тянут окно */
   useEffect(() => {
     let t;
@@ -2690,6 +2693,7 @@ function App() {
   }, [shuffle]);
 
   function handleNext() {
+    trackDirRef.current = 'next';
     if (repeat === 'one') {
       const audio = audioRef.current;
       if (audio) { audio.currentTime = 0; audio.play().catch(() => {}); }
@@ -2740,6 +2744,7 @@ function App() {
   handleNextRef.current = handleNext;
 
   function handlePrev() {
+    trackDirRef.current = 'prev';
     if (progress > 0.05) {
       setProgress(0);
       if (audioRef.current) audioRef.current.currentTime = 0;
@@ -3265,7 +3270,8 @@ function App() {
     const targetRect = par ? { left: par.left, top: par.top, size: par.width } : { left: 0, top: 0, size: 260 };
 
     startPlay();
-    setHero({ track: t, startRect, targetRect });
+    const _CTH = 46;
+    setHero({ track: t, startRect, targetRect, textStartRect: { left: startRect.left, top: startRect.top - _CTH, width: startRect.width, height: _CTH } });
     setHomeVisible(false);
     setPlayerVisible(true);
     setView('player');
@@ -3368,10 +3374,12 @@ function App() {
           }
 
           const cardRect = artEl.getBoundingClientRect();
+          const _CTH3 = 46;
           setReverseHero({
             track: track,
             targetRect: { left: par.left, top: par.top, size: par.width },
             startRect:  { left: cardRect.left, top: cardRect.top, width: cardRect.width, height: cardRect.height },
+            textStartRect: { left: cardRect.left, top: cardRect.top - _CTH3, width: cardRect.width, height: _CTH3 },
           });
           setTimeout(() => setReverseHeroExiting(true), 340);
           setTimeout(() => { setReverseHero(null); setReverseHeroExiting(false); }, 460);
@@ -3411,7 +3419,8 @@ function App() {
         }
         const startRect = artEl.getBoundingClientRect();
         const targetRect = { left: par.left, top: par.top, size: par.width };
-        setHero({ track: track, startRect, targetRect });
+        const _CTH2 = 46;
+        setHero({ track: track, startRect, targetRect, textStartRect: { left: startRect.left, top: startRect.top - _CTH2, width: startRect.width, height: _CTH2 } });
         setTimeout(() => setHeroExiting(true), 300);
         setTimeout(() => { setHero(null); setHeroExiting(false); }, 420);
       }
@@ -3614,7 +3623,6 @@ function App() {
         <div style={{
           width: libCollapsed ? 0 : 260,
           flexShrink:0, height:'100%',
-          display:'flex', flexDirection:'column',
           borderRight: libCollapsed ? 'none' : '1px solid rgba(255,255,255,0.028)',
           background:'transparent',
           zIndex:9, overflow:'hidden',
@@ -3624,6 +3632,7 @@ function App() {
             ? 'opacity 0.36s ease 0.1s, transform 0.44s cubic-bezier(0.22,1,0.36,1) 0.1s, width 0.44s cubic-bezier(0.4,0,0.2,1), border 0.44s ease'
             : 'opacity 0.14s ease, transform 0.18s ease, width 0.44s cubic-bezier(0.4,0,0.2,1), border 0.44s ease',
         }}>
+          <div style={{width:260, flexShrink:0, height:'100%', display:'flex', flexDirection:'column'}}>
           <div style={{padding:'12px 10px 8px', flexShrink:0}}>
             <div style={{
               display:'flex', alignItems:'center', gap:9,
@@ -3671,6 +3680,7 @@ function App() {
             scrollToActive={libScrollTrigger}
             scrollTargetId={libScrollTargetId}
           />
+          </div>
         </div>
 
         {/* center player */}
@@ -3680,82 +3690,16 @@ function App() {
         }}>
           <div style={{
             width:'calc(100% - 48px)',
-            maxWidth:600, minWidth:220,
+            maxWidth:'clamp(380px, 55vw, 900px)', minWidth:220,
             display:'flex', flexDirection:'column',
             alignItems:'center', gap:0,
           }}>
-            <div id="player-album-art" ref={playerArtRef} style={{
-              width:'min(100%, 300px)',
-              marginBottom:22,
-              opacity: ((hero && !heroExiting) || reverseHero) ? 0 : 1,
-            }}>
-              <div key={artEntranceKey} style={{animation: artEntranceKey > 0 ? 'artEntrance 0.42s cubic-bezier(0.34,1.56,0.64,1)' : 'none'}}>
-                <AlbumArt track={track} isPlaying={isPlaying}/>
-              </div>
-            </div>
-            <div style={{
-              textAlign:'center', marginBottom:18, width:'100%',
-              transform: playerVisible ? 'translateY(0)' : 'translateY(10px)',
-              transition: playerVisible
-                ? 'transform 0.48s cubic-bezier(0.22,1,0.36,1) 0.12s'
-                : 'transform 0.15s ease',
-            }}>
-              {editingTitle ? (
-                <div style={{display:'flex', justifyContent:'center', width:'100%'}}>
-                  <div style={{
-                    display:'inline-flex', alignItems:'center',
-                    background:'rgba(255,255,255,0.055)',
-                    borderRadius:11, padding:'7px 18px',
-                    boxShadow:'0 4px 28px rgba(0,0,0,0.45)',
-                    maxWidth:'100%',
-                  }}>
-                    <input
-                      autoFocus
-                      value={editValue}
-                      onChange={e => setEditValue(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter')  { editCancelRef.current = false; commitEdit(); }
-                        if (e.key === 'Escape') { editCancelRef.current = true;  setEditingTitle(false); }
-                      }}
-                      onBlur={() => { if (!editCancelRef.current) commitEdit(); editCancelRef.current = false; }}
-                      style={{
-                        background:'none', border:'none', outline:'none',
-                        fontSize:22, fontWeight:600, letterSpacing:'-0.022em',
-                        color:'#ededf4', textAlign:'center',
-                        fontFamily:'Space Grotesk,sans-serif',
-                        width: Math.max(80, editValue.length * 13) + 'px',
-                        maxWidth:'100%',
-                      }}
-                    />
-                  </div>
-                </div>
-              ) : (
-                <div style={{
-                  display:'flex', alignItems:'center',
-                  width:'100%', minWidth:0,
-                  opacity: playerVisible ? 1 : 0,
-                  transition: playerVisible ? 'opacity 0.36s ease 0.12s' : 'opacity 0.1s ease',
-                }}>
-                  {scPlayingTrack && <div style={{width:27, flexShrink:0}}/>}
-                  <MarqueeText
-                    text={track.title}
-                    onClick={e => {
-                      if (e.shiftKey) { editCancelRef.current = false; setEditValue(track.title); setEditingTitle(true); }
-                      else { setLibScrollTargetId(track.id); setLibScrollTrigger(v => v + 1); }
-                    }}
-                    style={{fontSize:22, fontWeight:600, letterSpacing:'-0.022em'}}
-                  />
-                  {scPlayingTrack && (() => {
-                    const liked = likedIds.has(scPlayingTrack.id);
-                    return <PlayerLikeBtn liked={liked} onLike={() => handleLike(scPlayingTrack)} style={{marginLeft:8}}/>;
-                  })()}
-                </div>
-              )}
+            <div style={{width:'100%', display:'flex', flexDirection:'column', alignItems:'center'}}>
+            <div ref={playerInfoRef} style={{width:'100%', display:'flex', flexDirection:'column', alignItems:'center', opacity:0}}>
+              {/* artist */}
               <div style={{
-                display:'flex', alignItems:'center', flexWrap:'wrap', justifyContent:'center', gap:'0px',
-                fontSize:12, marginTop:4,
-                opacity: playerVisible ? 1 : 0,
-                transition: playerVisible ? 'opacity 0.36s ease 0.2s' : 'opacity 0.1s ease',
+                display:'flex', alignItems:'center', flexWrap:'wrap', justifyContent:'center',
+                fontSize:'clamp(12px, 1.5vw, 16px)', marginBottom:5,
               }}>
                 {scPlayingTrack
                   ? splitArtists(track.artist).map(({ name, sep }, i) => {
@@ -3781,40 +3725,101 @@ function App() {
                   : <span style={{ color:'rgba(255,255,255,0.28)' }}>{track.artist}</span>
                 }
               </div>
+              {/* title */}
+              <div style={{textAlign:'center', marginBottom:14, width:'100%'}}>
+                {editingTitle ? (
+                  <div style={{display:'flex', justifyContent:'center', width:'100%'}}>
+                    <div style={{
+                      display:'inline-flex', alignItems:'center',
+                      background:'rgba(255,255,255,0.055)',
+                      borderRadius:11, padding:'7px 18px',
+                      boxShadow:'0 4px 28px rgba(0,0,0,0.45)',
+                      maxWidth:'100%',
+                    }}>
+                      <input
+                        autoFocus
+                        value={editValue}
+                        onChange={e => setEditValue(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter')  { editCancelRef.current = false; commitEdit(); }
+                          if (e.key === 'Escape') { editCancelRef.current = true;  setEditingTitle(false); }
+                        }}
+                        onBlur={() => { if (!editCancelRef.current) commitEdit(); editCancelRef.current = false; }}
+                        style={{
+                          background:'none', border:'none', outline:'none',
+                          fontSize:'clamp(15px, 2vw, 24px)', fontWeight:600, letterSpacing:'-0.022em',
+                          color:'#ededf4', textAlign:'center',
+                          fontFamily:'Space Grotesk,sans-serif',
+                          width: Math.max(80, editValue.length * 13) + 'px',
+                          maxWidth:'100%',
+                        }}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{
+                    display:'flex', alignItems:'center', justifyContent:'center', width:'100%',
+                  }}>
+                    {scPlayingTrack && <div style={{width:27, flexShrink:0}}/>}
+                    <MarqueeText
+                      text={track.title}
+                      onClick={e => {
+                        if (e.shiftKey) { editCancelRef.current = false; setEditValue(track.title); setEditingTitle(true); }
+                        else { setLibScrollTargetId(track.id); setLibScrollTrigger(v => v + 1); }
+                      }}
+                      style={{fontSize:'clamp(18px, 2.6vw, 28px)', fontWeight:600, letterSpacing:'-0.022em'}}
+                      maxWidth={'min(clamp(280px, 38vw, 520px), 88%)'}
+                    />
+                    {scPlayingTrack && (() => {
+                      const liked = likedIds.has(scPlayingTrack.id);
+                      return <PlayerLikeBtn liked={liked} onLike={() => handleLike(scPlayingTrack)} style={{marginLeft:8}}/>;
+                    })()}
+                  </div>
+                )}
+              </div>
+            </div>{/* playerInfoRef end */}
+              {/* album art */}
+              <div ref={slideWrapRef} style={{
+                width:'min(100%, clamp(320px, 54vw, 760px), clamp(240px, 58vh, 760px))',
+                marginBottom:24,
+              }}>
+                <div id="player-album-art" ref={playerArtRef}
+                  style={{opacity: ((hero && !heroExiting) || reverseHero) ? 0 : 1}}>
+                  <div key={artEntranceKey} style={{animation: artEntranceKey > 0 ? 'artEntrance 0.42s cubic-bezier(0.34,1.56,0.64,1)' : 'none'}}>
+                    <AlbumArt track={track} isPlaying={isPlaying}/>
+                  </div>
+                </div>
+              </div>
             </div>
             <div style={{
-              width:'min(100%, 320px)', margin:'0 auto 20px',
+              width:'min(100%, clamp(260px, 34vw, 520px))', margin:'0 auto 0',
               opacity: playerVisible ? 1 : 0,
               transform: playerVisible ? 'translateY(0)' : 'translateY(10px)',
               transition: playerVisible ? 'opacity 0.36s ease 0.28s, transform 0.48s cubic-bezier(0.22,1,0.36,1) 0.28s' : 'opacity 0.1s ease, transform 0.1s ease',
             }}>
               <WaveProgressBar progress={progress} elapsed={elapsed} total={track.duration || 0}
                 onSeek={handleSeek} isPlaying={isPlaying} visible={playerVisible}/>
-            </div>
             {(()=>{ const P = { spring:0.055, damping:0.84, clamp:10 }; return (
-            <div style={{display:'flex', alignItems:'center', gap:8, justifyContent:'center',
-              opacity: playerVisible ? 1 : 0,
-              transform: playerVisible ? 'translateY(0)' : 'translateY(10px)',
-              transition: playerVisible ? 'opacity 0.36s ease 0.38s, transform 0.48s cubic-bezier(0.22,1,0.36,1) 0.38s' : 'opacity 0.1s ease, transform 0.1s ease',
-            }}>
-              <MagBtn onClick={()=>setShuffle(s=>!s)} active={shuffle} size={48} physics={P}>
-                <img src="../assets/shuffle.png" style={{width:22,height:22,filter:'brightness(0) invert(1)',opacity:shuffle?1:0.38,transition:'opacity 0.2s ease'}}/>
+            <div style={{display:'flex', alignItems:'center', gap:14, justifyContent:'center', marginTop:16}}>
+              <MagBtn onClick={()=>setShuffle(s=>!s)} active={shuffle} size={'clamp(40px, 5.2vw, 58px)'} physics={P}>
+                <img src="../assets/shuffle.png" style={{width:'clamp(18px, 2.2vw, 26px)',height:'clamp(18px, 2.2vw, 26px)',filter:'brightness(0) invert(1)',opacity:shuffle?1:0.38,transition:'opacity 0.2s ease'}}/>
               </MagBtn>
-              <MagBtn onClick={handlePrev} size={54} physics={P}>
-                <img src="../assets/rewind.png" style={{width:22,height:22,filter:'brightness(0) invert(1)',opacity:0.38}}/>
+              <MagBtn onClick={handlePrev} size={'clamp(46px, 6vw, 66px)'} physics={P}>
+                <img src="../assets/rewind.png" style={{width:'clamp(18px, 2.2vw, 26px)',height:'clamp(18px, 2.2vw, 26px)',filter:'brightness(0) invert(1)',opacity:0.38}}/>
               </MagBtn>
               <PlayBtn isPlaying={isPlaying} onToggle={()=>setIsPlaying(p=>!p)} physics={P}/>
-              <MagBtn onClick={handleNext} size={54} physics={P}>
-                <img src="../assets/forward.png" style={{width:22,height:22,filter:'brightness(0) invert(1)',opacity:0.38}}/>
+              <MagBtn onClick={handleNext} size={'clamp(46px, 6vw, 66px)'} physics={P}>
+                <img src="../assets/forward.png" style={{width:'clamp(18px, 2.2vw, 26px)',height:'clamp(18px, 2.2vw, 26px)',filter:'brightness(0) invert(1)',opacity:0.38}}/>
               </MagBtn>
-              <MagBtn onClick={()=>setRepeat(r=>r==='off'?'all':r==='all'?'one':'off')} active={repeat!=='off'} size={48} physics={P}>
+              <MagBtn onClick={()=>setRepeat(r=>r==='off'?'all':r==='all'?'one':'off')} active={repeat!=='off'} size={'clamp(40px, 5.2vw, 58px)'} physics={P}>
                 <div style={{position:'relative',width:22,height:22}}>
-                  <img src="../assets/repeat.png"  style={{position:'absolute',width:22,height:22,filter:'brightness(0) invert(1)',opacity:repeat==='off'?0.38:repeat==='all'?1:0,transition:'opacity 0.2s ease'}}/>
-                  <img src="../assets/repeat1.png" style={{position:'absolute',width:22,height:22,filter:'brightness(0) invert(1)',opacity:repeat==='one'?1:0,transition:'opacity 0.2s ease'}}/>
+                  <img src="../assets/repeat.png"  style={{position:'absolute',top:0,left:0,width:22,height:22,filter:'brightness(0) invert(1)',opacity:repeat==='off'?0.38:repeat==='all'?1:0,transition:'opacity 0.2s ease'}}/>
+                  <img src="../assets/repeat1.png" style={{position:'absolute',top:0,left:0,width:22,height:22,filter:'brightness(0) invert(1)',opacity:repeat==='one'?1:0,transition:'opacity 0.2s ease'}}/>
                 </div>
               </MagBtn>
             </div>
             ); })()}
+            </div>{/* controls+progress wrapper end */}
           </div>
         </div>
 
