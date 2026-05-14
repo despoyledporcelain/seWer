@@ -93,7 +93,6 @@
   @keyframes spin       { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
   @keyframes fadeInUp   { from{opacity:0;transform:translateX(-50%) translateY(6px)} to{opacity:1;transform:translateX(-50%) translateY(0)} }
   @keyframes fadeOutDown{ from{opacity:1;transform:translateX(-50%) translateY(0)} to{opacity:0;transform:translateX(-50%) translateY(5px)} }
-  @keyframes artEntrance{ from{opacity:0;transform:scale(0.86)} to{opacity:1;transform:scale(1)} }
   @keyframes marqueeScroll {
     0%,18%  { transform:translateX(0); }
     50%,68% { transform:translateX(var(--mq-d)); }
@@ -402,25 +401,19 @@ function PlayerLikeBtn({ liked, onLike, style: extraStyle }) {
       onMouseLeave={() => setHov(false)}
       style={{
         flexShrink:0, cursor:'pointer', padding:4, lineHeight:0,
-        ...extraStyle,
-        color: liked
-          ? (hov ? 'rgba(255,255,255,1)'    : 'rgba(255,255,255,0.85)')
-          : (hov ? 'rgba(255,255,255,0.6)'  : 'rgba(255,255,255,0.25)'),
         transform: hov ? 'scale(1.18)' : 'scale(1)',
-        transition:'color 0.18s ease, transform 0.15s ease',
+        transition:'opacity 0.18s ease, transform 0.15s ease',
+        opacity: liked ? (hov ? 1 : 0.85) : (hov ? 0.6 : 0.25),
+        ...extraStyle,
       }}
     >
-      <svg width="19" height="19" viewBox="0 0 24 24"
-        fill={liked ? 'currentColor' : 'none'}
-        stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-      </svg>
+      <img src={liked ? '../assets/heart1.png' : '../assets/heart0.png'} width="19" height="19" style={{display:'block', filter:'brightness(0) invert(1)'}}/>
     </div>
   );
 }
 
 /* ── Progress Bar ────────────────────────────────────────────────────────── */
-function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying, visible }) {
+function ProgressBar({ progress, elapsed, total, onSeek, isPlaying, visible }) {
   const trackRef         = useRef(null);
   const fillRef          = useRef(null);
   const thumbRef         = useRef(null);
@@ -486,7 +479,7 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying, visible 
       <div ref={trackRef}
         style={{
           flex:1, minWidth:0, position:'relative',
-          height:8, borderRadius:8,
+          height:8, borderRadius:8, overflow:'hidden',
           background:'rgba(255,255,255,0.09)',
           cursor:'pointer',
         }}
@@ -494,7 +487,7 @@ function WaveProgressBar({ progress, elapsed, total, onSeek, isPlaying, visible 
       >
         <div ref={fillRef} style={{
           position:'absolute', left:0, top:0,
-          height:'100%', borderRadius:8,
+          height:'100%',
           background:'rgba(220,220,220,0.9)',
           boxShadow:'0 0 8px rgba(200,200,200,0.3)',
           width:'100%', transformOrigin:'left center',
@@ -842,11 +835,7 @@ const HomeCard = React.memo(function HomeCard({ track, onSelect, artRef, artHidd
             color: isLiked ? 'var(--accent)' : 'rgba(255,255,255,0.75)',
             backdropFilter:'blur(4px)',
           }}>
-            <svg width="13" height="13" viewBox="0 0 24 24"
-              fill={isLiked ? 'currentColor' : 'none'}
-              stroke="currentColor" strokeWidth="2.2">
-              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-            </svg>
+            <img src={isLiked ? '../assets/heart1.png' : '../assets/heart0.png'} width="13" height="13" style={{display:'block', filter:'brightness(0) invert(1)'}}/>
           </div>
         )}
       </div>
@@ -1629,9 +1618,7 @@ function SearchTrackRow({ track, isLiked, onLike, onClick, onCoverClick, isLoadi
           onMouseEnter={e=>e.currentTarget.style.color=isLiked?'rgba(255,255,255,0.95)':'rgba(255,255,255,0.5)'}
           onMouseLeave={e=>e.currentTarget.style.color=isLiked?'rgba(255,255,255,0.75)':'rgba(255,255,255,0.2)'}
         >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill={isLiked?'currentColor':'none'} stroke="currentColor" strokeWidth="2">
-            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-          </svg>
+          <img src={isLiked ? '../assets/heart1.png' : '../assets/heart0.png'} width="12" height="12" style={{display:'block', filter:'brightness(0) invert(1)'}}/>
           {lc && <span style={{fontSize:11}}>{lc}</span>}
         </div>}
         {/* plays */}
@@ -2203,9 +2190,7 @@ function AlbumTrackRow({ track, index, isLoading, isError, isLiked, onLike, onCl
             transition:'color 0.15s', minWidth: lc ? 34 : 'auto' }}
           onMouseEnter={e=>e.currentTarget.style.color=isLiked?'rgba(255,255,255,0.95)':'rgba(255,255,255,0.5)'}
           onMouseLeave={e=>e.currentTarget.style.color=isLiked?'rgba(255,255,255,0.75)':'rgba(255,255,255,0.18)'}>
-          <svg width="11" height="11" viewBox="0 0 24 24" fill={isLiked?'currentColor':'none'} stroke="currentColor" strokeWidth="2">
-            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-          </svg>
+          <img src={isLiked ? '../assets/heart1.png' : '../assets/heart0.png'} width="11" height="11" style={{display:'block', filter:'brightness(0) invert(1)'}}/>
           {lc && <span style={{fontSize:11}}>{lc}</span>}
         </div>}
         {pc && <div style={{ display:'flex', alignItems:'center', gap:3, color:'rgba(255,255,255,0.16)' }}>
@@ -2372,7 +2357,6 @@ function App() {
   const [playerVisible,      setPlayerVisible]      = useState(false);
   const [homeVisible,        setHomeVisible]        = useState(true);
   const [heroExiting,        setHeroExiting]        = useState(false);
-  const [artEntranceKey,     setArtEntranceKey]     = useState(0);
   const [reverseHero,        setReverseHero]        = useState(null);
   const [reverseHeroExiting, setReverseHeroExiting] = useState(false);
   const [avatarFly,          setAvatarFly]          = useState(null);
@@ -2437,7 +2421,8 @@ function App() {
   const hlsRef        = useRef(null);
   const handleNextRef  = useRef(null);
   const handlePrevRef  = useRef(null);
-  const slideWrapRef   = useRef(null);
+  const slideWrapRef      = useRef(null);
+  const artEntranceRef    = useRef(null);
   const playerInfoRef  = useRef(null);
   const trackDirRef    = useRef('next');
   const slideReadyRef  = useRef(false);
@@ -2594,7 +2579,12 @@ function App() {
 
   /* анимация обложки при входе в плеер не из home */
   useEffect(() => {
-    if (view === 'player' && !hero) setArtEntranceKey(k => k + 1);
+    if (view === 'player' && !hero && artEntranceRef.current) {
+      gsap.fromTo(artEntranceRef.current,
+        { opacity: 0, y: 14 },
+        { opacity: 1, y: 0, duration: 0.5, ease: 'power2.out' }
+      );
+    }
   }, [view]);
 
   /* gsap — анимация info блока при входе/выходе из плеера */
@@ -3671,8 +3661,10 @@ function App() {
                 searchQueueRef.current = null;
                 handleScTrackClick(t, scTracksRef.current.indexOf(t));
               } else {
+                const idx = tracks.indexOf(t);
+                if (!scPlayingTrack && idx === trackIdx) { setIsPlaying(true); return; }
                 setScPlayingTrack(null);
-                setTrackIdx(tracks.indexOf(t));
+                setTrackIdx(idx);
                 setProgress(0);
                 setIsPlaying(true);
               }
@@ -3760,7 +3752,6 @@ function App() {
                   <div style={{
                     display:'flex', alignItems:'center', justifyContent:'center', width:'100%',
                   }}>
-                    {scPlayingTrack && <div style={{width:27, flexShrink:0}}/>}
                     <MarqueeText
                       text={track.title}
                       onClick={e => {
@@ -3770,10 +3761,6 @@ function App() {
                       style={{fontSize:'clamp(18px, 2.6vw, 28px)', fontWeight:600, letterSpacing:'-0.022em'}}
                       maxWidth={'min(clamp(280px, 38vw, 520px), 88%)'}
                     />
-                    {scPlayingTrack && (() => {
-                      const liked = likedIds.has(scPlayingTrack.id);
-                      return <PlayerLikeBtn liked={liked} onLike={() => handleLike(scPlayingTrack)} style={{marginLeft:8}}/>;
-                    })()}
                   </div>
                 )}
               </div>
@@ -3785,7 +3772,7 @@ function App() {
               }}>
                 <div id="player-album-art" ref={playerArtRef}
                   style={{opacity: ((hero && !heroExiting) || reverseHero) ? 0 : 1}}>
-                  <div key={artEntranceKey} style={{animation: artEntranceKey > 0 ? 'artEntrance 0.42s cubic-bezier(0.34,1.56,0.64,1)' : 'none'}}>
+                  <div ref={artEntranceRef}>
                     <AlbumArt track={track} isPlaying={isPlaying}/>
                   </div>
                 </div>
@@ -3797,10 +3784,11 @@ function App() {
               transform: playerVisible ? 'translateY(0)' : 'translateY(10px)',
               transition: playerVisible ? 'opacity 0.36s ease 0.28s, transform 0.48s cubic-bezier(0.22,1,0.36,1) 0.28s' : 'opacity 0.1s ease, transform 0.1s ease',
             }}>
-              <WaveProgressBar progress={progress} elapsed={elapsed} total={track.duration || 0}
+              <ProgressBar progress={progress} elapsed={elapsed} total={track.duration || 0}
                 onSeek={handleSeek} isPlaying={isPlaying} visible={playerVisible}/>
             {(()=>{ const P = { spring:0.055, damping:0.84, clamp:10 }; return (
             <div style={{display:'flex', alignItems:'center', gap:14, justifyContent:'center', marginTop:16}}>
+              {scPlayingTrack && <div style={{width:27, marginRight:14, flexShrink:0}}/>}
               <MagBtn onClick={()=>setShuffle(s=>!s)} active={shuffle} size={'clamp(40px, 5.2vw, 58px)'} physics={P}>
                 <img src="../assets/shuffle.png" style={{width:'clamp(18px, 2.2vw, 26px)',height:'clamp(18px, 2.2vw, 26px)',filter:'brightness(0) invert(1)',opacity:shuffle?1:0.38,transition:'opacity 0.2s ease'}}/>
               </MagBtn>
@@ -3817,6 +3805,10 @@ function App() {
                   <img src="../assets/repeat1.png" style={{position:'absolute',top:0,left:0,width:22,height:22,filter:'brightness(0) invert(1)',opacity:repeat==='one'?1:0,transition:'opacity 0.2s ease'}}/>
                 </div>
               </MagBtn>
+              {scPlayingTrack && (() => {
+                const liked = likedIds.has(scPlayingTrack.id);
+                return <PlayerLikeBtn liked={liked} onLike={() => handleLike(scPlayingTrack)} style={{marginLeft:14}}/>;
+              })()}
             </div>
             ); })()}
             </div>{/* controls+progress wrapper end */}
