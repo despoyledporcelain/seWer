@@ -789,7 +789,47 @@ const TrackRow = React.memo(function TrackRow({ track, isActive, isLoading, isEr
 /* ── TrackList ───────────────────────────────────────────────────────────── */
 function VirtualTrackList({ items, activeId, loadingId, errorId, onClickItem, scrollToActive, scrollTargetId }) {
   const ROW_H = 50;
-  const ref   = useRef(null);
+  const BUFFER = 5;
+  const ref = useRef(null);
+  const scrollRafRef = useRef(null);
+  const [range, setRange] = useState({ start: 0, end: 30 });
+
+  const updateRange = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    const scrollTop = el.scrollTop;
+    const viewportH = el.clientHeight;
+    const visibleStart = Math.floor(scrollTop / ROW_H);
+    const visibleEnd = Math.ceil((scrollTop + viewportH) / ROW_H);
+    const start = Math.max(0, visibleStart - BUFFER);
+    const end = Math.min(items.length, visibleEnd + BUFFER);
+    setRange(prev => (prev.start === start && prev.end === end) ? prev : { start, end });
+  }, [items.length]);
+
+  const updateRangeRef = useRef(updateRange);
+  updateRangeRef.current = updateRange;
+
+  useLayoutEffect(() => { updateRange(); }, [updateRange]);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const onScroll = () => {
+      if (scrollRafRef.current) return;
+      scrollRafRef.current = requestAnimationFrame(() => {
+        scrollRafRef.current = null;
+        updateRangeRef.current?.();
+      });
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    const ro = new ResizeObserver(() => updateRangeRef.current?.());
+    ro.observe(el);
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      ro.disconnect();
+      cancelAnimationFrame(scrollRafRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!scrollToActive || !ref.current) return;
@@ -803,6 +843,9 @@ function VirtualTrackList({ items, activeId, loadingId, errorId, onClickItem, sc
   const onClickStable = useCallback(t => onClickItem(t), [onClickItem]);
 
   const activeIdx = items.findIndex(t => t.id === activeId);
+  const visibleItems = items.slice(range.start, range.end);
+  const totalHeight = items.length * ROW_H;
+  const offsetTop = range.start * ROW_H;
 
   return (
     <div ref={ref} className="scroll-thin" style={{flex:1, overflowY:'auto', padding:'2px 6px 10px', position:'relative'}}>
@@ -817,13 +860,15 @@ function VirtualTrackList({ items, activeId, loadingId, errorId, onClickItem, sc
           zIndex:0,
         }}/>
       )}
-      <div style={{position:'relative', zIndex:1}}>
-        {items.map(t => (
-          <TrackRow key={t.id} track={t} isActive={t.id === activeId}
-            isLoading={t.id === loadingId}
-            isError={t.id === errorId}
-            onClick={onClickStable}/>
-        ))}
+      <div style={{position:'relative', zIndex:1, height: totalHeight}}>
+        <div style={{transform:`translateY(${offsetTop}px)`}}>
+          {visibleItems.map(t => (
+            <TrackRow key={t.id} track={t} isActive={t.id === activeId}
+              isLoading={t.id === loadingId}
+              isError={t.id === errorId}
+              onClick={onClickStable}/>
+          ))}
+        </div>
       </div>
     </div>
   );
