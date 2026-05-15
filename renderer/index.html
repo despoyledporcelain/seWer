@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>seWer</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
 <style>
   @font-face {
     font-family: 'Proxima Soft';
@@ -13,11 +12,11 @@
     font-style: normal;
   }
 </style>
-<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
-<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
-<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+<script src="./vendor/react.production.min.js"></script>
+<script src="./vendor/react-dom.production.min.js"></script>
+<script src="./vendor/babel.min.js"></script>
 <script src="./hls.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js" crossorigin="anonymous"></script>
+<script src="./vendor/gsap.min.js"></script>
 <style>
   *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; user-select:none; }
   body.resizing * { transition: none !important; }
@@ -98,6 +97,14 @@
     50%,68% { transform:translateX(var(--mq-d)); }
     100%    { transform:translateX(0); }
   }
+  .home-card { transform:scale(1); transition:transform 0.35s cubic-bezier(0.34,1.56,0.64,1); }
+  .home-card:hover { transform:scale(1.03); }
+  .home-card-overlay { opacity:0; transition:opacity 0.2s ease; }
+  .home-card:hover .home-card-overlay { opacity:1; }
+  .home-card-like { opacity:0; transition:opacity 0.18s ease; }
+  .home-card:hover .home-card-like { opacity:1; }
+  .track-row { background:none; transition:background 0.15s ease; }
+  .track-row:not(.active):hover { background:rgba(255,255,255,0.03); }
 </style>
 </head>
 <body>
@@ -330,7 +337,7 @@ const STRINGS = {
 const LangContext = React.createContext('ru');
 function useLang() {
   const lang = React.useContext(LangContext);
-  return key => STRINGS[lang]?.[key] ?? STRINGS.ru[key] ?? key;
+  return React.useCallback(key => STRINGS[lang]?.[key] ?? STRINGS.ru[key] ?? key, [lang]);
 }
 
 function buildScShuffle(list, currentId) {
@@ -413,33 +420,46 @@ function PlayerLikeBtn({ liked, onLike, style: extraStyle }) {
 }
 
 /* ── Progress Bar ────────────────────────────────────────────────────────── */
-function ProgressBar({ progress, elapsed, total, onSeek, isPlaying, visible }) {
+function ProgressBar({ progressRef, total, onSeek, isPlaying, visible }) {
   const trackRef         = useRef(null);
   const fillRef          = useRef(null);
   const thumbRef         = useRef(null);
   const rafRef           = useRef(null);
-  const progRef          = useRef(progress);
-  const dispProg         = useRef(progress);
+  const progRef          = useRef(progressRef.current);
+  const dispProg         = useRef(progressRef.current);
   const dragging         = useRef(false);
   const visibleRef       = useRef(visible);
   const elapsedSpanRef   = useRef(null);
   const remainingSpanRef = useRef(null);
   const totalRef         = useRef(total);
   totalRef.current = total;
-
-  useEffect(() => { progRef.current = progress; }, [progress]);
+  const isPlayingRef     = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
 
   const drawRef = useRef(null);
+  const kick = () => {
+    if (visibleRef.current && rafRef.current == null && drawRef.current) {
+      rafRef.current = requestAnimationFrame(drawRef.current);
+    }
+  };
 
   useEffect(() => {
     visibleRef.current = visible;
-    if (visible && !rafRef.current && drawRef.current) rafRef.current = requestAnimationFrame(drawRef.current);
-    else if (!visible) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+    if (visible) kick();
+    else { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
   }, [visible]);
+
+  useEffect(() => { kick(); }, [isPlaying]);
 
   useEffect(() => {
     const draw = () => {
-      dispProg.current += (progRef.current - dispProg.current) * 0.12;
+      progRef.current = progressRef.current;
+      const diff = progRef.current - dispProg.current;
+      if (!isPlayingRef.current && !dragging.current && Math.abs(diff) < 0.001) {
+        dispProg.current = progRef.current;
+      } else {
+        dispProg.current += diff * 0.12;
+      }
       const p = dispProg.current;
       if (fillRef.current)  fillRef.current.style.transform = 'scaleX(' + p + ')';
       if (thumbRef.current) thumbRef.current.style.left = (p * 100).toFixed(3) + '%';
@@ -448,6 +468,10 @@ function ProgressBar({ progress, elapsed, total, onSeek, isPlaying, visible }) {
       if (elapsedSpanRef.current)   elapsedSpanRef.current.textContent   = fmt(de);
       if (remainingSpanRef.current) remainingSpanRef.current.textContent = '-' + fmt(dur - de);
       if (!visibleRef.current) { rafRef.current = null; return; }
+      if (!isPlayingRef.current && !dragging.current
+          && Math.abs(progRef.current - dispProg.current) < 0.001) {
+        rafRef.current = null; return;
+      }
       rafRef.current = requestAnimationFrame(draw);
     };
     drawRef.current = draw;
@@ -472,10 +496,9 @@ function ProgressBar({ progress, elapsed, total, onSeek, isPlaying, visible }) {
     color: 'rgba(255,255,255,0.22)', letterSpacing: '0.02em',
     userSelect: 'none', flexShrink: 0,
   };
-  const p0 = (progress * 100).toFixed(3) + '%';
   return (
     <div style={{width:'100%', display:'flex', alignItems:'center', gap:9}}>
-      <span ref={elapsedSpanRef} style={timeStyle}>{fmt(elapsed)}</span>
+      <span ref={elapsedSpanRef} style={timeStyle}>{fmt(Math.floor(progressRef.current * (total||0)))}</span>
       <div ref={trackRef}
         style={{
           flex:1, minWidth:0, position:'relative',
@@ -483,7 +506,7 @@ function ProgressBar({ progress, elapsed, total, onSeek, isPlaying, visible }) {
           background:'rgba(255,255,255,0.09)',
           cursor:'pointer',
         }}
-        onMouseDown={e => { dragging.current = true; onSeek(getVal(e)); }}
+        onMouseDown={e => { dragging.current = true; onSeek(getVal(e)); kick(); }}
       >
         <div ref={fillRef} style={{
           position:'absolute', left:0, top:0,
@@ -491,11 +514,11 @@ function ProgressBar({ progress, elapsed, total, onSeek, isPlaying, visible }) {
           background:'rgba(220,220,220,0.9)',
           boxShadow:'0 0 8px rgba(200,200,200,0.3)',
           width:'100%', transformOrigin:'left center',
-          transform:'scaleX(' + progress + ')',
+          transform:'scaleX(' + progressRef.current + ')',
           pointerEvents:'none',
         }}/>
       </div>
-      <span ref={remainingSpanRef} style={timeStyle}>-{fmt(total - elapsed)}</span>
+      <span ref={remainingSpanRef} style={timeStyle}>-{fmt((total||0) - Math.floor(progressRef.current * (total||0)))}</span>
     </div>
   );
 }
@@ -513,8 +536,18 @@ function ThinVolumeSlider({ volume, onChange }) {
   const onChangeCb = useRef(onChange);
   const TW = 28;
 
+  const drawRef = useRef(null);
+  const kick = () => {
+    if (rafRef.current == null && drawRef.current) {
+      rafRef.current = requestAnimationFrame(drawRef.current);
+    }
+  };
+
   useEffect(() => { onChangeCb.current = onChange; }, [onChange]);
-  useEffect(() => { if (!dragging.current) volActual.current = volume; }, [volume]);
+  useEffect(() => {
+    if (!dragging.current) volActual.current = volume;
+    kick();
+  }, [volume]);
 
   const getVal = useCallback((e) => {
     const rect = canvasRef.current.getBoundingClientRect();
@@ -531,6 +564,7 @@ function ThinVolumeSlider({ volume, onChange }) {
       canvas.width  = TW * dpr;
       canvas.style.height = wrap.clientHeight + 'px';
       canvas.style.width  = TW + 'px';
+      kick();
     };
     resize();
     const ro = new ResizeObserver(resize);
@@ -538,7 +572,12 @@ function ThinVolumeSlider({ volume, onChange }) {
 
     const draw = () => {
       const speed = dragging.current ? 0.09 : 0.04;
-      volDisp.current += (volActual.current - volDisp.current) * speed;
+      const diff = volActual.current - volDisp.current;
+      if (!dragging.current && Math.abs(diff) < 0.001) {
+        volDisp.current = volActual.current;
+      } else {
+        volDisp.current += diff * speed;
+      }
       const v = volDisp.current;
 
       const ctx = canvas.getContext('2d');
@@ -573,10 +612,15 @@ function ThinVolumeSlider({ volume, onChange }) {
         ctx.restore();
       }
 
+      if (!dragging.current && Math.abs(volActual.current - volDisp.current) < 0.001) {
+        rafRef.current = null;
+        return;
+      }
       rafRef.current = requestAnimationFrame(draw);
     };
+    drawRef.current = draw;
     rafRef.current = requestAnimationFrame(draw);
-    return () => { cancelAnimationFrame(rafRef.current); ro.disconnect(); };
+    return () => { cancelAnimationFrame(rafRef.current); rafRef.current = null; ro.disconnect(); };
   }, []);
 
   useEffect(() => {
@@ -588,6 +632,7 @@ function ThinVolumeSlider({ volume, onChange }) {
     const onUp = () => {
       if (!dragging.current) return;
       dragging.current = false;
+      kick();
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup',   onUp);
@@ -596,7 +641,7 @@ function ThinVolumeSlider({ volume, onChange }) {
 
   return (
     <div ref={wrapRef} style={{flex:1, minHeight:0, cursor:'ns-resize', display:'flex', alignItems:'stretch'}}
-      onMouseDown={e => { dragging.current = true; volActual.current = getVal(e); }}>
+      onMouseDown={e => { dragging.current = true; volActual.current = getVal(e); kick(); }}>
       <canvas ref={canvasRef} style={{display:'block'}}/>
     </div>
   );
@@ -695,13 +740,12 @@ function NavIcon({ icon, label, active, onClick, size=38, noActiveBg=false }) {
 /* ── TrackRow ────────────────────────────────────────────────────────────── */
 const TrackRow = React.memo(function TrackRow({ track, isActive, isLoading, isError, onClick }) {
   const t = useLang();
-  const [hov, setHov] = useState(false);
+  const handleClick = useCallback(() => onClick(track), [onClick, track]);
   return (
-    <div onClick={onClick} onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
+    <div className={isActive ? 'track-row active' : 'track-row'} onClick={handleClick}
       style={{
         display:'flex', alignItems:'center', gap:10, padding:'8px 10px', borderRadius:9,
-        background: !isActive && hov ? 'rgba(255,255,255,0.03)' : 'none',
-        cursor:'pointer', transition:'background 0.15s ease', position:'relative', zIndex:1,
+        cursor:'pointer', position:'relative', zIndex:1,
         height: 50, overflow:'hidden',
         contentVisibility:'auto', containIntrinsicSize:'auto 50px',
       }}>
@@ -712,7 +756,7 @@ const TrackRow = React.memo(function TrackRow({ track, isActive, isLoading, isEr
         overflow:'hidden', position:'relative',
       }}>
         {track.coverUrl
-          ? <img src={track.coverUrl} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}
+          ? <img src={track.coverUrl} loading="lazy" decoding="async" style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}
               onError={e=>{e.currentTarget.style.display='none'}}/>
           : <img src="../assets/note.png" style={{width:11,height:11,filter:'brightness(0) invert(1)',opacity:isActive?0.9:0.2}}/>
         }
@@ -761,13 +805,15 @@ function VirtualTrackList({ items, activeId, loadingId, errorId, onClickItem, sc
   const activeIdx = items.findIndex(t => t.id === activeId);
 
   return (
-    <div ref={ref} className="scroll-thin" style={{flex:1, overflowY:'auto', padding:'2px 6px 10px', position:'relative', willChange:'transform'}}>
+    <div ref={ref} className="scroll-thin" style={{flex:1, overflowY:'auto', padding:'2px 6px 10px', position:'relative'}}>
       {activeIdx >= 0 && (
         <div style={{
           position:'absolute', pointerEvents:'none',
-          top: activeIdx * ROW_H + 2, left:6, right:6, height: ROW_H - 2,
+          top:2, left:6, right:6, height: ROW_H - 2,
+          transform:`translateY(${activeIdx * ROW_H}px)`,
           borderRadius:9, background:'rgba(178,178,178,0.09)',
-          transition:'top 0.42s cubic-bezier(0.22,1,0.36,1)',
+          transition:'transform 0.42s cubic-bezier(0.45,0,0.55,1)',
+          willChange:'transform',
           zIndex:0,
         }}/>
       )}
@@ -776,7 +822,7 @@ function VirtualTrackList({ items, activeId, loadingId, errorId, onClickItem, sc
           <TrackRow key={t.id} track={t} isActive={t.id === activeId}
             isLoading={t.id === loadingId}
             isError={t.id === errorId}
-            onClick={() => onClickStable(t)}/>
+            onClick={onClickStable}/>
         ))}
       </div>
     </div>
@@ -785,16 +831,12 @@ function VirtualTrackList({ items, activeId, loadingId, errorId, onClickItem, sc
 
 /* ── HomeCard ────────────────────────────────────────────────────────────── */
 const HomeCard = React.memo(function HomeCard({ track, onSelect, artRef, artHidden, isLiked, onLike }) {
-  const [hov, setHov] = useState(false);
   const handleClick = useCallback(() => onSelect(track), [onSelect, track]);
   return (
-    <div onClick={handleClick}
-      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
+    <div className="home-card" onClick={handleClick}
       style={{
         borderRadius:16, cursor:'pointer',
-        transform:`scale(${hov?1.03:1})`,
-        transition:'transform 0.35s cubic-bezier(0.34,1.56,0.64,1)',
-        contentVisibility:'auto', containIntrinsicSize:'auto 128px',
+        contentVisibility:'auto', containIntrinsicSize:'auto 180px',
       }}>
       <div style={{
         padding:'8px 8px 7px', textAlign:'center',
@@ -814,22 +856,20 @@ const HomeCard = React.memo(function HomeCard({ track, onSelect, artRef, artHidd
         display:'flex', alignItems:'center', justifyContent:'center',
       }}>
         {track.coverUrl ? (
-          <img src={track.coverUrl} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}
+          <img src={track.coverUrl} loading="lazy" decoding="async" style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}
             onError={e=>{e.currentTarget.style.display='none'}}/>
         ) : (
           <img src="../assets/note.png" style={{width:24,height:24,filter:'brightness(0) invert(1)',opacity:0.13}}/>
         )}
-        <div style={{
+        <div className="home-card-overlay" style={{
           position:'absolute', inset:0, background:'rgba(0,0,0,0.32)',
           display:'flex', alignItems:'center', justifyContent:'center',
-          opacity: hov?1:0, transition:'opacity 0.2s ease',
         }}>
           <img src="../assets/vosproizvedenie.png" style={{width:26,height:26,filter:'brightness(0) invert(1)',marginLeft:3}}/>
         </div>
         {onLike && (
-          <div onClick={e=>{ e.stopPropagation(); onLike(track); }} style={{
+          <div className="home-card-like" onClick={e=>{ e.stopPropagation(); onLike(track); }} style={{
             position:'absolute', right:7, bottom:7, zIndex:2,
-            opacity: hov ? 1 : 0, transition:'opacity 0.18s ease',
             background:'rgba(0,0,0,0.45)', borderRadius:'50%',
             width:26, height:26, display:'flex', alignItems:'center', justifyContent:'center',
             color: isLiked ? 'var(--accent)' : 'rgba(255,255,255,0.75)',
@@ -844,6 +884,8 @@ const HomeCard = React.memo(function HomeCard({ track, onSelect, artRef, artHidd
 });
 
 /* ── Hero clone ──────────────────────────────────────────────────────────── */
+const HERO_DUR_MS = 380;
+const HERO_FADE_MS = 160;
 function HeroClone({ hero, exiting, reverse = false }) {
   const cloneRef = useRef(null);
   const innerRef = useRef(null);
@@ -854,6 +896,7 @@ function HeroClone({ hero, exiting, reverse = false }) {
   const dy = (sTop + sH/2) - (tTop + size/2);
   const sc = sW / size;
   const BR = 16;
+  const DUR = HERO_DUR_MS / 1000;
 
   useEffect(() => {
     const el = cloneRef.current;
@@ -863,18 +906,18 @@ function HeroClone({ hero, exiting, reverse = false }) {
     if (reverse) {
       tl.fromTo(el,
         { x: 0, y: 0, scale: 1 },
-        { x: dx, y: dy, scale: sc, duration: 0.38, ease: 'sine.inOut' }, 0
+        { x: dx, y: dy, scale: sc, duration: DUR, ease: 'sine.inOut' }, 0
       ).fromTo(inner,
-        { borderRadius: BR },
-        { borderRadius: BR / sc, duration: 0.38, ease: 'sine.inOut' }, 0
+        { clipPath: `inset(0 round ${BR}px)` },
+        { clipPath: `inset(0 round ${BR / sc}px)`, duration: DUR, ease: 'sine.inOut' }, 0
       );
     } else {
       tl.fromTo(el,
         { x: dx, y: dy, scale: sc },
-        { x: 0, y: 0, scale: 1, duration: 0.38, ease: 'sine.inOut' }, 0
+        { x: 0, y: 0, scale: 1, duration: DUR, ease: 'sine.inOut' }, 0
       ).fromTo(inner,
-        { borderRadius: BR / sc },
-        { borderRadius: BR, duration: 0.38, ease: 'sine.inOut' }, 0
+        { clipPath: `inset(0 round ${BR / sc}px)` },
+        { clipPath: `inset(0 round ${BR}px)`, duration: DUR, ease: 'sine.inOut' }, 0
       );
     }
     return () => tl.kill();
@@ -882,7 +925,7 @@ function HeroClone({ hero, exiting, reverse = false }) {
 
   useEffect(() => {
     if (!exiting || !cloneRef.current) return;
-    gsap.to(cloneRef.current, { opacity: 0, duration: 0.16, ease: 'none' });
+    gsap.to(cloneRef.current, { opacity: 0, duration: HERO_FADE_MS / 1000, ease: 'none' });
   }, [exiting]);
 
   return ReactDOM.createPortal(
@@ -892,12 +935,15 @@ function HeroClone({ hero, exiting, reverse = false }) {
       width: size, height: size,
       zIndex:960, pointerEvents:'none',
       transformOrigin:'center center',
+      willChange:'transform, opacity',
+      backfaceVisibility:'hidden',
     }}>
       <div ref={innerRef} style={{
         position:'absolute', inset:0,
-        borderRadius: reverse ? BR : BR / sc,
-        background:'#111116', overflow:'hidden',
+        clipPath: reverse ? `inset(0 round ${BR}px)` : `inset(0 round ${BR / sc}px)`,
+        background:'#111116',
         display:'flex', alignItems:'center', justifyContent:'center',
+        willChange:'clip-path',
       }}>
         {hero.track.coverUrl ? (
           <img src={hero.track.coverUrl} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}
@@ -971,11 +1017,13 @@ function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth
         {/* nav-группа с анимирующимся пиллом */}
         <div style={{position:'relative', display:'flex', flexDirection:'column', alignItems:'center', gap:6}}>
           <div style={{
-            position:'absolute', left:'50%', transform:'translateX(-50%)',
-            top: pillRect.top, height: pillRect.height, width: 38,
+            position:'absolute', left:'50%',
+            top: 0, height: pillRect.height || 38, width: 38,
+            transform:`translate(-50%, ${pillRect.top}px)`,
             background:'rgba(178,178,178,0.11)', borderRadius:11,
             opacity: pillRect.visible ? 1 : 0,
-            transition:'top 0.34s cubic-bezier(0.22,1,0.36,1), height 0.34s cubic-bezier(0.22,1,0.36,1), opacity 0.18s ease',
+            transition:'transform 0.34s cubic-bezier(0.45,0,0.55,1), opacity 0.18s ease',
+            willChange:'transform',
             pointerEvents:'none', zIndex:0,
           }}/>
           {NAV.map(n => (
@@ -1420,7 +1468,7 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
             position:'absolute', left:0, right:0, borderRadius:9, pointerEvents:'none',
             background:'rgba(255,255,255,0.07)',
             top: pill.top, height: pill.height,
-            transition:'top 0.24s cubic-bezier(0.4,0,0.2,1), height 0.24s cubic-bezier(0.4,0,0.2,1)',
+            transition:'top 0.24s cubic-bezier(0.45,0,0.55,1), height 0.24s cubic-bezier(0.45,0,0.55,1)',
           }}/>
           {SECS.map(s => (
             <div key={s.id} ref={el => secRefs.current[s.id] = el} style={{
@@ -1586,7 +1634,7 @@ function SearchTrackRow({ track, isLiked, onLike, onClick, onCoverClick, isLoadi
         background:'#111116', overflow:'hidden', position:'relative',
         cursor: isLoading ? 'default' : 'pointer',
       }}>
-        {track.coverUrl && <img src={track.coverUrl} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}
+        {track.coverUrl && <img src={track.coverUrl} loading="lazy" decoding="async" style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}
           onError={e=>{e.currentTarget.style.display='none'}}/>}
         {isLoading
           ? <div style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.55)',display:'flex',alignItems:'center',justifyContent:'center'}}>
@@ -1777,7 +1825,7 @@ const SearchView = React.forwardRef(function SearchView({ visible, scAuth, liked
                     onMouseLeave={e => e.currentTarget.style.background='rgba(255,255,255,0.034)'}
                   >
                     {u.avatarUrl
-                      ? <img src={u.avatarUrl} style={{width:30,height:30,borderRadius:'50%',objectFit:'cover'}}/>
+                      ? <img src={u.avatarUrl} loading="lazy" decoding="async" style={{width:30,height:30,borderRadius:'50%',objectFit:'cover'}}/>
                       : <div style={{width:30,height:30,borderRadius:'50%',background:'#111116',display:'flex',alignItems:'center',justifyContent:'center'}}>
                           <svg width="14" height="14" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="1.6" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
                         </div>
@@ -2089,7 +2137,7 @@ function ArtistView({ artist, visible, onClose, scAuth, likedIds, onLike, onPlay
           position: 'absolute', bottom: -1, height: 2,
           background: 'rgba(255,255,255,0.72)', borderRadius: 2,
           left: pill.left, width: pill.width,
-          transition: 'left 0.2s cubic-bezier(0.4,0,0.2,1), width 0.2s cubic-bezier(0.4,0,0.2,1)',
+          transition: 'left 0.2s cubic-bezier(0.45,0,0.55,1), width 0.2s cubic-bezier(0.45,0,0.55,1)',
         }}/>
       </div>
 
@@ -2124,7 +2172,7 @@ function ArtistView({ artist, visible, onClose, scAuth, likedIds, onLike, onPlay
                 onMouseLeave={e => e.currentTarget.style.background='transparent'}
                 style={{ display:'flex', alignItems:'center', gap:12, padding:'7px 8px', borderRadius:8, borderBottom:'1px solid rgba(255,255,255,0.032)', cursor:'pointer', transition:'background 0.15s' }}>
                 <div style={{ width:44, height:44, borderRadius:8, flexShrink:0, background:'#111116', overflow:'hidden' }}>
-                  {tr.coverUrl && <img src={tr.coverUrl} style={{ width:'100%', height:'100%', objectFit:'cover' }}/>}
+                  {tr.coverUrl && <img src={tr.coverUrl} loading="lazy" decoding="async" style={{ width:'100%', height:'100%', objectFit:'cover' }}/>}
                 </div>
                 <div style={{ flex:1, minWidth:0 }}>
                   <div style={{ fontSize:13, color:'rgba(255,255,255,0.86)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{tr.title}</div>
@@ -2347,7 +2395,7 @@ function App() {
   const [tracks,        setTracks]        = useState([]);
   const [trackIdx,      setTrackIdx]      = useState(0);
   const [isPlaying,     setIsPlaying]     = useState(false);
-  const [progress,      setProgress]      = useState(0);
+  const progressRef = useRef(0);
   const [shuffle,       setShuffle]       = useState(false);
   const [repeat,        setRepeat]        = useState('off');
   const [navActive,     setNavActive]     = useState('home');
@@ -2453,7 +2501,6 @@ function App() {
   const volumeRef         = useRef(0.7);
   const settingsRef       = useRef({});
   const crossfadeRafRef   = useRef(null);
-  discordProgressRef.current = progress;
   scTracksRef.current = scTracks;
   searchRef.current   = search;
   scAuthRef.current   = settings.soundcloudAuth;
@@ -2501,7 +2548,8 @@ function App() {
 
     const onTime  = () => {
       if (!audio.duration) return;
-      setProgress(audio.currentTime / audio.duration);
+      progressRef.current = audio.currentTime / audio.duration;
+      discordProgressRef.current = progressRef.current;
       // crossfade fade-out: плавно убираем громкость в конце трека
       const cf = settingsRef.current?.crossfade || 0;
       if (cf > 0) {
@@ -2547,7 +2595,7 @@ function App() {
     } else {
       audio.src = '';
     }
-    setProgress(0);
+    progressRef.current = 0;
   }, [trackIdx, track?.path, scPlayingTrack]);
 
   /* play / pause */
@@ -2578,9 +2626,11 @@ function App() {
   }, []);
 
   /* анимация обложки при входе в плеер не из home */
+  const artEntranceTweenRef = useRef(null);
   useEffect(() => {
     if (view === 'player' && !hero && artEntranceRef.current) {
-      gsap.fromTo(artEntranceRef.current,
+      artEntranceTweenRef.current?.kill();
+      artEntranceTweenRef.current = gsap.fromTo(artEntranceRef.current,
         { opacity: 0, y: 14 },
         { opacity: 1, y: 0, duration: 0.5, ease: 'power2.out' }
       );
@@ -2687,7 +2737,7 @@ function App() {
     if (repeat === 'one') {
       const audio = audioRef.current;
       if (audio) { audio.currentTime = 0; audio.play().catch(() => {}); }
-      setProgress(0); return;
+      progressRef.current = 0; return;
     }
     if (scPlayingTrack) {
       const list = searchQueueRef.current || (searchRef.current ? filteredScRef.current : scTracksRef.current);
@@ -2719,7 +2769,7 @@ function App() {
       const cur = tracks[trackIdx];
       let n; do { n = Math.floor(Math.random()*list.length); } while (list[n] === cur && list.length > 1);
       setTrackIdx(tracks.indexOf(list[n]));
-      setProgress(0); return;
+      progressRef.current = 0; return;
     }
     const curIdx = list.indexOf(tracks[trackIdx]);
     const next = curIdx + 1;
@@ -2729,14 +2779,14 @@ function App() {
     } else {
       setTrackIdx(tracks.indexOf(list[next]));
     }
-    setProgress(0);
+    progressRef.current = 0;
   }
   handleNextRef.current = handleNext;
 
   function handlePrev() {
     trackDirRef.current = 'prev';
-    if (progress > 0.05) {
-      setProgress(0);
+    if (progressRef.current > 0.05) {
+      progressRef.current = 0;
       if (audioRef.current) audioRef.current.currentTime = 0;
       return;
     }
@@ -2759,12 +2809,12 @@ function App() {
     const list = searchRef.current ? filteredRef.current : tracks;
     const curIdx = list.indexOf(tracks[trackIdx]);
     setTrackIdx(tracks.indexOf(list[(curIdx - 1 + list.length) % list.length]));
-    setProgress(0);
+    progressRef.current = 0;
   }
   handlePrevRef.current = handlePrev;
 
   const handleSeek = useCallback((v) => {
-    setProgress(v);
+    progressRef.current = v;
     discordProgressRef.current = v;
     cancelAnimationFrame(crossfadeRafRef.current); // отменяем fade если был
     const audio = audioRef.current;
@@ -2855,7 +2905,7 @@ function App() {
         setTracks(withCustom);
         setTrackIdx(0);
         setIsPlaying(false);
-        setProgress(0);
+        progressRef.current = 0;
         loadCovers(withCustom);
       }
     } catch {}
@@ -2878,7 +2928,7 @@ function App() {
     setTracks([]);
     setTrackIdx(0);
     setIsPlaying(false);
-    setProgress(0);
+    progressRef.current = 0;
   }, []);
 
   const loadScLikes = useCallback(async (auth, opts = {}) => {
@@ -3115,7 +3165,7 @@ function App() {
   async function handleScTrackClick(scTrack, idx, autoSkip = false, skipCount = 0, direction = 1) {
     trackSwitchingRef.current = true;
     setScPlayingIdx(idx);
-    setProgress(0);
+    progressRef.current = 0;
     setIsPlaying(false);
     setLoadingTrackId(scTrack.id);
     destroyHls();
@@ -3236,7 +3286,7 @@ function App() {
     const startPlayLocal = (idx) => {
       setScPlayingTrack(null);
       setTrackIdx(idx);
-      setProgress(0);
+      progressRef.current = 0;
       setIsPlaying(true);
     };
     const startPlay = () => {
@@ -3269,8 +3319,8 @@ function App() {
     setLibScrollTargetId(t.id);
     setLibScrollTrigger(v => v + 1);
 
-    setTimeout(() => setHeroExiting(true), 300);
-    setTimeout(() => { setHero(null); setHeroExiting(false); }, 420);
+    setTimeout(() => setHeroExiting(true), HERO_DUR_MS - 80);
+    setTimeout(() => { setHero(null); setHeroExiting(false); }, HERO_DUR_MS - 80 + HERO_FADE_MS + 20);
   }
 
   const selectTrackRef = useRef(null);
@@ -3332,7 +3382,6 @@ function App() {
   const activeListPlayingId = sourceMode === 'sc'
     ? (scPlayingTrack ? scPlayingTrack.id : null)
     : (scPlayingTrack ? null : track?.id);
-  const elapsed = Math.floor(progress * (track?.duration || 0));
 
   const showWelcome = !settings.musicFolder && !settings.soundcloudAuth;
 
@@ -3371,8 +3420,8 @@ function App() {
             startRect:  { left: cardRect.left, top: cardRect.top, width: cardRect.width, height: cardRect.height },
             textStartRect: { left: cardRect.left, top: cardRect.top - _CTH3, width: cardRect.width, height: _CTH3 },
           });
-          setTimeout(() => setReverseHeroExiting(true), 340);
-          setTimeout(() => { setReverseHero(null); setReverseHeroExiting(false); }, 460);
+          setTimeout(() => setReverseHeroExiting(true), HERO_DUR_MS - 80);
+          setTimeout(() => { setReverseHero(null); setReverseHeroExiting(false); }, HERO_DUR_MS - 80 + HERO_FADE_MS + 20);
         }
         setPlayerVisible(false);
         setHomeVisible(true);
@@ -3411,8 +3460,8 @@ function App() {
         const targetRect = { left: par.left, top: par.top, size: par.width };
         const _CTH2 = 46;
         setHero({ track: track, startRect, targetRect, textStartRect: { left: startRect.left, top: startRect.top - _CTH2, width: startRect.width, height: _CTH2 } });
-        setTimeout(() => setHeroExiting(true), 300);
-        setTimeout(() => { setHero(null); setHeroExiting(false); }, 420);
+        setTimeout(() => setHeroExiting(true), HERO_DUR_MS - 80);
+        setTimeout(() => { setHero(null); setHeroExiting(false); }, HERO_DUR_MS - 80 + HERO_FADE_MS + 20);
       }
       setHomeVisible(false);
       setPlayerVisible(true);
@@ -3665,7 +3714,7 @@ function App() {
                 if (!scPlayingTrack && idx === trackIdx) { setIsPlaying(true); return; }
                 setScPlayingTrack(null);
                 setTrackIdx(idx);
-                setProgress(0);
+                progressRef.current = 0;
                 setIsPlaying(true);
               }
             }}
@@ -3784,7 +3833,7 @@ function App() {
               transform: playerVisible ? 'translateY(0)' : 'translateY(10px)',
               transition: playerVisible ? 'opacity 0.36s ease 0.28s, transform 0.48s cubic-bezier(0.22,1,0.36,1) 0.28s' : 'opacity 0.1s ease, transform 0.1s ease',
             }}>
-              <ProgressBar progress={progress} elapsed={elapsed} total={track.duration || 0}
+              <ProgressBar progressRef={progressRef} total={track.duration || 0}
                 onSeek={handleSeek} isPlaying={isPlaying} visible={playerVisible}/>
             {(()=>{ const P = { spring:0.055, damping:0.84, clamp:10 }; return (
             <div style={{display:'flex', alignItems:'center', gap:14, justifyContent:'center', marginTop:16}}>
