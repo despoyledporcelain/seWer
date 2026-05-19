@@ -162,7 +162,7 @@ portal-анимация аватара (SoundCloudView → Sidebar), 440мс.
 `loadingTrackId`/`errorTrackId` пробрасываются в `SearchTrackRow`.
 
 ### `ArtistView`
-пропсы: `{artist, visible, onClose, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, loadingTrackId, errorTrackId, onAlbumClick}`
+пропсы: `{artist, visible, onClose, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, loadingTrackId, errorTrackId, artistCacheRef}`
 
 **artist объект**: `{ id?, username, avatarUrl?, followersCount?, bannerUrl? }`
 
@@ -170,45 +170,24 @@ portal-анимация аватара (SoundCloudView → Sidebar), 440мс.
 
 **лейаут**:
 - баннер 220px — если есть `bannerUrl`: изображение + тёмный градиент; иначе просто `#07070a`
-- кнопка «назад» top-left
+- кнопка «назад» top-left, текст через `t('back')`
 - внутри баннера: квадратная аватарка 148px (border-radius 14px) + имя (26px bold) + фолловеры справа
 
-**табы**: Популярные / Треки / Альбомы (3 вкладки, sliding underline pill).
+**табы**: Популярные / Треки (2 вкладки, sliding underline pill).
 
 **загрузка треков** (useEffect на `[tab, profileId, visible]`):
 - Popular → `/users/{id}/toptracks?limit=20`
 - Tracks → `/users/{id}/tracks?limit=20` (+ пагинация через `next_href` при скролле)
-- Albums → `/users/{id}/albums?limit=20` → отдельные карточки альбомов, кликабельны → `onAlbumClick`
 
 **клик по обложке** → `onPlayTrack` (воспроизведение без перехода).
 **клик по строке** → `onSelectTrack` (воспроизведение + переход в плеер).
-
-### `AlbumTrackRow`
-пропсы: `{track, index, isLoading, isError, isLiked, onLike, onClick, onPlayTrack}`
-нумерованная строка трека в альбоме.
-- номер (hover → play-стрелка) → `onPlayTrack` (без перехода)
-- title (flex:1) → `onClick` (переход в плеер)
-- справа: сердечко + лайки, прослушивания, длина / «недоступен»
-
-### `AlbumView`
-пропсы: `{album, visible, onClose, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, loadingTrackId, errorTrackId}`
-
-**album объект**: `{ id, title, artist?, coverUrl?, trackCount?, likesCount? }`
-
-фетчит `/playlists/{id}` при открытии → получает полный список треков и метаданные.
-
-**лейаут**:
-- hero 252px: размытая обложка как фон + тёмный градиент; обложка 128px по центру; название + артист
-- мета-полоска: кол-во треков, лайки, общая длина
-- список треков через `AlbumTrackRow`
-- кнопка «назад» → возврат в ArtistView
 
 ---
 
 ### `App` — state
 
 ```
-view              — 'home'|'player'|'search'|'soundcloud'|'settings'|'artist'|'album'
+view              — 'home'|'player'|'search'|'soundcloud'|'settings'|'artist'
 tracks, trackIdx, isPlaying, progress, shuffle, repeat
 navActive, search, volume, hero, playerVisible, homeVisible
 heroExiting, reverseHero, reverseHeroExiting
@@ -223,7 +202,6 @@ loadingTrackId  — id SC трека пока идёт fetch+буферизац�
 errorTrackId    — id SC трека если недоступен (2.2с, затем null)
 artEntranceKey  — счётчик, инкремент → ремаунт обёртки AlbumArt → artEntrance анимация
 artistView      — null | { id?, username, avatarUrl?, followersCount?, bannerUrl? }
-albumView       — null | { id, title, artist?, coverUrl?, trackCount?, likesCount? }
 ```
 
 `lang` и `t` — не state, вычисляются при каждом рендере из `settings.language`:
@@ -287,8 +265,6 @@ customTitlesRef, minDurationRef, editCancelRef
 - **`handleSearchResultsLoaded(newTracks)`** — вызывается из `SearchView.onResultsLoaded`; дописывает треки в `searchQueueRef`, дошафливает в конец `scShuffleOrderRef` если shuffle активен
 - **`handleOpenArtist(artist)`** — сохраняет `prevViewRef.current = view`, устанавливает `artistView`, `view='artist'`
 - **`handleCloseArtist()`** — возвращает к `prevViewRef.current` (search/player/home)
-- **`handleOpenAlbum(album)`** — `setAlbumView(album)`, `setView('album')`; всегда из ArtistView
-- **`handleCloseAlbum()`** — `setView('artist')`
 
 ### `App` — crossfade (локальные треки и SC)
 
