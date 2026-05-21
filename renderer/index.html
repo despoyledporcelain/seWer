@@ -15,6 +15,7 @@
 <script src="./vendor/react.production.min.js"></script>
 <script src="./vendor/react-dom.production.min.js"></script>
 <script src="./vendor/babel.min.js"></script>
+<script src="./vendor/framer-motion.min.js"></script>
 <script src="./hls.min.js"></script>
 <script src="./vendor/gsap.min.js"></script>
 <style>
@@ -126,6 +127,7 @@
 </div>
 <script type="text/babel">
 const { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } = React;
+const { motion, AnimatePresence, LayoutGroup } = Motion;
 
 function smoothScroll(el, targetTop, duration) {
   const startTop = el.scrollTop;
@@ -198,6 +200,7 @@ function mapScTrack(t, noTitle) {
     playCount: t.playback_count || 0,
     streamUrl: progressive?.url || null,
     hlsUrl: hls?.url || null,
+    permalinkUrl: t.permalink_url || null,
   };
 }
 
@@ -258,12 +261,12 @@ const STRINGS = {
     sc_not_connected:'soundcloud не подключён',
     sc_hint:'войди чтобы видеть лайки,\nартистов и подписки',
     opening_browser:'открываем браузер...', login_browser:'войти через браузер',
-    search_ph:'поиск треков, исполнителей...',
+    search_ph:'поиск',
     artists:'Исполнители', followers:'подписчиков', tracks_label:'Треки',
     loading:'загрузка...',
     likes:'Лайки', all_tracks:'Все треки',
     loading_dots:'загружаем...', updating:'обновляем...',
-    search_short:'поиск...',
+    search_short:'поиск',
     sort_added:'по дате', sort_artist:'по артисту', sort_title:'по названию', sort_dur:'по длине',
     welcome_title:'добро пожаловать в seWer',
     welcome_sub:'выбери папку с локальной музыкой\nили войди в soundcloud чтобы начать',
@@ -278,6 +281,8 @@ const STRINGS = {
     back:'назад',
     subscribe:'Подписаться', subscribed:'Вы подписаны',
     follow_err:'не удалось подписаться', unfollow_err:'не удалось отписаться',
+    copy_link:'Скопировать ссылку', link_copied:'Ссылка скопирована', copy_link_err:'не удалось скопировать ссылку',
+    start_station:'Запустить станцию', station_for:'Станция по треку', station_exit:'выйти', station_err:'не удалось запустить станцию',
   },
   en: {
     minimize:'Minimize', maximize:'Maximize', close:'Close',
@@ -320,12 +325,12 @@ const STRINGS = {
     sc_not_connected:'soundcloud not connected',
     sc_hint:'log in to see your likes,\nartists and subscriptions',
     opening_browser:'opening browser...', login_browser:'log in via browser',
-    search_ph:'search tracks, artists...',
+    search_ph:'search',
     artists:'Artists', followers:'followers', tracks_label:'Tracks',
     loading:'loading...',
     likes:'Likes', all_tracks:'All tracks',
     loading_dots:'loading...', updating:'updating...',
-    search_short:'search...',
+    search_short:'search',
     sort_added:'by date', sort_artist:'by artist', sort_title:'by title', sort_dur:'by length',
     welcome_title:'welcome to seWer',
     welcome_sub:'choose a local music folder\nor log in to soundcloud to start',
@@ -340,6 +345,8 @@ const STRINGS = {
     back:'back',
     subscribe:'Follow', subscribed:'Following',
     follow_err:'could not follow', unfollow_err:'could not unfollow',
+    copy_link:'Copy link', link_copied:'Link copied', copy_link_err:'could not copy link',
+    start_station:'Start station', station_for:'Station for', station_exit:'exit', station_err:'could not start station',
   },
 };
 const LangContext = React.createContext('ru');
@@ -657,47 +664,82 @@ function ThinVolumeSlider({ volume, onChange }) {
 
 /* ── Album Art ───────────────────────────────────────────────────────────── */
 function AlbumArt({ track, isPlaying }) {
-  if (track.coverUrl) {
-    return (
-      <div style={{position:'relative',width:'100%',aspectRatio:'1',borderRadius:16,overflow:'hidden'}}>
-        <img src={track.coverUrl} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}
-          onError={e=>{e.currentTarget.style.display='none'}}/>
-      </div>
-    );
-  }
+  const imgRef = useRef(null);
+  const retryRef = useRef(0);
+  const url = track.coverUrl || null;
+
+  // when window returns to foreground, if img happens to be hidden (eviction),
+  // force a reload from the same src to bring it back
+  useEffect(() => {
+    if (!url) return;
+    const onVis = () => {
+      if (document.visibilityState !== 'visible') return;
+      const el = imgRef.current;
+      if (!el) return;
+      if (el.style.opacity === '0' || !el.complete || el.naturalWidth === 0) {
+        const sep = url.includes('?') ? '&' : '?';
+        el.src = url + sep + '_r=' + Date.now();
+        el.style.opacity = '1';
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onVis);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', onVis);
+    };
+  }, [url]);
+
   return (
     <div style={{
-      position:'relative',width:'100%',aspectRatio:'1',borderRadius:16,overflow:'hidden',
+      position:'relative', width:'100%', aspectRatio:'1', borderRadius:16, overflow:'hidden',
       background:'#111116',
-      display:'flex',alignItems:'center',justifyContent:'center',
+      display:'flex', alignItems:'center', justifyContent:'center',
     }}>
+      {/* placeholder underneath — always rendered */}
       <img src="../assets/note.png" style={{width:32,height:32,filter:'brightness(0) invert(1)',opacity:0.13}}/>
+      {/* cover on top, fades out on error */}
+      {url && (
+        <img ref={imgRef} src={url}
+          style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover',transition:'opacity 0.2s'}}
+          onLoad={e => { e.currentTarget.style.opacity = '1'; retryRef.current = 0; }}
+          onError={e => {
+            e.currentTarget.style.opacity = '0';
+            if (retryRef.current < 2) {
+              retryRef.current++;
+              const el = e.currentTarget;
+              setTimeout(() => {
+                if (!el.isConnected) return;
+                const sep = url.includes('?') ? '&' : '?';
+                el.src = url + sep + '_r=' + Date.now();
+              }, 500 * retryRef.current);
+            }
+          }}/>
+      )}
     </div>
   );
 }
 
 /* ── MagBtn ──────────────────────────────────────────────────────────────── */
 function MagBtn({ onClick, active, children, size=52 }) {
-  const [pressed, setPressed] = useState(false);
   return (
-    <button onClick={onClick}
-      onMouseDown={() => setPressed(true)} onMouseUp={() => setPressed(false)}
+    <motion.button onClick={onClick}
+      whileTap={{ scale: 0.82 }}
+      transition={{ type:'spring', stiffness: 600, damping: 22, mass: 0.4 }}
       style={{
         width:size, height:size, borderRadius:'50%', border:'none', background:'none',
         color: active ? 'var(--accent)' : 'rgba(255,255,255,0.38)',
         display:'flex', alignItems:'center', justifyContent:'center',
         cursor:'pointer', flexShrink:0,
-        transform:`scale(${pressed?0.83:1})`,
-        transition: pressed ? 'transform 0.08s ease' : 'color 0.2s ease',
+        transition:'color 0.2s ease',
       }}>
       {children}
-    </button>
+    </motion.button>
   );
 }
 
 /* ── PlayBtn ─────────────────────────────────────────────────────────────── */
 function PlayBtn({ isPlaying, onToggle }) {
-  const [pressed, setPressed] = useState(false);
   const BTN = 'clamp(58px, 7.2vw, 86px)';
   const ICO = 'clamp(32px, 4.2vw, 50px)';
   const ico = (visible, rot) => ({
@@ -709,22 +751,22 @@ function PlayBtn({ isPlaying, onToggle }) {
     pointerEvents:'none',
   });
   return (
-    <button onClick={onToggle}
-      onMouseDown={() => setPressed(true)} onMouseUp={() => setPressed(false)}
+    <motion.button onClick={onToggle}
+      whileTap={{ scale: 0.88 }}
+      transition={{ type:'spring', stiffness: 600, damping: 22, mass: 0.4 }}
       style={{
         width:BTN, height:BTN, borderRadius:'50%', border:'none',
         background: isPlaying ? 'rgba(178,178,178,0.1)' : 'rgba(255,255,255,0.06)',
         color:'var(--text)',
         display:'flex', alignItems:'center', justifyContent:'center',
         cursor:'pointer', flexShrink:0,
-        transform:`scale(${pressed?0.89:1})`,
-        transition: pressed ? 'transform 0.09s ease' : 'background 0.3s ease',
+        transition:'background 0.3s ease',
       }}>
       <div style={{position:'relative', width:ICO, height:ICO}}>
         <img src="../assets/play.png"  style={ico(!isPlaying,  90)}/>
         <img src="../assets/pause.png" style={ico( isPlaying, -90)}/>
       </div>
-    </button>
+    </motion.button>
   );
 }
 
@@ -746,11 +788,16 @@ function NavIcon({ icon, label, active, onClick, size=38, noActiveBg=false }) {
 }
 
 /* ── TrackRow ────────────────────────────────────────────────────────────── */
-const TrackRow = React.memo(function TrackRow({ track, isActive, isLoading, isError, onClick }) {
+const TrackRow = React.memo(function TrackRow({ track, isActive, isLoading, isError, onClick, onContextMenu }) {
   const t = useLang();
   const handleClick = useCallback(() => onClick(track), [onClick, track]);
+  const handleContextMenu = useCallback((e) => {
+    if (!onContextMenu) return;
+    e.preventDefault();
+    onContextMenu(track, e.clientX, e.clientY);
+  }, [onContextMenu, track]);
   return (
-    <div className={isActive ? 'track-row active' : 'track-row'} onClick={handleClick}
+    <div className={isActive ? 'track-row active' : 'track-row'} onClick={handleClick} onContextMenu={handleContextMenu}
       style={{
         display:'flex', alignItems:'center', gap:10, padding:'8px 10px', borderRadius:9,
         cursor:'pointer', position:'relative', zIndex:1,
@@ -795,12 +842,111 @@ const TrackRow = React.memo(function TrackRow({ track, isActive, isLoading, isEr
 });
 
 /* ── TrackList ───────────────────────────────────────────────────────────── */
-function VirtualTrackList({ items, activeId, loadingId, errorId, onClickItem, scrollToActive, scrollTargetId }) {
+/* ── TrackContextMenu ────────────────────────────────────────────────────── */
+function TrackContextMenu({ menu, onClose, onCopyLink, onStartStation }) {
+  const ref = useRef(null);
+  const [pos, setPos] = useState({ x: menu.x, y: menu.y, ready: false });
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    const PAD = 8;
+    let x = menu.x;
+    let y = menu.y;
+    if (x + w > window.innerWidth - PAD)  x = window.innerWidth  - w - PAD;
+    if (y + h > window.innerHeight - PAD) y = window.innerHeight - h - PAD;
+    if (x < PAD) x = PAD;
+    if (y < PAD) y = PAD;
+    setPos({ x, y, ready: true });
+  }, [menu.x, menu.y]);
+
+  useEffect(() => {
+    const onDown = (e) => {
+      if (!ref.current || ref.current.contains(e.target)) return;
+      onClose();
+    };
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    const onScroll = () => onClose();
+    document.addEventListener('mousedown', onDown, true);
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('wheel', onScroll, { passive: true });
+    window.addEventListener('blur', onClose);
+    return () => {
+      document.removeEventListener('mousedown', onDown, true);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('wheel', onScroll);
+      window.removeEventListener('blur', onClose);
+    };
+  }, [onClose]);
+
+  const t = useLang();
+  const canCopy = !!menu.track.permalinkUrl;
+
+  const Item = ({ label, icon, disabled, onClick }) => (
+    <div onClick={disabled ? null : () => { onClick?.(); onClose(); }}
+      style={{
+        display:'flex', alignItems:'center', gap:10,
+        padding:'7px 11px', borderRadius:7,
+        fontSize:12.5, color: disabled ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.86)',
+        cursor: disabled ? 'default' : 'pointer',
+        transition:'background 0.12s',
+        userSelect:'none',
+      }}
+      onMouseEnter={e => { if (!disabled) e.currentTarget.style.background='rgba(255,255,255,0.07)'; }}
+      onMouseLeave={e => { e.currentTarget.style.background='transparent'; }}>
+      <span style={{display:'flex', alignItems:'center', justifyContent:'center', width:14, opacity:0.7}}>{icon}</span>
+      <span>{label}</span>
+    </div>
+  );
+
+  return ReactDOM.createPortal(
+    <motion.div ref={ref}
+      initial={{ opacity: 0, scale: 0.92 }}
+      animate={{ opacity: pos.ready ? 1 : 0, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.95 }}
+      transition={{ type:'spring', stiffness: 520, damping: 36, mass: 0.5 }}
+      style={{
+        position:'fixed', left: pos.x, top: pos.y,
+        transformOrigin: 'top left',
+        minWidth: 200,
+        background:'rgba(24,24,24,0.97)',
+        backdropFilter:'blur(14px)', WebkitBackdropFilter:'blur(14px)',
+        border:'1px solid rgba(255,255,255,0.055)',
+        borderRadius:10, padding:4,
+        boxShadow:'0 12px 36px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.3)',
+        zIndex: 9998,
+      }}>
+      <Item label={t('copy_link')} disabled={!canCopy}
+        onClick={() => onCopyLink(menu.track)}
+        icon={
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+          </svg>
+        }/>
+      <Item label={t('start_station')} disabled={!menu.track.id || !onStartStation}
+        onClick={() => onStartStation(menu.track)}
+        icon={
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="2"/>
+            <path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.49M20.49 4a10 10 0 0 1 0 16M3.51 20a10 10 0 0 1 0-16"/>
+          </svg>
+        }/>
+    </motion.div>,
+    document.body
+  );
+}
+
+function VirtualTrackList({ items, activeId, loadingId, errorId, onClickItem, onContextMenuItem, scrollToActive, scrollTargetId }) {
   const ROW_H = 50;
   const BUFFER = 5;
+  const FADE = 18;
   const ref = useRef(null);
   const scrollRafRef = useRef(null);
   const [range, setRange] = useState({ start: 0, end: 30 });
+  const [edges, setEdges] = useState({ top: false, bottom: false });
 
   const updateRange = useCallback(() => {
     const el = ref.current;
@@ -812,6 +958,9 @@ function VirtualTrackList({ items, activeId, loadingId, errorId, onClickItem, sc
     const start = Math.max(0, visibleStart - BUFFER);
     const end = Math.min(items.length, visibleEnd + BUFFER);
     setRange(prev => (prev.start === start && prev.end === end) ? prev : { start, end });
+    const topEdge = scrollTop > 4;
+    const botEdge = scrollTop + viewportH < el.scrollHeight - 4;
+    setEdges(prev => (prev.top === topEdge && prev.bottom === botEdge) ? prev : { top: topEdge, bottom: botEdge });
   }, [items.length]);
 
   const updateRangeRef = useRef(updateRange);
@@ -839,6 +988,16 @@ function VirtualTrackList({ items, activeId, loadingId, errorId, onClickItem, sc
     };
   }, []);
 
+  const maskImage = (() => {
+    if (!edges.top && !edges.bottom) return 'none';
+    const parts = [];
+    parts.push(edges.top ? `transparent 0` : `black 0`);
+    parts.push(edges.top ? `black ${FADE}px` : `black 0`);
+    parts.push(edges.bottom ? `black calc(100% - ${FADE}px)` : `black 100%`);
+    parts.push(edges.bottom ? `transparent 100%` : `black 100%`);
+    return `linear-gradient(to bottom, ${parts.join(', ')})`;
+  })();
+
   useEffect(() => {
     if (!scrollToActive || !ref.current) return;
     const targetId = scrollTargetId ?? activeId;
@@ -856,7 +1015,11 @@ function VirtualTrackList({ items, activeId, loadingId, errorId, onClickItem, sc
   const offsetTop = range.start * ROW_H;
 
   return (
-    <div ref={ref} className="scroll-thin" style={{flex:1, overflowY:'auto', padding:'2px 6px 10px', position:'relative'}}>
+    <div ref={ref} className="scroll-thin" style={{
+      flex:1, overflowY:'auto', padding:'2px 6px 10px', position:'relative',
+      maskImage: maskImage, WebkitMaskImage: maskImage,
+      transition: 'mask-image 0.2s ease, -webkit-mask-image 0.2s ease',
+    }}>
       {activeIdx >= 0 && (
         <div style={{
           position:'absolute', pointerEvents:'none',
@@ -874,7 +1037,8 @@ function VirtualTrackList({ items, activeId, loadingId, errorId, onClickItem, sc
             <TrackRow key={t.id} track={t} isActive={t.id === activeId}
               isLoading={t.id === loadingId}
               isError={t.id === errorId}
-              onClick={onClickStable}/>
+              onClick={onClickStable}
+              onContextMenu={onContextMenuItem}/>
           ))}
         </div>
       </div>
@@ -886,7 +1050,12 @@ function VirtualTrackList({ items, activeId, loadingId, errorId, onClickItem, sc
 const HomeCard = React.memo(function HomeCard({ track, onSelect, artRef, artHidden, isLiked, onLike }) {
   const handleClick = useCallback(() => onSelect(track), [onSelect, track]);
   return (
-    <div className="home-card" onClick={handleClick}
+    <motion.div className="home-card" onClick={handleClick}
+      layout
+      initial={{ opacity: 0, scale: 0.88 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.85 }}
+      transition={{ type:'spring', stiffness: 360, damping: 30, mass: 0.7 }}
       style={{
         borderRadius:16, cursor:'pointer',
         contentVisibility:'auto', containIntrinsicSize:'auto 180px',
@@ -932,13 +1101,14 @@ const HomeCard = React.memo(function HomeCard({ track, onSelect, artRef, artHidd
           </div>
         )}
       </div>
-    </div>
+    </motion.div>
   );
 });
 
 /* ── Hero clone ──────────────────────────────────────────────────────────── */
-const HERO_DUR_MS = 380;
-const HERO_FADE_MS = 160;
+const HERO_DUR_MS  = 380;
+const HERO_FADE_MS = 140;
+const HERO_EASE    = 'expo.inOut';
 function HeroClone({ hero, exiting, reverse = false }) {
   const cloneRef = useRef(null);
   const innerRef = useRef(null);
@@ -951,26 +1121,27 @@ function HeroClone({ hero, exiting, reverse = false }) {
   const BR = 16;
   const DUR = HERO_DUR_MS / 1000;
 
-  useEffect(() => {
+  // run the timeline BEFORE first paint so there is no flash in the target rect
+  useLayoutEffect(() => {
     const el = cloneRef.current;
     const inner = innerRef.current;
     if (!el || !inner) return;
-    const tl = gsap.timeline();
+    const tl = gsap.timeline({ defaults: { force3D: true, ease: HERO_EASE, duration: DUR } });
     if (reverse) {
       tl.fromTo(el,
         { x: 0, y: 0, scale: 1 },
-        { x: dx, y: dy, scale: sc, duration: DUR, ease: 'sine.inOut' }, 0
+        { x: dx, y: dy, scale: sc }, 0
       ).fromTo(inner,
         { clipPath: `inset(0 round ${BR}px)` },
-        { clipPath: `inset(0 round ${BR / sc}px)`, duration: DUR, ease: 'sine.inOut' }, 0
+        { clipPath: `inset(0 round ${BR / sc}px)` }, 0
       );
     } else {
       tl.fromTo(el,
         { x: dx, y: dy, scale: sc },
-        { x: 0, y: 0, scale: 1, duration: DUR, ease: 'sine.inOut' }, 0
+        { x: 0, y: 0, scale: 1 }, 0
       ).fromTo(inner,
         { clipPath: `inset(0 round ${BR / sc}px)` },
-        { clipPath: `inset(0 round ${BR}px)`, duration: DUR, ease: 'sine.inOut' }, 0
+        { clipPath: `inset(0 round ${BR}px)` }, 0
       );
     }
     return () => tl.kill();
@@ -978,9 +1149,23 @@ function HeroClone({ hero, exiting, reverse = false }) {
 
   useEffect(() => {
     if (!exiting || !cloneRef.current) return;
-    const tween = gsap.to(cloneRef.current, { opacity: 0, duration: HERO_FADE_MS / 1000, ease: 'none' });
+    const tween = gsap.to(cloneRef.current, {
+      opacity: 0,
+      duration: HERO_FADE_MS / 1000,
+      ease: 'power2.out',
+      force3D: true,
+    });
     return () => tween.kill();
   }, [exiting]);
+
+  // pre-paint inline style — clone is born already in its starting transform
+  // forward starts at (dx, dy, scale=sc); reverse starts at identity
+  const initialTransform = reverse
+    ? 'translate3d(0,0,0) scale(1)'
+    : `translate3d(${dx}px, ${dy}px, 0) scale(${sc})`;
+  const initialClip = reverse
+    ? `inset(0 round ${BR}px)`
+    : `inset(0 round ${BR / sc}px)`;
 
   return ReactDOM.createPortal(
     <div ref={cloneRef} style={{
@@ -989,15 +1174,18 @@ function HeroClone({ hero, exiting, reverse = false }) {
       width: size, height: size,
       zIndex:960, pointerEvents:'none',
       transformOrigin:'center center',
+      transform: initialTransform,
       willChange:'transform, opacity',
       backfaceVisibility:'hidden',
+      transformStyle:'preserve-3d',
     }}>
       <div ref={innerRef} style={{
         position:'absolute', inset:0,
-        clipPath: reverse ? `inset(0 round ${BR}px)` : `inset(0 round ${BR / sc}px)`,
+        clipPath: initialClip,
         background:'#111116',
         display:'flex', alignItems:'center', justifyContent:'center',
         willChange:'clip-path',
+        backfaceVisibility:'hidden',
       }}>
         {hero.track.coverUrl ? (
           <img src={hero.track.coverUrl} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}
@@ -1045,7 +1233,6 @@ function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth
       width:58, height:'100%', flexShrink:0,
       display:'flex', flexDirection:'column', alignItems:'center',
       paddingTop:8, paddingBottom:18,
-      borderRight:'1px solid rgba(255,255,255,0.028)',
       background:'transparent', zIndex:10,
     }}>
       {/* верхняя группа: аватар-кнопка + nav + collapse */}
@@ -1509,7 +1696,6 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
       <div style={{
         width:214, flexShrink:0, height:'100%',
         padding:'36px 14px 24px',
-        borderRight:'1px solid rgba(255,255,255,0.028)',
         display:'flex', flexDirection:'column',
         background:'transparent',
       }}>
@@ -1676,11 +1862,16 @@ function SearchTrackRow({ track, isLiked, onLike, onClick, onCoverClick, isLoadi
   const lc = fmtCount(track.likesCount);
   const pc = fmtCount(track.playCount);
   return (
-    <div onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
+    <motion.div onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
+      layout
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: isError ? 0.55 : 1, height: 'auto' }}
+      exit={{ opacity: 0, height: 0, marginTop: 0, marginBottom: 0 }}
+      transition={{ type: 'spring', stiffness: 380, damping: 34, mass: 0.6 }}
       style={{
         display:'flex', alignItems:'center', gap:12, padding:'7px 0',
         borderBottom: hideDividers ? 'none' : '1px solid rgba(255,255,255,0.032)',
-        opacity: isError ? 0.55 : 1, transition:'opacity 0.2s',
+        overflow:'hidden',
       }}>
       {/* cover */}
       <div onClick={e=>{e.stopPropagation(); if(!isLoading) onCoverClick();}} style={{
@@ -1747,7 +1938,7 @@ function SearchTrackRow({ track, isLiked, onLike, onClick, onCoverClick, isLoadi
         <img src={isLiked ? '../assets/heart1.png' : '../assets/heart0.png'} width="11" height="11" style={{display:'block', filter:'brightness(0) invert(1)'}}/>
         {lc && <span style={{fontSize:11, fontVariantNumeric:'tabular-nums'}}>{lc}</span>}
       </div>}
-    </div>
+    </motion.div>
   );
 }
 
@@ -1844,12 +2035,12 @@ const SearchView = React.forwardRef(function SearchView({ visible, scAuth, liked
         padding:'0 52px', zIndex:2,
       }}>
         <div style={{
-          display:'flex', alignItems:'center', gap:14,
+          position:'relative',
           background:'rgba(255,255,255,0.05)',
-          borderRadius:18, padding:'15px 22px',
+          borderRadius:18,
         }}>
           <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2"
-            viewBox="0 0 24 24" style={{color:'rgba(255,255,255,0.3)', flexShrink:0}}>
+            viewBox="0 0 24 24" style={{position:'absolute', left:22, top:'50%', translate:'0 -50%', pointerEvents:'none', color:'rgba(255,255,255,0.3)'}}>
             <circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35" strokeLinecap="round"/>
           </svg>
           <input
@@ -1857,11 +2048,12 @@ const SearchView = React.forwardRef(function SearchView({ visible, scAuth, liked
             value={query} onChange={handleInput}
             placeholder={T('search_ph')}
             style={{
-              flex:1, background:'transparent', border:'none', outline:'none',
-              color:'#ededf4', fontSize:18, fontFamily:'inherit',
+              width:'100%', background:'transparent', border:'none', outline:'none',
+              padding:'15px 54px',
+              color:'#ededf4', fontSize:18, fontFamily:'inherit', textAlign:'center',
             }}
           />
-          {loading && <div style={{width:16,height:16,borderRadius:'50%',border:'2px solid rgba(255,255,255,0.15)',borderTopColor:'rgba(255,255,255,0.5)',animation:'spin 0.7s linear infinite',flexShrink:0}}/>}
+          {loading && <div style={{position:'absolute', right:22, top:'50%', translate:'0 -50%', width:16, height:16, borderRadius:'50%', border:'2px solid rgba(255,255,255,0.15)', borderTopColor:'rgba(255,255,255,0.5)', animation:'spin 0.7s linear infinite'}}/>}
         </div>
       </div>
 
@@ -1911,16 +2103,18 @@ const SearchView = React.forwardRef(function SearchView({ visible, scAuth, liked
           {results.length > 0 && (
             <div>
               <div style={{fontSize:10.5,letterSpacing:'0.09em',textTransform:'uppercase',color:'rgba(255,255,255,0.22)',marginBottom:8}}>{T('tracks_label')}</div>
-              {results.map(t => (
-                <SearchTrackRow key={t.id} track={t}
-                  isLiked={likedIds.has(t.id)}
-                  onLike={() => onLike(t)}
-                  onClick={() => onSelectTrack(t, results)}
-                  onCoverClick={() => onPlayTrack(t, results)}
-                  isLoading={loadingTrackId === t.id}
-                  isError={errorTrackId === t.id}
-                  hideDividers={hideDividers}/>
-              ))}
+              <AnimatePresence initial={false}>
+                {results.map(t => (
+                  <SearchTrackRow key={t.id} track={t}
+                    isLiked={likedIds.has(t.id)}
+                    onLike={() => onLike(t)}
+                    onClick={() => onSelectTrack(t, results)}
+                    onCoverClick={() => onPlayTrack(t, results)}
+                    isLoading={loadingTrackId === t.id}
+                    isError={errorTrackId === t.id}
+                    hideDividers={hideDividers}/>
+                ))}
+              </AnimatePresence>
               {loading && <div style={{textAlign:'center',color:'rgba(255,255,255,0.2)',padding:'16px 0',fontSize:12}}>{T('loading')}</div>}
             </div>
           )}
@@ -1934,9 +2128,6 @@ const SearchView = React.forwardRef(function SearchView({ visible, scAuth, liked
 function ArtistView({ artist, visible, onClose, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, loadingTrackId, errorTrackId, artistCacheRef, onFollow, onCheckFollow, hideDividers }) {
   const t = useLang();
   const [tab, setTab] = useState('popular');
-  const tabsRef = useRef({});
-  const tabsContainerRef = useRef(null);
-  const [pill, setPill] = useState({ left: 0, width: 0 });
   const [fetched, setFetched] = useState(null);
   const [artistTracks, setArtistTracks] = useState([]);
   const [tracksLoading, setTracksLoading] = useState(false);
@@ -1958,24 +2149,6 @@ function ArtistView({ artist, visible, onClose, scAuth, likedIds, onLike, onPlay
     { id: 'popular', label: t('artist_popular') },
     { id: 'tracks',  label: t('artist_tracks')  },
   ];
-
-  useLayoutEffect(() => {
-    let raf = requestAnimationFrame(() => {
-      const el = tabsRef.current[tab];
-      if (el && el.offsetWidth > 0) setPill({ left: el.offsetLeft, width: el.offsetWidth });
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [tab, visible]);
-
-  useEffect(() => {
-    if (!visible || !tabsContainerRef.current) return;
-    const ro = new ResizeObserver(() => {
-      const el = tabsRef.current[tab];
-      if (el && el.offsetWidth > 0) setPill({ left: el.offsetLeft, width: el.offsetWidth });
-    });
-    ro.observe(tabsContainerRef.current);
-    return () => ro.disconnect();
-  }, [tab, visible]);
 
   useEffect(() => {
     if (!artist) return;
@@ -2253,37 +2426,40 @@ function ArtistView({ artist, visible, onClose, scAuth, likedIds, onLike, onPlay
 
       {/* tabs */}
       <div style={{ flexShrink: 0, display: 'flex', justifyContent: 'center', padding: '10px 0 12px' }}>
-        <div ref={tabsContainerRef} style={{ position: 'relative', display: 'flex', gap: 2 }}>
-          {/* sliding pill */}
-          <div style={{
-            position: 'absolute', top: 0, bottom: 0,
-            background: 'rgba(255,255,255,0.10)',
-            border: '1px solid rgba(255,255,255,0.06)',
-            borderRadius: 999,
-            left: pill.left, width: pill.width,
-            transition: 'left 0.24s cubic-bezier(0.45,0,0.55,1), width 0.24s cubic-bezier(0.45,0,0.55,1)',
-            pointerEvents: 'none',
-          }}/>
-          {TABS.map(tb => (
-            <button key={tb.id}
-              ref={el => { tabsRef.current[tb.id] = el; }}
-              onClick={() => setTab(tb.id)}
-              style={{
-                position: 'relative', zIndex: 1,
-                background: 'none', border: 'none',
-                padding: '7px 18px',
-                fontSize: 12.5, fontWeight: 600,
-                color: tab === tb.id ? 'rgba(255,255,255,0.92)' : 'rgba(255,255,255,0.36)',
-                cursor: 'pointer', fontFamily: 'inherit',
-                transition: 'color 0.18s ease',
-                letterSpacing: '0.015em',
-                borderRadius: 999,
-              }}
-              onMouseEnter={e => { if (tab !== tb.id) e.currentTarget.style.color = 'rgba(255,255,255,0.6)'; }}
-              onMouseLeave={e => { if (tab !== tb.id) e.currentTarget.style.color = 'rgba(255,255,255,0.36)'; }}
-            >{tb.label}</button>
-          ))}
-        </div>
+        <LayoutGroup id="artistTabs">
+          <div style={{ display: 'flex', gap: 2 }}>
+            {TABS.map(tb => (
+              <button key={tb.id}
+                onClick={() => setTab(tb.id)}
+                style={{
+                  position: 'relative', zIndex: 1,
+                  background: 'none', border: 'none',
+                  padding: '7px 18px',
+                  fontSize: 12.5, fontWeight: 600,
+                  color: tab === tb.id ? 'rgba(255,255,255,0.92)' : 'rgba(255,255,255,0.36)',
+                  cursor: 'pointer', fontFamily: 'inherit',
+                  transition: 'color 0.18s ease',
+                  letterSpacing: '0.015em',
+                  borderRadius: 999,
+                }}
+                onMouseEnter={e => { if (tab !== tb.id) e.currentTarget.style.color = 'rgba(255,255,255,0.6)'; }}
+                onMouseLeave={e => { if (tab !== tb.id) e.currentTarget.style.color = 'rgba(255,255,255,0.36)'; }}
+              >
+                {tab === tb.id && (
+                  <motion.div layoutId="artistTabPill"
+                    style={{
+                      position: 'absolute', inset: 0,
+                      background: 'rgba(255,255,255,0.10)',
+                      border: '1px solid rgba(255,255,255,0.06)',
+                      borderRadius: 999, zIndex: -1,
+                    }}
+                    transition={{ type: 'spring', stiffness: 420, damping: 34, mass: 0.7 }}/>
+                )}
+                {tb.label}
+              </button>
+            ))}
+          </div>
+        </LayoutGroup>
       </div>
 
       {/* content */}
@@ -2307,16 +2483,20 @@ function ArtistView({ artist, visible, onClose, scAuth, likedIds, onLike, onPlay
           </div>
         ) : artistTracks.length === 0 ? (
           <div style={{ textAlign:'center', padding:'48px 0', fontSize:12, color:'rgba(255,255,255,0.15)' }}>{t('not_found')}</div>
-        ) : artistTracks.map(tr => (
-          <SearchTrackRow key={tr.id} track={tr}
-            isLiked={likedIds?.has(tr.id) || false}
-            onLike={onLike ? () => onLike(tr) : null}
-            onClick={() => onSelectTrack?.(tr)}
-            onCoverClick={() => onPlayTrack?.(tr)}
-            isLoading={loadingTrackId === tr.id}
-            isError={errorTrackId === tr.id}
-            hideDividers={hideDividers}/>
-        ))}
+        ) : (
+          <AnimatePresence initial={false}>
+            {artistTracks.map(tr => (
+              <SearchTrackRow key={tr.id} track={tr}
+                isLiked={likedIds?.has(tr.id) || false}
+                onLike={onLike ? () => onLike(tr) : null}
+                onClick={() => onSelectTrack?.(tr)}
+                onCoverClick={() => onPlayTrack?.(tr)}
+                isLoading={loadingTrackId === tr.id}
+                isError={errorTrackId === tr.id}
+                hideDividers={hideDividers}/>
+            ))}
+          </AnimatePresence>
+        )}
         {loadingMore && (
           <div style={{ display:'flex', justifyContent:'center', padding:'16px 0' }}>
             <div style={{ width:20, height:20, border:'2px solid rgba(255,255,255,0.07)', borderTopColor:'rgba(255,255,255,0.22)', borderRadius:'50%', animation:'spin 1s linear infinite' }}/>
@@ -2350,12 +2530,15 @@ function App() {
   const [avatarFlying,       setAvatarFlying]       = useState(false);
   const [artistView,         setArtistView]         = useState(null);
   const [libCollapsed,  setLibCollapsed]  = useState(false);
+  const [libWidth,      setLibWidth]      = useState(260);
+  const libDragRef = useRef(null);
   const [settings,      setSettings]      = useState({
     autoplay:false, crossfade:0, defaultRepeat:false,
     startWithWindows:false, minimizeToTray:false, musicFolder:'',
     customTitles: {}, minDuration: 30, soundcloudAuth: null,
     sourceMode: 'local', discordRpc: true,
     discordTimestamp: 'progress', discordPause: 'show', discordCover: true,
+    libWidth: 260,
   });
   const [sort,         setSort]         = useState('added');
   const [editingTitle, setEditingTitle] = useState(false);
@@ -2366,6 +2549,8 @@ function App() {
   const [scError,       setScError]       = useState(null);
   const [toast,         setToast]         = useState(null);
   const [toastExiting,  setToastExiting]  = useState(false);
+  const [trackMenu,     setTrackMenu]     = useState(null);
+  const [stationActive, setStationActive] = useState(null);
   const [loadingTrackId, setLoadingTrackId] = useState(null);
   const [errorTrackId,   setErrorTrackId]   = useState(null);
   const errorTimerRef = useRef(null);
@@ -2433,6 +2618,7 @@ function App() {
   const filteredScRef     = useRef([]);
   const searchRef         = useRef('');
   const searchQueueRef    = useRef(null);
+  const stationQueueRef   = useRef(null);
   const scShuffleOrderRef = useRef([]);
   const scShuffleIdxRef   = useRef(-1);
   const scPlayingTrackRef = useRef(null);
@@ -2455,6 +2641,7 @@ function App() {
         const saved = await window.electronAPI.loadSettings();
         if (saved && Object.keys(saved).length) {
           setSettings(s => ({ ...s, ...saved }));
+          if (typeof saved.libWidth === 'number') setLibWidth(saved.libWidth);
           if (saved.musicFolder) {
             const local = await window.electronAPI.scanMusicFolder(saved.musicFolder);
             if (local.length > 0) {
@@ -2660,7 +2847,7 @@ function App() {
     if (shuffle) {
       const cur = scPlayingTrackRef.current;
       if (cur) {
-        const list = searchQueueRef.current || (searchRef.current ? filteredScRef.current : scTracksRef.current);
+        const list = stationQueueRef.current || searchQueueRef.current || (searchRef.current ? filteredScRef.current : scTracksRef.current);
         scShuffleOrderRef.current = buildScShuffle(list, cur.id);
         scShuffleIdxRef.current = 0;
       }
@@ -2678,7 +2865,7 @@ function App() {
       progressRef.current = 0; return;
     }
     if (scPlayingTrack) {
-      const list = searchQueueRef.current || (searchRef.current ? filteredScRef.current : scTracksRef.current);
+      const list = stationQueueRef.current || searchQueueRef.current || (searchRef.current ? filteredScRef.current : scTracksRef.current);
       if (shuffle) {
         const remaining = scShuffleOrderRef.current.length - 1 - scShuffleIdxRef.current;
         if (searchQueueRef.current && remaining <= 3) searchViewRef.current?.loadMore();
@@ -2729,7 +2916,7 @@ function App() {
       return;
     }
     if (scPlayingTrack) {
-      const list = searchQueueRef.current || (searchRef.current ? filteredScRef.current : scTracksRef.current);
+      const list = stationQueueRef.current || searchQueueRef.current || (searchRef.current ? filteredScRef.current : scTracksRef.current);
       if (shuffle && scShuffleOrderRef.current.length > 0) {
         const pi = scShuffleIdxRef.current - 1;
         if (pi >= 0) {
@@ -2995,7 +3182,9 @@ function App() {
 
   const initScLikes = useCallback(async (auth) => {
     const cache = await window.electronAPI.scLoadLikesCache();
-    const cacheValid = cache && cache.length > 0 && Object.prototype.hasOwnProperty.call(cache[0], 'hlsUrl');
+    const cacheValid = cache && cache.length > 0
+      && Object.prototype.hasOwnProperty.call(cache[0], 'hlsUrl')
+      && Object.prototype.hasOwnProperty.call(cache[0], 'permalinkUrl');
     if (cacheValid) {
       scCacheRef.current = cache;
       scCacheMapRef.current = new Map(cache.map(t => [t.id, t]));
@@ -3132,7 +3321,7 @@ function App() {
     if (!auth) { setLoadingTrackId(null); return; }
 
     if (!autoSkip && shuffle) {
-      const list = searchQueueRef.current || (searchRef.current ? filteredScRef.current : scTracksRef.current);
+      const list = stationQueueRef.current || searchQueueRef.current || (searchRef.current ? filteredScRef.current : scTracksRef.current);
       scShuffleOrderRef.current = buildScShuffle(list, scTrack.id);
       scShuffleIdxRef.current = 0;
     }
@@ -3144,7 +3333,7 @@ function App() {
     };
 
     const skipInDirection = () => {
-      const list = searchQueueRef.current || (searchRef.current ? filteredScRef.current : scTracksRef.current);
+      const list = stationQueueRef.current || searchQueueRef.current || (searchRef.current ? filteredScRef.current : scTracksRef.current);
       if (shuffle) {
         const order = scShuffleOrderRef.current;
         const ni = scShuffleIdxRef.current + direction;
@@ -3350,6 +3539,57 @@ function App() {
     return !currentlyFollowing;
   }, [t]);
 
+  const handleStartStation = useCallback(async (track) => {
+    const auth = scAuthRef.current;
+    if (!auth || !track?.id) { showToast(t('station_err')); return; }
+    try {
+      const res = await window.electronAPI.scFetch(
+        `https://api-v2.soundcloud.com/stations/soundcloud:track-stations:${track.id}/tracks?limit=50`,
+        auth.token, auth.clientId
+      );
+      const items = res?.data?.collection || [];
+      if (items.length === 0) { showToast(t('station_err')); return; }
+      const mapped = items.map(it => mapScTrack(it, STRINGS[langRef.current]?.no_title ?? 'Без названия'));
+      stationQueueRef.current = mapped;
+      searchQueueRef.current = null;
+      setStationActive({ origTrack: track, tracks: mapped });
+      setPlayerVisible(true);
+      setView('player');
+      setNavActive('library');
+      // play the first track from station
+      handleScTrackClick(mapped[0], -1);
+    } catch {
+      showToast(t('station_err'));
+    }
+  }, [t]);
+
+  const handleExitStation = useCallback(() => {
+    stationQueueRef.current = null;
+    setStationActive(null);
+  }, []);
+
+  const handleCopyTrackLink = useCallback(async (track) => {
+    if (!track?.permalinkUrl) { showToast(t('copy_link_err')); return; }
+    const auth = scAuthRef.current;
+    let link = track.permalinkUrl;
+    if (auth) {
+      try {
+        const res = await window.electronAPI.scFetch(
+          `https://api-v2.soundcloud.com/share/short-link?url=${encodeURIComponent(track.permalinkUrl)}`,
+          auth.token, auth.clientId
+        );
+        const short = res?.data?.short_url || res?.data?.shortUrl;
+        if (short) link = short;
+      } catch {}
+    }
+    try {
+      await navigator.clipboard.writeText(link);
+      showToast(t('link_copied'));
+    } catch {
+      showToast(t('copy_link_err'));
+    }
+  }, [t]);
+
   const checkFollow = useCallback(async (userId) => {
     if (!userId) return false;
     if (followedIdsRef.current.has(userId)) return true;
@@ -3530,13 +3770,13 @@ function App() {
                 </div>
               )}
               <div style={{
-                display:'flex', alignItems:'center', gap:9,
+                position:'relative',
                 background: searchFocused ? 'rgba(255,255,255,0.065)' : 'rgba(255,255,255,0.04)',
-                borderRadius:11, padding:'7px 13px', flex:1, maxWidth:240,
-                transition:'border-color 0.18s, background 0.18s',
+                borderRadius:11, flex:1, maxWidth:240,
+                transition:'background 0.18s',
               }}>
                 <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2"
-                  viewBox="0 0 24 24" style={{color: searchFocused ? 'rgba(255,255,255,0.38)' : 'rgba(255,255,255,0.22)', flexShrink:0, transition:'color 0.18s'}}>
+                  viewBox="0 0 24 24" style={{position:'absolute', left:13, top:'50%', translate:'0 -50%', pointerEvents:'none', color: searchFocused ? 'rgba(255,255,255,0.38)' : 'rgba(255,255,255,0.22)', transition:'color 0.18s'}}>
                   <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
                 </svg>
                 <input
@@ -3549,13 +3789,15 @@ function App() {
                   onBlur={() => setSearchFocused(false)}
                   style={{
                     background:'transparent', border:'none', outline:'none',
+                    padding:'7px 32px',
                     color:'rgba(255,255,255,0.78)', fontSize:12.5,
-                    width:'100%', userSelect:'text', fontFamily:'inherit',
+                    width:'100%', userSelect:'text', fontFamily:'inherit', textAlign:'center',
                   }}
                 />
                 {search && (
                   <div onClick={() => setSearch('')} style={{
-                    color:'rgba(255,255,255,0.28)', cursor:'pointer', flexShrink:0,
+                    position:'absolute', right:13, top:'50%', translate:'0 -50%',
+                    color:'rgba(255,255,255,0.28)', cursor:'pointer',
                     fontSize:15, lineHeight:1, transition:'color 0.15s',
                   }}>×</div>
                 )}
@@ -3647,14 +3889,16 @@ function App() {
               </div>
             ) : (
               <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(128px, 1fr))', gap:18}}>
-                {activeList.map((t) => (
-                  <HomeCard key={t.id} track={t}
-                    artRef={getArtRef(t.id)}
-                    onSelect={selectTrackStable}
-                    artHidden={(reverseHero && !reverseHeroExiting && t.id === track.id) || (hero && !heroExiting && t.id === hero.track.id)}
-                    isLiked={sourceMode === 'sc' ? likedIds.has(t.id) : false}
-                    onLike={sourceMode === 'sc' ? handleLike : null}/>
-                ))}
+                <AnimatePresence initial={false}>
+                  {activeList.map((t) => (
+                    <HomeCard key={t.id} track={t}
+                      artRef={getArtRef(t.id)}
+                      onSelect={selectTrackStable}
+                      artHidden={(reverseHero && !reverseHeroExiting && t.id === track.id) || (hero && !heroExiting && t.id === hero.track.id)}
+                      isLiked={sourceMode === 'sc' ? likedIds.has(t.id) : false}
+                      onLike={sourceMode === 'sc' ? handleLike : null}/>
+                  ))}
+                </AnimatePresence>
               </div>
             )}
           </div>
@@ -3669,52 +3913,88 @@ function App() {
           }}>
         {/* library panel */}
         <div style={{
-          width: libCollapsed ? 0 : 260,
+          width: libCollapsed ? 0 : libWidth,
           flexShrink:0, height:'100%',
-          borderRight: libCollapsed ? 'none' : '1px solid rgba(255,255,255,0.028)',
           background:'transparent',
           zIndex:9, overflow:'hidden',
           opacity: playerVisible ? 1 : 0,
           transform: playerVisible ? 'translateX(0)' : 'translateX(-28px)',
-          transition: playerVisible
-            ? 'opacity 0.36s ease 0.1s, transform 0.44s cubic-bezier(0.22,1,0.36,1) 0.1s, width 0.44s cubic-bezier(0.4,0,0.2,1), border 0.44s ease'
-            : 'opacity 0.14s ease, transform 0.18s ease, width 0.44s cubic-bezier(0.4,0,0.2,1), border 0.44s ease',
+          transition: (playerVisible
+            ? 'opacity 0.36s ease 0.1s, transform 0.44s cubic-bezier(0.22,1,0.36,1) 0.1s'
+            : 'opacity 0.14s ease, transform 0.18s ease')
+            + (libDragRef.current ? '' : ', width 0.36s cubic-bezier(0.4,0,0.2,1)'),
         }}>
-          <div style={{width:260, flexShrink:0, height:'100%', display:'flex', flexDirection:'column'}}>
-          <div style={{padding:'12px 10px 8px', flexShrink:0}}>
-            <div style={{
-              display:'flex', alignItems:'center', gap:9,
-              background: searchFocused ? 'rgba(255,255,255,0.065)' : 'rgba(255,255,255,0.04)',
-              borderRadius:11, padding:'9px 13px',
-              transition:'border-color 0.18s, background 0.18s',
-            }}>
-              <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2"
-                viewBox="0 0 24 24" style={{color: searchFocused ? 'rgba(255,255,255,0.38)' : 'rgba(255,255,255,0.22)', flexShrink:0, transition:'color 0.18s'}}>
-                <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
-              </svg>
-              <input
-                ref={libSearchRef}
-                value={search}
-                onChange={e=>setSearch(e.target.value)}
-                onFocus={() => setSearchFocused(true)}
-                onBlur={() => setSearchFocused(false)}
-                placeholder={t('search_short')}
-                style={{flex:1, background:'none', border:'none', outline:'none',
-                        color:'rgba(255,255,255,0.78)', fontSize:12.5, fontFamily:'inherit'}}/>
-              {search && (
-                <div onClick={() => setSearch('')} style={{
-                  color:'rgba(255,255,255,0.28)', cursor:'pointer', flexShrink:0,
-                  fontSize:15, lineHeight:1, transition:'color 0.15s',
-                }}>×</div>
-              )}
+          <div style={{width: libWidth, flexShrink:0, height:'100%', display:'flex', flexDirection:'column'}}>
+          {stationActive ? (
+            <div style={{padding:'12px 14px 10px', flexShrink:0, display:'flex', flexDirection:'column', alignItems:'center'}}>
+              <div style={{
+                fontSize:10, letterSpacing:'0.13em', textTransform:'uppercase',
+                color:'rgba(255,255,255,0.32)', fontWeight:600, marginBottom:4,
+                textAlign:'center',
+              }}>{t('station_for')}</div>
+              <div style={{
+                fontSize:13, color:'rgba(255,255,255,0.88)', fontWeight:500,
+                overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+                maxWidth:'100%', textAlign:'center',
+              }}>{stationActive.origTrack.title}</div>
+              <div onClick={handleExitStation} style={{
+                marginTop:9,
+                padding:'4px 14px',
+                fontSize:10.5, fontWeight:500, letterSpacing:'0.02em',
+                color:'rgba(255,255,255,0.55)',
+                background:'rgba(255,255,255,0.05)',
+                border:'1px solid rgba(255,255,255,0.06)',
+                borderRadius:999,
+                cursor:'pointer',
+                transition:'background 0.15s, color 0.15s, border-color 0.15s',
+                userSelect:'none',
+              }}
+                onMouseEnter={e => { e.currentTarget.style.background='rgba(255,255,255,0.09)'; e.currentTarget.style.color='rgba(255,255,255,0.82)'; e.currentTarget.style.borderColor='rgba(255,255,255,0.1)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background='rgba(255,255,255,0.05)'; e.currentTarget.style.color='rgba(255,255,255,0.55)'; e.currentTarget.style.borderColor='rgba(255,255,255,0.06)'; }}
+              >{t('station_exit')}</div>
             </div>
-          </div>
+          ) : (
+            <div style={{padding:'12px 10px 8px', flexShrink:0}}>
+              <div style={{
+                position:'relative',
+                background: searchFocused ? 'rgba(255,255,255,0.065)' : 'rgba(255,255,255,0.04)',
+                borderRadius:11,
+                transition:'background 0.18s',
+              }}>
+                <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2"
+                  viewBox="0 0 24 24" style={{position:'absolute', left:13, top:'50%', translate:'0 -50%', pointerEvents:'none', color: searchFocused ? 'rgba(255,255,255,0.38)' : 'rgba(255,255,255,0.22)', transition:'color 0.18s'}}>
+                  <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+                </svg>
+                <input
+                  ref={libSearchRef}
+                  value={search}
+                  onChange={e=>setSearch(e.target.value)}
+                  onFocus={() => setSearchFocused(true)}
+                  onBlur={() => setSearchFocused(false)}
+                  placeholder={t('search_short')}
+                  style={{width:'100%', background:'none', border:'none', outline:'none',
+                          padding:'9px 32px',
+                          color:'rgba(255,255,255,0.78)', fontSize:12.5, fontFamily:'inherit', textAlign:'center'}}/>
+                {search && (
+                  <div onClick={() => setSearch('')} style={{
+                    position:'absolute', right:13, top:'50%', translate:'0 -50%',
+                    color:'rgba(255,255,255,0.28)', cursor:'pointer',
+                    fontSize:15, lineHeight:1, transition:'color 0.15s',
+                  }}>×</div>
+                )}
+              </div>
+            </div>
+          )}
           <VirtualTrackList
-            items={activeList}
-            activeId={activeListPlayingId}
+            items={stationActive ? stationActive.tracks : activeList}
+            activeId={stationActive ? (scPlayingTrack ? scPlayingTrack.id : null) : activeListPlayingId}
             loadingId={loadingTrackId}
             errorId={errorTrackId}
             onClickItem={t => {
+              if (stationActive) {
+                handleScTrackClick(t, -1);
+                return;
+              }
               if (sourceMode === 'sc') {
                 searchQueueRef.current = null;
                 handleScTrackClick(t, scTracksRef.current.indexOf(t));
@@ -3729,9 +4009,64 @@ function App() {
             }}
             scrollToActive={libScrollTrigger}
             scrollTargetId={libScrollTargetId}
+            onContextMenuItem={(tr, x, y) => setTrackMenu({ track: tr, x, y })}
           />
           </div>
         </div>
+
+        {/* drag handle — positioned relative to flex parent, sits on library's right edge */}
+        {!libCollapsed && playerVisible && (
+          <div onMouseDown={(e) => {
+            e.preventDefault();
+            const startX = e.clientX;
+            const startW = libWidth;
+            const MIN = 160, MAX = 460, COLLAPSE_AT = 140;
+            libDragRef.current = { startX, startW };
+            document.body.style.userSelect = 'none';
+            document.body.style.cursor = 'col-resize';
+            const onMove = (ev) => {
+              const w = Math.min(MAX, Math.max(0, startW + (ev.clientX - startX)));
+              setLibWidth(w);
+            };
+            const onUp = (ev) => {
+              const raw = Math.min(MAX, Math.max(0, startW + (ev.clientX - startX)));
+              document.removeEventListener('mousemove', onMove);
+              document.removeEventListener('mouseup', onUp);
+              document.body.style.userSelect = '';
+              document.body.style.cursor = '';
+              libDragRef.current = null;
+              if (raw < COLLAPSE_AT) {
+                setLibCollapsed(true);
+                setLibWidth(260);
+                setSettings(s => ({ ...s, libWidth: 260 }));
+              } else {
+                const w = Math.max(MIN, raw);
+                setLibWidth(w);
+                setSettings(s => ({ ...s, libWidth: w }));
+              }
+            };
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+          }}
+            style={{
+              position:'absolute', top:0, left: libWidth - 3,
+              width:6, height:'100%',
+              cursor:'col-resize', zIndex:20,
+              background:'transparent',
+              transition: libDragRef.current ? 'none' : 'left 0.36s cubic-bezier(0.4,0,0.2,1)',
+            }}
+            onMouseEnter={e => { const h = e.currentTarget.firstChild; if (h) h.style.background='rgba(255,255,255,0.13)'; }}
+            onMouseLeave={e => { const h = e.currentTarget.firstChild; if (h) h.style.background='rgba(255,255,255,0)'; }}
+          >
+            <div style={{
+              position:'absolute', top:0, left:'50%', translate:'-50% 0',
+              width:2, height:'100%',
+              background:'rgba(255,255,255,0)',
+              transition:'background 0.18s',
+              pointerEvents:'none',
+            }}/>
+          </div>
+        )}
 
         {/* center player */}
         <div style={{
@@ -3905,19 +4240,33 @@ function App() {
           loadingTrackId={loadingTrackId} errorTrackId={errorTrackId}
           onFollow={handleFollow} onCheckFollow={checkFollow}/>
 
-        {toast && (
-          <div style={{
-            position:'absolute', bottom:28, left:'50%',
-            translate:'-50% 0',
-            background:'rgba(30,30,36,0.97)',
-            borderRadius:8, padding:'7px 13px', fontSize:12,
-            color:'rgba(255,255,255,0.45)', pointerEvents:'none',
-            zIndex:9999, whiteSpace:'nowrap',
-            animation: toastExiting
-              ? 'fadeOutDown 0.24s ease forwards'
-              : 'fadeInUp 0.18s ease',
-          }}>{toast}</div>
-        )}
+        <AnimatePresence>
+          {toast && !toastExiting && (
+            <motion.div
+              key="toast"
+              initial={{ opacity: 0, y: 12, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: 0.96 }}
+              transition={{ type:'spring', stiffness: 380, damping: 30, mass: 0.6 }}
+              style={{
+                position:'absolute', bottom:28, left:'50%',
+                translate:'-50% 0',
+                background:'rgba(30,30,36,0.97)',
+                borderRadius:8, padding:'7px 13px', fontSize:12,
+                color:'rgba(255,255,255,0.45)', pointerEvents:'none',
+                zIndex:9999, whiteSpace:'nowrap',
+              }}>{toast}</motion.div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {trackMenu && (
+            <TrackContextMenu key="ctxmenu" menu={trackMenu}
+              onClose={() => setTrackMenu(null)}
+              onCopyLink={handleCopyTrackLink}
+              onStartStation={handleStartStation}/>
+          )}
+        </AnimatePresence>
 
       </div>
     </div>
