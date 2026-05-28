@@ -1,27 +1,47 @@
 # карта renderer/index.html
 
-весь ui — один файл ~3600 строк. jsx компилируется babel standalone в браузере.
+весь ui — один файл ~4500 строк. jsx компилируется babel standalone в браузере.
 
 ## структура файла
 
 | строки    | что                                                        |
 |-----------|------------------------------------------------------------|
-| 1–76      | `<head>`: cdn-скрипты (react production + babel), `hls.min.js` локальный, `gsap.min.js` (CDN), css (`:root` vars, `#app-shell`, titlebar, scrollbar) |
-| 77–93     | `#app-shell` + `#titlebar` html |
-| 94–end    | `<script type="text/babel">`: весь react |
+| 1–95      | `<head>`: локальные vendor-скрипты (react production, babel, framer-motion, gsap), `hls.min.js`, css (`:root` vars, `#app-shell`, titlebar, scrollbar) |
+| 96–125    | `#app-shell` + `#titlebar` html |
+| 126–end   | `<script type="text/babel">`: весь react |
 
 ## css-переменные
 
 ```css
 --bg: #07070a   --border: rgba(255,255,255,0.055)
---text: #ededf4   --accent: #b2b2b2   --titlebar-h: 28px
+--text: #ededf4   --accent: #b2b2b2   --accent-rgb: 178, 178, 178
+--titlebar-h: 28px
 ```
 
-**анимации:** `breathe`, `spin`, `fadeInUp`, `fadeOutDown`, `artEntrance`
+`--accent` / `--accent-rgb` **динамически переписываются** через `useEffect` в `App` при смене `accentMode` или extracted цвета обложки. все места с `var(--accent)` (Sidebar pill, NavIcon active, MagBtn active, TrackRow active, лайк, caret) меняют цвет автоматически.
+
+**анимации:** `breathe`, `spin`, `fadeInUp`, `fadeOutDown`, `artEntrance` (легаси — частично заменены Motion-компонентами)
 
 **скроллбары:** `.scroll-thin` (8px зона, 2px визуально), `.scroll-home` (отступы под хедер сетки)
 
 шрифт: **Proxima Soft** (`renderer/fonts/ProximaSoft-Bold.ttf`)
+
+## vendor
+
+```
+vendor/
+  react.production.min.js
+  react-dom.production.min.js
+  babel.min.js
+  framer-motion.min.js     — UMD build (11.18.2), глобал window.Motion
+  gsap.min.js              — для HeroClone timeline и GSAP track slide
+```
+
+на верху babel-скрипта:
+```js
+const { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } = React;
+const { motion, AnimatePresence, LayoutGroup } = Motion;
+```
 
 ## assets
 
@@ -34,153 +54,181 @@ assets/
   tracks.png / search.png / player.png   — sidebar nav
   local.png / settings.png               — sidebar bottom
   note.png                  — заглушка обложки (TrackRow, AlbumArt, HomeCard, HeroClone)
-  vosproizvedenie.png / system.png / about.png — секции настроек
+  vosproizvedenie.png / system.png / about.png — секции настроек + иконка прослушиваний в SearchTrackRow
+  heart0.png / heart1.png   — лайки
 ```
 
 ## утилиты
 
 - `smoothScroll(el, targetTop, duration)` — плавный скролл easeInOutQuad
 - `fmt(s)` → `M:SS`
-- `fmtCount(n)` → `12.4K` / `1.2M` / `null` если 0 — форматирование больших чисел
-- `splitArtists(str)` → `[{name, sep}]` — парсит мультиартистную строку по разделителям (`&`, `,`, `.`, `x`, `feat.`, `vs.` и т.д.)
+- `fmtCount(n)` → `12.4K` / `1.2M` / `null` если 0
+- `splitArtists(str)` → `[{name, sep}]` — парсит мультиартистную строку
 - `SoundCloudIcon({ size, fill })` — инлайн SVG логотип SC
 - `scHashColor(id)` → `hsl(...)` по id трека
+- `mapScTrack(t, noTitle)` → SC track object (см. ниже)
+- `extractAccentColor(url)` → Promise<`{r,g,b}` | null>. 3-пасса с relaxing thresholds (sat/lum/count) + mean fallback + dark-boost. кеширует по URL в `_accentCache`. crossOrigin=anonymous.
+- `ACCENT_PRESETS` — `{ default, lavender, mint, rose, amber }` → `{r,g,b}`
 
 ## i18n
 
 ```
-STRINGS        — объект { ru: {...}, en: {...} }, ~80 ключей
+STRINGS        — объект { ru: {...}, en: {...} }, ~100 ключей
 LangContext    — React.createContext('ru')
 useLang()      — хук: возвращает t(key), читает LangContext
 ```
 
-язык берётся из `settings.language` ('RU' | 'EN', default 'RU'), нормализуется в lowercase.  
-`App` вычисляет `lang` и `t` на каждом рендере, оборачивает JSX в `<LangContext.Provider value={lang}>`.  
-компоненты вызывают `const t = useLang()` внутри себя.  
-**исключение**: `SearchView` использует `const T = useLang()` — буква `t` занята переменной трека в `.map(t => ...)`.  
-`useEffect` в `App` обновляет `title` у кнопок тайтлбара при смене языка (статичный HTML вне React).
+язык берётся из `settings.language` ('RU' | 'EN', default 'RU'), нормализуется в lowercase.
+`App` вычисляет `lang` и `t` на каждом рендере, оборачивает JSX в `<LangContext.Provider value={lang}>`.
+компоненты вызывают `const t = useLang()` внутри себя.
+**исключение**: `SearchView` использует `const T = useLang()` — буква `t` занята переменной трека в `.map(t => ...)`.
+
+ключи добавленные в сессиях: `back`, `subscribe`, `subscribed`, `artist_label`, `follow_err`, `unfollow_err`, `copy_link`, `link_copied`, `copy_link_err`, `start_station`, `station_for`, `station_exit`, `station_err`, `accent_title`, `accent_sub`, `accent_default/lavender/mint/rose/amber/cover`, `accent_cover_sub`.
 
 ## компоненты
 
 ### `MarqueeText`
-пропсы: `{text, style, onClick, maxWidth?}`
-ellipsis + tooltip. `useLayoutEffect` проверяет overflow после изменения `text`/`maxWidth`. если текст обрезан — при hover показывает кастомный тултип (абсолютный div, `fadeInUp 0.15s`). если `maxWidth` задан — `width:fit-content, maxWidth`; иначе `flex:1, minWidth:0`.
+`{text, style, onClick, maxWidth?}`. ellipsis + tooltip. `useLayoutEffect` проверяет overflow. tooltip → portal-like absolute div с `fadeInUp 0.15s`. центрирование через CSS `translate: -50% 0` (не transform — конфликтовал с keyframes).
 
 ### `PlayerLikeBtn`
-пропсы: `{liked, onLike, style?}`
-сердечко 19px в плеере (только для SC треков). hover через `useState`. filled/outline зависит от `liked`. scale 1.18 при hover. принимает `style` для дополнительного позиционирования.
+`{liked, onLike, style?}`. сердечко 19px в плеере (для SC треков). scale 1.18 при hover.
 
-### `WaveProgressBar`
-пропсы: `{progress, elapsed, total, onSeek, isPlaying, visible}`
-div-based pill bar (H=8px, `borderRadius:8`). нет canvas. rAF обновляет `fillRef.style.transform = scaleX(p)` (GPU-only, без layout recalculation). drag → onSeek. таймкоды слева/справа через `elapsedSpanRef`/`remainingSpanRef` — обновляются тем же rAF. rAF останавливается при `visible=false`.
+### `ProgressBar` (бывш. WaveProgressBar)
+`{progressRef, total, onSeek, isPlaying, visible, accentRGB}`.
+div-based pill bar. высота **10px → 14px** при hover/drag (spring overshoot). external padding 10px = hit-zone ~30px. rAF обновляет `fillRef.style.transform = scaleX(p)` + thumb `left = p*100%` + текстовые таймкоды.
+- **fill gradient** использует `accentRGB` (lighter справа) с fallback на бело-серый
+- **glow layer** (отдельный div, не клиппится track-overflow) — accent box-shadow усиливается на hover/drag
+- **thumb** — белый круг 14→16px, opacity 0 при idle, появляется при hover/drag, центрирован через `translate: -50% -50%`
+- **time tooltip** — при hover/drag над курсором показывается dark pill с `fmt(time)`
 
 ### `ThinVolumeSlider`
-пропсы: `{volume [0–1], onChange}`
 canvas TW=28px, вертикальный. drag вверх = больше. `#c8c8c8` fill с glow, без thumb.
 
 ### `AlbumArt`
-пропсы: `{track, isPlaying}`
-если `track.coverUrl` — `<img>`. иначе: `#111116` фон + `assets/note.png` (opacity 0.13). `borderRadius:16` (совпадает с HomeCard и HeroClone для бесшовного hero-перехода).
+`{track, isPlaying}`. контейнер всегда с `#111116` фоном + `note.png` placeholder сзади (opacity 0.13).
+- если `track.coverUrl` есть — `<img>` поверх. на `onError` ставит `opacity:0` (не display:none) → placeholder виден.
+- **retry до 2 раз** с задержкой 0.5с/1с при ошибке (cache-bust query string)
+- **focus/visibilitychange listener**: когда окно вернулось из фона и `<img>` не загружен (`naturalWidth===0`), форсит reload с cache-bust. защита от Chromium image-cache eviction в фоне.
 
 ### `MagBtn`
-пропсы: `{onClick, active, children, size=52}`
-круглая кнопка, press-scale 0.83. в плеере `size` передаётся как CSS `clamp()` строка.
+`{onClick, active, children, size=52}`. **motion.button** с `whileTap={{scale:0.82}}`, spring (600/22/0.4).
 
 ### `PlayBtn`
-пропсы: `{isPlaying, onToggle}`
-кнопка `clamp(50px, 6.2vw, 76px)`. иконка `clamp(28px, 3.6vw, 44px)`. crossfade-анимация между play/pause.
+`{isPlaying, onToggle}`. **motion.button** с `whileTap={{scale:0.88}}`. crossfade play↔pause через два `<img>` со scale/rotate.
 
 ### `NavIcon`
-пропсы: `{icon, label, active, onClick, size=38, noActiveBg=false}`
-кнопка сайдбара 38px. **активность через `opacity`**: active=1, inactive=0.3 (не через `color` — работает с PNG иконками).
+`{icon, label, active, onClick, size=38, noActiveBg=false}`. активность через `opacity` (1/0.3).
 
 ### `TrackRow`
-пропсы: `{track, isActive, isLoading, isError, onClick}`
-строка библиотеки. высота жёстко 50px. миниатюра 34px — если нет обложки: `assets/note.png` (opacity меняется с active).
-**спиннер загрузки**: справа от текста, слева от времени — 14px кружок (`border-top` акцент), `opacity` 0→1 по `isLoading`, `animation: spin 0.75s linear infinite`.
-**ошибка**: `isError` — вместо времени «недоступен» красным.
+`{track, isActive, isLoading, isError, onClick, onContextMenu}`.
+высота 50px. миниатюра 34px. спиннер при `isLoading`. `isError` → «недоступен» красным.
+**onContextMenu** → `e.preventDefault()` + вызов проп `onContextMenu(track, x, y)`.
 
 ### `VirtualTrackList`
-пропсы: `{items, activeId, loadingId, errorId, onClickItem, scrollToActive, scrollTargetId}`
-ROW_H=50. CSS `content-visibility:auto`. абсолютный пилл с transition `0.42s cubic-bezier`. `loadingId`/`errorId` пробрасываются в `TrackRow`.
+`{items, activeId, loadingId, errorId, onClickItem, onContextMenuItem, scrollToActive, scrollTargetId}`.
+ROW_H=50. `content-visibility:auto`. абсолютный пилл с transition. `onContextMenuItem` пробрасывается в `TrackRow`.
+- **edge fade-out**: `mask-image: linear-gradient(...)` динамически из state `edges={top,bottom}`. top fade видим если `scrollTop > 4`, bottom — если есть скрытый контент снизу. transition `mask-image 0.2s ease`. если содержимое влезает целиком — mask='none'.
 
 ### `HomeCard`
-пропсы: `{track, onSelect, artRef, artHidden, isLiked, onLike}`
-карточка сетки. hover-scale 1.03. **порядок**: текст (артист→название) сверху с фоном `rgba(255,255,255,0.05)` и `borderRadius: 16 16 0 0`, затем обложка снизу. обложка имеет собственный `borderRadius:16, overflow:hidden`. карточка без `overflow:hidden` — клипинг только на арте.
+`{track, onSelect, artRef, artHidden, isLiked, onLike}`. **motion.div** с entry/exit spring (380/32/0.6): `scale 0.92→1`, `opacity 0→1`, exit `scale 0.88`. **layout prop убран** — был perf-bottleneck на больших гридах.
 
-### `HeroClone`
-пропсы: `{hero, exiting, reverse=false}`
-portal → document.body. **GSAP** `sine.inOut` 0.42s (вперёд) / 0.38s (назад). `borderRadius:16` постоянный — inner div компенсирует scale (`borderRadius / sc` на старте → `16` в конце). `tl.kill()` при анмаунте. при `exiting` — `gsap.to(opacity:0)`. `hero` объект содержит `textStartRect` (позиция текста карточки, ~46px над артом).
+### `HeroClone` ⚡
+`{hero, exiting, reverse=false}`. portal → document.body. **GSAP timeline** `expo.inOut`, `force3D:true`.
+- **одиночный div** (без inner): static `border-radius:16` + `overflow:hidden` для cover-clip. clipPath-анимация убрана — была CPU-bound через rasterize.
+- animation **только transform** (translate3d + scale) — GPU-only композит
+- `useLayoutEffect` + pre-paint inline `transform: translate3d(dx,dy,0) scale(sc)` → no flash при mount
+- exit: `gsap.to(opacity:0)` с `power2.out` 140мс
+- `contain:'layout style paint'` + `backface-visibility:hidden` — изоляция от соседнего DOM, sub-pixel AA
+- `<img loading="eager" decoding="sync">` — обложка готова к старту анимации
 
 ### `Sidebar`
-пропсы: `{navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth, profileRef, sourceMode, onToggleSource, avatarFlying}`
-левая панель 58px.
-- **SC аватар** 44×44 вверху → `onNav('soundcloud')`
-- **NAV** `[home→tracks.png, search→search.png, library→player.png]` с анимирующимся пиллом
-- **collapse-кнопка** (только в player)
-- **local.png** — toggle sourceMode (только при scAuth)
-- **settings.png** → настройки
-
-все иконки: `<img src="../assets/X.png" filter:brightness(0)invert(1)>`, opacity через NavIcon.
+`{navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth, profileRef, sourceMode, onToggleSource, avatarFlying}`.
+левая панель 58px без border (разделители убраны для чистоты).
+- SC аватар 44×44 вверху → `onNav('soundcloud')`
+- NAV `[home, search, library]` с анимирующимся пиллом
+- collapse-кнопка (только в player)
+- toggle source (только при scAuth)
+- settings.png → настройки
 
 ### `CrossfadeSlider`
-пропсы: `{value [0–12], onChange}`
-drag через `setPointerCapture` (onPointerDown/Move/Up). wheel (passive:false). визуал: 6px трек без thumb, `#c8c8c8` fill с glow, hit-зона 24px.
+`{value [0–12], onChange}`. drag через `setPointerCapture`. wheel (passive:false). 6px трек без thumb.
 
 ### `SettingsView`
-пропсы: `{settings, onSettings, visible, onScanTracks, onClearFolder, onClearCoversCache, onClearLikesCache}`
+`{settings, onSettings, visible, onScanTracks, onClearFolder, onClearCoversCache, onClearLikesCache, appAccent}`.
 секции: `playback`→`vosproizvedenie.png`, `appearance`→`theme.png`, `system`→`system.png`, `about`→`about.png`.
 
 **playback**: только CrossfadeSlider.
 
-**appearance**: карточка «Интерфейс» (hideDividers) + карточка «Discord» с toggle discordRpc и анимированным блоком кастомизации:
-- **Таймстамп**: чипы `progress` / `elapsed` / `none`
-- **При паузе**: чипы `show` / `hide`
-- **Обложка трека**: toggle discordCover
+**appearance** (порядок):
+1. **карточка «Акцентный цвет»** (новое):
+   - 5 swatches (default/lavender/mint/rose/amber) — круги 32px с Apple-style focus ring при active
+   - divider
+   - выделенная карточка **«От обложки»** с conic-gradient rainbow border (CSS mask `xor` trick), палитра-иконка в круглом gradient, live preview swatch (`appAccent` real-time)
+   - выбор пишет в `settings.accentMode`
+2. карточка «Интерфейс» — `hideDividers` toggle (влияет на разделители в SettingsView **и** SearchTrackRow)
+3. карточка «Discord» — toggle `discordRpc` + анимированный блок (timestamp chips, pause chips, cover toggle)
 
-**system**: язык (RU/EN), кэш, запуск (startWithWindows → `app.setLoginItemSettings`, minimizeToTray), локальная музыка.
+**system**: язык, кэш, запуск, локальная музыка.
 
 ### `AvatarFlyClone`
 portal-анимация аватара (SoundCloudView → Sidebar), 440мс.
 
 ### `SearchTrackRow`
-пропсы: `{track, isLiked, onLike, onClick, onCoverClick, isLoading, isError}`
-строка результата поиска/профиля артиста.
-- обложка 44px с play-оверлеем (hover) или спиннером (`isLoading`)
+`{track, isLiked, onLike, onClick, onCoverClick, isLoading, isError, hideDividers}`.
+**motion.div** с `layout` + initial/animate/exit spring (380/34/0.6). `height:'auto'`, exit сжимается в 0.
+- обложка 44px с play-оверлеем (hover) или спиннером
 - title + artist (flex:1)
-- справа: сердечко (интерактивное) + кол-во лайков `fmtCount`, кол-во прослушиваний + иконка, длина трека
-- `isError` → вместо длины «недоступен» красным, строка затухает (opacity 0.55)
+- stats: плей-иконка `vosproizvedenie.png` + count, длительность, `tabular-nums`
+- **лайк в pill-обёртке справа** (отдельный блок): фон/бордер при active, min-width фиксирован (62px/32px) чтобы не дёргался
+- `hideDividers` — `borderBottom` исчезает
+- `isError` — opacity 0.55
 
 ### `SearchView`
-пропсы: `{visible, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, onResultsLoaded, onArtistClick, loadingTrackId, errorTrackId}`
-рефы: `hasMoreRef`, `offsetRef` — синхронизируются каждый рендер для доступа из колбэков.
-`useImperativeHandle` экспортирует:
-- `focus()` — фокус на input
-- `loadMore()` — подгружает следующую страницу; нет-оп если `loadingRef.current` или `!hasMoreRef.current`
-`onResultsLoaded(newTracks)` — вызывается только при пагинации (не при первом поиске).
-карточки артистов кликабельны → `onArtistClick(user)`.
-`loadingTrackId`/`errorTrackId` пробрасываются в `SearchTrackRow`.
+`{visible, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, onResultsLoaded, onArtistClick, loadingTrackId, errorTrackId, hideDividers}`.
+рефы `hasMoreRef`, `offsetRef`. `useImperativeHandle({focus, loadMore})`. карточки артистов кликабельны.
+- **inputs**: иконка `position:absolute left`, input `width:100% padding`, `text-align:center`. placeholder = `t('search_ph')` = "поиск"/"search".
+- **artist cards**: 42px avatar, 13.5px name, gap 14, padding 12/16, ellipsis на длинных именах. при hover тонкий бордер.
+- результаты завёрнуты в `<AnimatePresence initial={false}>`.
 
 ### `ArtistView`
-пропсы: `{artist, visible, onClose, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, loadingTrackId, errorTrackId, artistCacheRef}`
+`{artist, visible, onClose, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, loadingTrackId, errorTrackId, artistCacheRef, onFollow, onCheckFollow, hideDividers}`.
 
 **artist объект**: `{ id?, username, avatarUrl?, followersCount?, bannerUrl? }`
 
-при открытии: если `artist.id` есть — фетчит `/users/{id}` → получает полный профиль (аватар, баннер, фолловеры). если только `username` — сначала `/search/users?q=username&limit=1` → затем `/users/{id}`.
+при открытии: если `artist.id` есть — `/users/{id}`. иначе `search/users?q=username&limit=1` → `/users/{id}`. кеш в `artistCacheRef` (Map по id или username).
 
-**лейаут**:
-- баннер 220px — если есть `bannerUrl`: изображение + тёмный градиент; иначе просто `#07070a`
-- кнопка «назад» top-left, текст через `t('back')`
-- внутри баннера: квадратная аватарка 148px (border-radius 14px) + имя (26px bold) + фолловеры справа
+**hero (asymmetric)**:
+- blur-фон (banner > avatar > пусто) + тёмный градиент (apple-style)
+- круглая кнопка «назад» 32px с `backdrop-filter:blur(10px)` + `rgba(0,0,0,0.42)` — видна на любом фоне
+- слева аватар 148px (`borderRadius:16`), справа info-колонка:
+  - caps "АРТИСТ" 10.5px
+  - имя `clamp(26px, 3.4vw, 38px)` bold
+  - followers + **кнопка «Подписаться»/«Вы подписаны»** в строку
 
-**табы**: Популярные / Треки (2 вкладки, sliding underline pill).
+**подписка**:
+- эффект на `[visible, profileId]` → `onCheckFollow(profileId)` (GET /me/followings/{id})
+- клик кнопки → `onFollow(profileId, isFollowing)` (PUT/DELETE через scFetch)
+- состояние `isFollowing`/`followBusy` локально, кеш `followedIdsRef` глобально
 
-**загрузка треков** (useEffect на `[tab, profileId, visible]`):
+**табы (LayoutGroup + layoutId)**:
+- 2 вкладки: Популярные / Треки
+- активная имеет `<motion.div layoutId="artistTabPill">` (spring 420/34/0.7) — Motion сам анимирует пилл между табами, нет ручных измерений
+
+**загрузка треков** (useEffect на `[tab, profileId, visible, fetchKey]`):
 - Popular → `/users/{id}/toptracks?limit=20`
-- Tracks → `/users/{id}/tracks?limit=20` (+ пагинация через `next_href` при скролле)
+- Tracks → `/users/{id}/tracks?limit=20` (+ пагинация через `next_href`)
 
-**клик по обложке** → `onPlayTrack` (воспроизведение без перехода).
-**клик по строке** → `onSelectTrack` (воспроизведение + переход в плеер).
+треки в `<AnimatePresence initial={false}>` через `SearchTrackRow`.
+
+### `TrackContextMenu`
+`{menu, onClose, onCopyLink, onStartStation}`. portal → document.body.
+- **motion.div** с pop-in (`scale 0.92→1`, opacity, transform-origin top-left), spring (520/36/0.5). exit `scale 0.95`.
+- позиция у курсора через `useLayoutEffect` (clamp за края экрана с PAD=8)
+- закрывается: клик вне, Escape, scroll wheel, `blur` окна
+- pill-стиль: `rgba(24,24,24,0.97)` + backdrop-blur, padding 4px, borderRadius 10
+- пункты:
+  - **Скопировать ссылку** (disabled если нет `permalinkUrl`)
+  - **Запустить станцию** (disabled если нет id)
 
 ---
 
@@ -196,37 +244,36 @@ libCollapsed, settings, sort, editingTitle, editValue
 scTracks, scLoading, scUpdating, scError
 scPlayingTrack, scPlayingIdx
 libScrollTrigger, libScrollTargetId, searchFocused
-toast           — строка тоста или null
-toastExiting    — bool, true во время fade-out анимации
-loadingTrackId  — id SC трека пока идёт fetch+буферизация
-errorTrackId    — id SC трека если недоступен (2.2с, затем null)
-artEntranceKey  — счётчик, инкремент → ремаунт обёртки AlbumArt → artEntrance анимация
+toast, toastExiting
+loadingTrackId, errorTrackId
+artEntranceKey
 artistView      — null | { id?, username, avatarUrl?, followersCount?, bannerUrl? }
+trackMenu       — null | { track, x, y }
+stationActive   — null | { origTrack, tracks }
+accentRGB       — null | { r, g, b } extracted from track.coverUrl
 ```
 
-`lang` и `t` — не state, вычисляются при каждом рендере из `settings.language`:
-```js
-const lang = (settings.language || 'RU').toLowerCase(); // 'ru' | 'en'
-const t = key => STRINGS[lang]?.[key] ?? STRINGS.ru[key] ?? key;
-```
+`lang` и `t` — не state, вычисляются при каждом рендере из `settings.language`.
+
+**appAccent** — `useMemo([settings.accentMode, accentRGB])`:
+- если `accentMode === 'cover'` и `accentRGB` есть → boost luminance to ≥110, returns `{r,g,b}`
+- иначе → `ACCENT_PRESETS[settings.accentMode] || ACCENT_PRESETS.default`
+
+**useEffect [appAccent]** → `document.documentElement.style.setProperty('--accent', 'rgb(r,g,b)')` + `--accent-rgb`
+
+**useEffect [track.id, track.coverUrl]** → `extractAccentColor(coverUrl)` → `setAccentRGB(c)`
 
 **settings**:
 ```js
 {
-  crossfade: 0,                  // 0–12 сек
-  startWithWindows: false,       // app.setLoginItemSettings
-  minimizeToTray: false,
-  musicFolder: '',
-  customTitles: {},
-  minDuration: 30,
-  soundcloudAuth: null,
-  sourceMode: 'local',
+  autoplay, crossfade: 0,
+  startWithWindows, minimizeToTray,
+  musicFolder, customTitles, minDuration: 30,
+  soundcloudAuth, sourceMode: 'local',
   language: 'RU',
-  hideDividers: false,
-  discordRpc: true,
-  discordTimestamp: 'progress',  // 'progress' | 'elapsed' | 'none'
-  discordPause: 'show',          // 'show' | 'hide'
-  discordCover: true,
+  hideDividers,
+  discordRpc, discordTimestamp, discordPause, discordCover,
+  accentMode: 'default',  // 'default'|'lavender'|'mint'|'rose'|'amber'|'cover'
 }
 ```
 
@@ -235,114 +282,133 @@ const t = key => STRINGS[lang]?.[key] ?? STRINGS.ru[key] ?? key;
 ```
 artRefs, artRefCacheRef   — refs на обложки HomeCard
 playerArtRef              — ref на AlbumArt в плеере
-slideWrapRef              — ref на обёртку обложки в плеере (GSAP track slide)
-playerInfoRef             — ref на блок артист+название в плеере (GSAP анимация входа)
-trackDirRef               — 'next'|'prev' — направление для GSAP track slide
-slideReadyRef             — пропускает первый mount в track slide эффекте
-audioRef                  — HTML5 Audio
-hlsRef                    — hls.js инстанс (null если не HLS)
+slideWrapRef              — обёртка обложки в плеере (GSAP slide)
+playerInfoRef             — блок артист+название (GSAP анимация входа)
+trackDirRef               — 'next'|'prev' направление GSAP slide
+slideReadyRef             — пропуск первого mount
+audioRef, hlsRef
 handleNextRef, handlePrevRef, isPlayingRef
 homeScrollRef, scAvatarRef, sidebarProfileRef
 scTracksRef, scAuthRef, scCacheRef, scCacheMapRef
+artistCacheRef            — Map<id|username, profile> для ArtistView кеша
+followedIdsRef            — Set<userId> кеш статуса подписок
 filteredRef, filteredScRef, searchRef
-volumeRef                 — синхронизируется каждый рендер (для crossfade)
-settingsRef               — синхронизируется каждый рендер (для crossfade/discord)
-langRef                   — синхронизируется каждый рендер (для async-функций)
-crossfadeRafRef           — rAF handle для fade-in/fade-out анимации громкости
-trackSwitchingRef         — true пока handleScTrackClick грузит трек; блокирует сброс громкости в isPlaying=false эффекте
-toastTimerRef             — таймер скрытия тоста
+volumeRef, settingsRef, langRef
+crossfadeRafRef, trackSwitchingRef
+toastTimerRef
 discordTimerRef, discordProgressRef
 prevSearchRef, homeSearchRef, libSearchRef
-prevViewRef               — view из которого открылся ArtistView (для handleCloseArtist)
+searchQueueRef            — queue из SearchView/ArtistView (для next/prev)
+stationQueueRef           — queue станции (приоритет над searchQueue в next/prev)
+scShuffleOrderRef, scShuffleIdxRef
+prevViewRef               — view из которого открылся ArtistView
 customTitlesRef, minDurationRef, editCancelRef
 ```
 
 ### `App` — helpers
 
-- **`startFadeIn(audio)`** — отменяет текущий rAF, если `crossfade>0` устанавливает `audio.volume=0` и rAF-анимацию до `volumeRef.current` за N сек; иначе просто восстанавливает volume
-- **`destroyHls()`** — уничтожает hls.js инстанс и обнуляет `hlsRef`
-- **`showToast(msg)`** — показывает тост 2.2с, затем fade-out 0.24с, затем убирает из DOM
-- **`handleSearchResultsLoaded(newTracks)`** — вызывается из `SearchView.onResultsLoaded`; дописывает треки в `searchQueueRef`, дошафливает в конец `scShuffleOrderRef` если shuffle активен
-- **`handleOpenArtist(artist)`** — сохраняет `prevViewRef.current = view`, устанавливает `artistView`, `view='artist'`
-- **`handleCloseArtist()`** — возвращает к `prevViewRef.current` (search/player/home)
+- **`startFadeIn(audio)`** — fade-in для crossfade
+- **`destroyHls()`** — уничтожает hls.js
+- **`showToast(msg)`** — 2.2с показ, 0.24с fade-out
+- **`handleSearchResultsLoaded(newTracks)`** — append к searchQueueRef + дошафливание
+- **`handleOpenArtist(artist)`** / **`handleCloseArtist()`** — навигация ArtistView
+- **`handleFollow(userId, currentlyFollowing)`** — POST/DELETE `/me/followings/{id}`, обновляет `followedIdsRef`
+- **`checkFollow(userId)`** — GET `/me/followings/{id}`, кешируется в `followedIdsRef`
+- **`handleCopyTrackLink(track)`** — GET `/share/short-link?url=...` через scFetch → `navigator.clipboard.writeText`; fallback на `track.permalinkUrl` если short-link API упал
+- **`handleStartStation(track)`** — GET `/stations/soundcloud:track-stations:{id}/tracks?limit=50`, mapScTrack каждый, ставит `stationQueueRef` и `stationActive`, играет `tracks[0]`
+- **`handleExitStation()`** — чистит `stationQueueRef` и `stationActive`
 
-### `App` — crossfade (локальные треки и SC)
+### `App` — mouse side-buttons
 
-- **fade-out**: в `timeupdate` — если `remaining <= crossfade`, `audio.volume = volume * (remaining/crossfade)`; seek восстанавливает volume
-- **fade-in SC**: `trackSwitchingRef=true` перед `setIsPlaying(false)`; `audio.volume=0` выставляется до play; `startFadeIn` вызывается в обработчике события `playing` (когда аудио реально начало воспроизводиться, не во время буферизации); `trackSwitchingRef=false` сбрасывается там же
-- **fade-in local**: `startFadeIn(audio)` вызывается перед `audio.play()` в useEffect смены трека
-- **пауза**: при `isPlaying=false` — отменяет rAF; восстанавливает `audio.volume` только если `!trackSwitchingRef.current`
+useEffect на `[view, tracks, trackIdx, handleCloseArtist]` слушает `window.mouseup`:
+- **button=3** (XButton1 back): artist → handleCloseArtist; player/settings/soundcloud/search → home
+- **button=4** (XButton2 forward): если есть текущий трек и `view ∉ {player, artist}` → плеер
+
+### `App` — crossfade
+
+- **fade-out**: в `timeupdate` — если `remaining ≤ crossfade`, `audio.volume = volume * (remaining/crossfade)`
+- **fade-in SC**: `trackSwitchingRef=true`, `audio.volume=0`, `startFadeIn` в обработчике `playing` event
+- **fade-in local**: `startFadeIn(audio)` перед `audio.play()`
+- **пауза**: отменяет rAF; восстанавливает volume только если `!trackSwitchingRef.current`
 
 ### `App` — handleScTrackClick
 
-1. `trackSwitchingRef=true`, `setIsPlaying(false)`, `setLoadingTrackId(scTrack.id)`
-2. fetch `streamUrl` → если нет → fetch `hlsUrl` (fallback)
-3. если оба недоступны → `trackSwitchingRef=false`, markError, skipInDirection если autoSkip
+1. `trackSwitchingRef=true`, `setIsPlaying(false)`, `setLoadingTrackId(id)`
+2. fetch `streamUrl` → fallback `hlsUrl`
+3. если оба недоступны → markError, skipInDirection если autoSkip
 4. `setScPlayingTrack(resolved)`
 5. `audio.volume = cf>0 ? 0 : volumeRef.current`
-6. регистрирует `audio.addEventListener('playing', ..., {once:true})` → `trackSwitchingRef=false`, `startFadeIn`
-7. если HLS → hls.js: `loadSource` → `attachMedia` → `MANIFEST_PARSED` → play
-8. иначе progressive → `audio.src` → `audio.load()` → play
-9. `setLoadingTrackId(null)` в `.then()` от `audio.play()`
+6. `'playing'` event → `trackSwitchingRef=false`, `startFadeIn`
+7. HLS → hls.js manifest → play; иначе progressive → `audio.src` → play
+8. `setLoadingTrackId(null)` в `.then()`
+
+list priority в next/prev и handleScTrackClick: `stationQueueRef > searchQueueRef > scTracks/filteredSc`
 
 ### `App` — handleLike
 
-`PUT /users/{userId}/track_likes/{id}` — лайк, `DELETE` — анлайк. запросы идут через `sc-fetch` (main process) с DataDome cookie из сессии `persist:soundcloud`. при ошибке — тост, UI не обновляется.
+`PUT /users/{userId}/track_likes/{id}` / `DELETE`. через `sc-fetch` (main process с DataDome cookie). при ошибке — тост.
 
 ### `App` — initScLikes (кеш-миграция)
 
-Если `cache[0]` не имеет `hlsUrl` как own property → кеш старого формата → `loadScLikes(auth)` (полная перезагрузка). Одноразовая миграция.
+Если у `cache[0]` нет `hlsUrl` ИЛИ `permalinkUrl` как own property → старый формат → `loadScLikes(auth)` (полная перезагрузка). Защищает от устаревших полей при апдейтах.
+
+### `App` — selectTrack (home grid → player)
+
+async функция:
+1. если `view==='player'` → просто `startPlay()`, return
+2. **scroll target card в видимую область** (mirror logic из handleNav home→player) + `await rAF`
+3. если `artEl` и `playerArtRef.current` есть → setHero с правильными rect'ами + переход в player
+4. иначе → skip hero, обычный переход (защита от (0,0) glitch при пустых рефах)
 
 ### `App` — SC трек-объект
 
 ```js
 { id, title, artist, duration, color, coverUrl,
-  artistId,          // SC user id аплоадера (для открытия профиля)
-  artistAvatarUrl,   // аватарка аплоадера
-  uploaderUsername,  // username аплоадера (для splitArtists matching)
-  likesCount,        // кол-во лайков трека
-  playCount,         // кол-во прослушиваний
-  streamUrl,         // progressive endpoint (может быть null)
-  hlsUrl,            // HLS endpoint (может быть null)
-  resolvedUrl,       // только у scPlayingTrack — финальный CDN URL
+  artistId, artistAvatarUrl, uploaderUsername,
+  likesCount, playCount,
+  streamUrl, hlsUrl,
+  permalinkUrl,      // для context menu copy-link и short-link API
+  resolvedUrl,       // только у scPlayingTrack
 }
 ```
 
 ### `App` — имя артиста в плеере
 
-`splitArtists(track.artist)` разбивает строку на `[{name, sep}]`. каждый `name` — отдельный кликабельный спан.
-- если `name.toLowerCase() === track.uploaderUsername.toLowerCase()` → `handleOpenArtist({ id: track.artistId, username: name, avatarUrl: track.artistAvatarUrl })`
-- иначе → `handleOpenArtist({ username: name })` (ArtistView сам найдёт через поиск)
+`splitArtists(track.artist)` разбивает строку. каждый name — отдельный кликабельный спан.
+- `name === uploaderUsername` → `handleOpenArtist({id: artistId, username, avatarUrl})`
+- иначе → `handleOpenArtist({username})` (ArtistView найдёт через поиск)
 
 ### `App` — Discord RPC
 
-useEffect зависит от `[track?.id, isPlaying, settings.discordRpc, settings.discordTimestamp, settings.discordPause, settings.discordCover]`.
-- `discordRpc=false` или `!track` → `discordClear`
-- `discordPause='hide'` и `!isPlaying` → `discordClear`
-- иначе → `discordUpdate({ title, artist, duration, progress, coverUrl, isPlaying, timestamp })`
-
-`timestamp` в main.js: `'progress'` → start+end (progress bar), `'elapsed'` → только start, `'none'` → без timestamp.
+useEffect зависит от `[track?.id, isPlaying, settings.discordRpc, discordTimestamp, discordPause, discordCover]`. `timestamp` в main: `'progress'` → start+end; `'elapsed'` → только start; `'none'` → без.
 
 ### `App` — лейаут плеера
 
-центральный блок (flex column, alignItems:center):
-- `width: 'calc(100% - 48px)', maxWidth: clamp(380px, 55vw, 900px)` — адаптивный контейнер
-- **порядок**: `playerInfoRef` (артист→название) → обложка (`slideWrapRef`) → прогресс-бар → кнопки
-- **артист**: `fontSize: clamp(12px, 1.5vw, 16px)`
-- **название**: `fontSize: clamp(18px, 2.6vw, 28px)`, `maxWidth: min(clamp(280px, 38vw, 520px), 88%)`
-- **обложка**: `width: min(100%, clamp(320px, 54vw, 760px), clamp(240px, 58vh, 760px))` — масштабируется по ширине И высоте
+центральный блок:
+- `width: calc(100% - 48px)`, `maxWidth: clamp(380px, 55vw, 900px)`
+- порядок: playerInfoRef (артист → название) → slideWrapRef (обложка + **ambient glow blob**) → ProgressBar → controls
+- **ambient glow** (за обложкой, `zIndex:0`, opacity 1 кроме hero):
+  - `position:absolute inset:-30%, borderRadius:50%`
+  - `background: radial-gradient` с `appAccent` (4 stops: 0.55 → 0.26 → 0.08 → 0)
+  - `filter: blur(42px)`
+  - `transition: opacity 0.6s ease, background 0.6s ease`
+- **обложка**: `width: min(100%, clamp(320px, 54vw, 760px), clamp(240px, 58vh, 760px))`
 - **прогресс-бар**: `width: min(100%, clamp(260px, 34vw, 520px))`
-- **библиотека**: внутренний `width:260px` fixed wrapper предотвращает reflow при анимации collapse
+- **библиотека**: фиксированный 260px, схлопывается через `width:0` (overflow:hidden), кнопка collapse в сайдбаре
 
 ### `App` — анимации
 
-- **home→player**: HeroClone GSAP `sine.inOut` 0.42s + `playerInfoRef` fade+slide (`sine.out` 0.42s delay 0.08s)
-- **player→home**: reverse HeroClone GSAP `sine.inOut` 0.38s
-- **смена трека**: GSAP `fromTo` на `slideWrapRef` (`y: ±14 → 0`, `power2.out` 0.5s); направление из `trackDirRef`
+- **Motion (framer-motion)** — на компонент-level:
+  - `motion.div` с layout/initial/animate/exit/spring: HomeCard, SearchTrackRow, ProgressBar thumb (косвенно), MagBtn, PlayBtn, TrackContextMenu, toast
+  - `AnimatePresence` обёртки: home grid, SearchView results, ArtistView tracks, toast, context menu
+  - `LayoutGroup` + `layoutId="artistTabPill"` — sliding pill в ArtistView tabs
+- **GSAP** (timeline-сложные):
+  - **home→player**: HeroClone `expo.inOut` 0.38s + playerInfoRef fade+slide (`sine.out` 0.42s delay 0.08s)
+  - **player→home**: reverse HeroClone `expo.inOut`
+  - **смена трека**: GSAP `fromTo` на `slideWrapRef` (`y: ±14 → 0`, `power2.out` 0.5s); направление из `trackDirRef`
 - **SC логин**: AvatarFlyClone 440мс
-- **artEntrance**: при `view→'player'` без hero → `artEntranceKey++` → `scale(0.86)→scale(1) + opacity 0→1`, 420мс
-- **библиотека**: появление `opacity 0.36s ease 0.1s, transform 0.44s ... 0.1s`
-- **тост**: `fadeInUp 0.18s` → через 2.2с `fadeOutDown 0.24s` → убирается из DOM
+- **artEntrance**: при `view→'player'` без hero → `artEntranceKey++` → scale/opacity, 420мс
+- **toast**: Motion entrance/exit с spring (380/30/0.6)
 
 ### рендер
 ```js
