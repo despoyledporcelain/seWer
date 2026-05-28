@@ -129,6 +129,104 @@
 const { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } = React;
 const { motion, AnimatePresence, LayoutGroup } = Motion;
 
+/* ── accent presets ──────────────────────────────────────────────────────── */
+const ACCENT_PRESETS = {
+  default:  { r: 178, g: 178, b: 178 },
+  lavender: { r: 155, g: 125, b: 255 },
+  mint:     { r: 130, g: 220, b: 195 },
+  rose:     { r: 255, g: 145, b: 175 },
+  amber:    { r: 255, g: 178, b: 100 },
+};
+
+/* ── color extraction ────────────────────────────────────────────────────── */
+const _accentCache = new Map();
+function extractAccentColor(url) {
+  if (!url) return Promise.resolve(null);
+  if (_accentCache.has(url)) return Promise.resolve(_accentCache.get(url));
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    let done = false;
+    const finish = (val) => { if (done) return; done = true; _accentCache.set(url, val); resolve(val); };
+    img.onload = () => {
+      try {
+        const W = 32, H = 32;
+        const canvas = document.createElement('canvas');
+        canvas.width = W; canvas.height = H;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0, W, H);
+        const { data } = ctx.getImageData(0, 0, W, H);
+
+        // Try a series of relaxing filters; first non-empty wins.
+        const passes = [
+          { sat: 28, lumMin: 38, lumMax: 222, minCount: 3 },
+          { sat: 14, lumMin: 22, lumMax: 235, minCount: 2 },
+          { sat: 6,  lumMin: 12, lumMax: 244, minCount: 1 },
+        ];
+
+        const tryPass = (p) => {
+          const buckets = new Map();
+          for (let i = 0; i < data.length; i += 4) {
+            const r = data[i], g = data[i+1], b = data[i+2];
+            const max = Math.max(r,g,b), min = Math.min(r,g,b);
+            const sat = max - min;
+            const lum = (r + g + b) / 3;
+            if (sat < p.sat || lum < p.lumMin || lum > p.lumMax) continue;
+            const key = ((r>>5)<<10) | ((g>>5)<<5) | (b>>5);
+            const e = buckets.get(key) || { c:0, r:0, g:0, b:0, s:0 };
+            e.c++; e.r += r; e.g += g; e.b += b; e.s += sat;
+            buckets.set(key, e);
+          }
+          let best = null;
+          for (const e of buckets.values()) {
+            const score = e.c * (e.s / e.c);
+            if (!best || score > best.score) best = { ...e, score };
+          }
+          if (!best || best.c < p.minCount) return null;
+          return {
+            r: Math.round(best.r / best.c),
+            g: Math.round(best.g / best.c),
+            b: Math.round(best.b / best.c),
+          };
+        };
+
+        let color = null;
+        for (const p of passes) {
+          color = tryPass(p);
+          if (color) break;
+        }
+
+        // Last resort: weighted mean of all mid-luminance pixels (works on grayscale covers)
+        if (!color) {
+          let sr=0, sg=0, sb=0, n=0;
+          for (let i = 0; i < data.length; i += 4) {
+            const r = data[i], g = data[i+1], b = data[i+2];
+            const lum = (r + g + b) / 3;
+            if (lum < 18 || lum > 245) continue;
+            sr += r; sg += g; sb += b; n++;
+          }
+          if (n > 0) color = { r: Math.round(sr/n), g: Math.round(sg/n), b: Math.round(sb/n) };
+        }
+
+        if (!color) { finish(null); return; }
+
+        // Boost low-luminance colors so the glow & accent text stay visible
+        let { r, g, b } = color;
+        const lum = (r + g + b) / 3;
+        if (lum < 90) {
+          const k = 90 / Math.max(1, lum);
+          r = Math.min(255, Math.round(r * k));
+          g = Math.min(255, Math.round(g * k));
+          b = Math.min(255, Math.round(b * k));
+        }
+        finish({ r, g, b });
+      } catch { finish(null); }
+    };
+    img.onerror = () => finish(null);
+    img.src = url;
+  });
+}
+
 function smoothScroll(el, targetTop, duration) {
   const startTop = el.scrollTop;
   const delta    = targetTop - startTop;
@@ -283,6 +381,9 @@ const STRINGS = {
     follow_err:'не удалось подписаться', unfollow_err:'не удалось отписаться',
     copy_link:'Скопировать ссылку', link_copied:'Ссылка скопирована', copy_link_err:'не удалось скопировать ссылку',
     start_station:'Запустить станцию', station_for:'Станция по треку', station_exit:'выйти', station_err:'не удалось запустить станцию',
+    accent_title:'Акцентный цвет', accent_sub:'Применяется ко всем активным элементам интерфейса',
+    accent_default:'По умолчанию', accent_lavender:'Лавандовый', accent_mint:'Мятный', accent_rose:'Розовый', accent_amber:'Янтарный', accent_cover:'От обложки',
+    accent_cover_sub:'Динамически меняется под обложку трека',
   },
   en: {
     minimize:'Minimize', maximize:'Maximize', close:'Close',
@@ -347,6 +448,9 @@ const STRINGS = {
     follow_err:'could not follow', unfollow_err:'could not unfollow',
     copy_link:'Copy link', link_copied:'Link copied', copy_link_err:'could not copy link',
     start_station:'Start station', station_for:'Station for', station_exit:'exit', station_err:'could not start station',
+    accent_title:'Accent color', accent_sub:'Applied to all active interface elements',
+    accent_default:'Default', accent_lavender:'Lavender', accent_mint:'Mint', accent_rose:'Rose', accent_amber:'Amber', accent_cover:'From cover',
+    accent_cover_sub:'Dynamically follows the current track artwork',
   },
 };
 const LangContext = React.createContext('ru');
@@ -435,7 +539,7 @@ function PlayerLikeBtn({ liked, onLike, style: extraStyle }) {
 }
 
 /* ── Progress Bar ────────────────────────────────────────────────────────── */
-function ProgressBar({ progressRef, total, onSeek, isPlaying, visible }) {
+function ProgressBar({ progressRef, total, onSeek, isPlaying, visible, accentRGB }) {
   const trackRef         = useRef(null);
   const fillRef          = useRef(null);
   const thumbRef         = useRef(null);
@@ -450,6 +554,9 @@ function ProgressBar({ progressRef, total, onSeek, isPlaying, visible }) {
   totalRef.current = total;
   const isPlayingRef     = useRef(isPlaying);
   isPlayingRef.current = isPlaying;
+  const [hover, setHover]   = useState(false);
+  const [active, setActive] = useState(false);
+  const [tip, setTip] = useState({ x: 0, t: 0, show: false });
 
   const drawRef = useRef(null);
   const kick = () => {
@@ -500,38 +607,112 @@ function ProgressBar({ progressRef, total, onSeek, isPlaying, visible }) {
   };
   useEffect(() => {
     const onMove = (e) => { if (dragging.current) onSeek(getVal(e)); };
-    const onUp   = () => { dragging.current = false; };
+    const onUp   = () => { if (dragging.current) { dragging.current = false; setActive(false); } };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
     return () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
   }, [onSeek]);
 
   const timeStyle = {
-    fontSize: 10, fontVariantNumeric: 'tabular-nums',
-    color: 'rgba(255,255,255,0.22)', letterSpacing: '0.02em',
+    fontSize: 10.5, fontVariantNumeric: 'tabular-nums',
+    color: hover || active ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.28)',
+    letterSpacing: '0.02em',
     userSelect: 'none', flexShrink: 0,
+    transition: 'color 0.2s ease',
   };
+  const thick = hover || active;
+  const TRACK_H = thick ? 14 : 10;
+  const THUMB_SZ = active ? 16 : (hover ? 14 : 0);
   return (
-    <div style={{width:'100%', display:'flex', alignItems:'center', gap:9}}>
+    <div style={{width:'100%', display:'flex', alignItems:'center', gap:11}}>
       <span ref={elapsedSpanRef} style={timeStyle}>{fmt(Math.floor(progressRef.current * (total||0)))}</span>
-      <div ref={trackRef}
+      {/* clickable hit-zone with vertical padding */}
+      <div
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => { setHover(false); setTip(s => ({...s, show:false})); }}
+        onMouseMove={e => {
+          const rect = trackRef.current?.getBoundingClientRect();
+          if (!rect) return;
+          const wrapRect = e.currentTarget.getBoundingClientRect();
+          const p = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+          setTip({ x: e.clientX - wrapRect.left, t: Math.floor(p * (total || 0)), show: true });
+        }}
+        onMouseDown={e => { dragging.current = true; setActive(true); onSeek(getVal(e)); kick(); }}
         style={{
           flex:1, minWidth:0, position:'relative',
-          height:8, borderRadius:8, overflow:'hidden',
-          background:'rgba(255,255,255,0.09)',
-          cursor:'pointer',
+          padding: '10px 0', cursor:'pointer',
+          display:'flex', alignItems:'center',
         }}
-        onMouseDown={e => { dragging.current = true; onSeek(getVal(e)); kick(); }}
       >
-        <div ref={fillRef} style={{
-          position:'absolute', left:0, top:0,
-          height:'100%',
-          background:'rgba(220,220,220,0.9)',
-          boxShadow:'0 0 8px rgba(200,200,200,0.3)',
-          width:'100%', transformOrigin:'left center',
-          transform:'scaleX(' + progressRef.current + ')',
-          pointerEvents:'none',
-        }}/>
+        {/* time tooltip on hover */}
+        {tip.show && (
+          <div style={{
+            position:'absolute',
+            left: tip.x, top: -4,
+            translate: '-50% -100%',
+            background:'rgba(20,20,26,0.96)',
+            backdropFilter:'blur(10px)', WebkitBackdropFilter:'blur(10px)',
+            border:'1px solid rgba(255,255,255,0.055)',
+            padding:'4px 9px', borderRadius:6,
+            fontSize:11, fontWeight:600, fontVariantNumeric:'tabular-nums',
+            color:'rgba(255,255,255,0.92)',
+            pointerEvents:'none', whiteSpace:'nowrap',
+            boxShadow:'0 8px 20px rgba(0,0,0,0.5)',
+            zIndex: 5,
+          }}>{fmt(tip.t)}</div>
+        )}
+        <div style={{ width:'100%', position:'relative' }}>
+          {/* track with overflow-hidden so fill scaleX clips cleanly */}
+          <div ref={trackRef}
+            style={{
+              width:'100%', position:'relative',
+              height: TRACK_H,
+              borderRadius: 999, overflow:'hidden',
+              background:'rgba(255,255,255,0.085)',
+              boxShadow: thick ? 'inset 0 1px 1px rgba(0,0,0,0.18)' : 'none',
+              transition: 'height 0.22s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.2s ease',
+            }}
+          >
+            <div ref={fillRef} style={{
+              position:'absolute', left:0, top:0,
+              height:'100%', width:'100%',
+              background: accentRGB
+                ? `linear-gradient(90deg, rgba(${accentRGB.r},${accentRGB.g},${accentRGB.b},0.88), rgba(${Math.min(255,accentRGB.r+25)},${Math.min(255,accentRGB.g+25)},${Math.min(255,accentRGB.b+25)},1))`
+                : 'linear-gradient(90deg, rgba(220,220,220,0.92), rgba(255,255,255,1))',
+              transformOrigin:'left center',
+              transform:'scaleX(' + progressRef.current + ')',
+              pointerEvents:'none',
+              transition:'background 0.6s ease',
+            }}/>
+          </div>
+          {/* glow layer (outside track so it isn't clipped) */}
+          <div style={{
+            position:'absolute', left:0, top:'50%', translate:'0 -50%',
+            height: TRACK_H, width: `${(progressRef.current * 100).toFixed(3)}%`,
+            borderRadius: 999,
+            boxShadow: (() => {
+              const c = accentRGB ? `${accentRGB.r},${accentRGB.g},${accentRGB.b}` : '255,255,255';
+              if (active) return `0 0 20px rgba(${c},0.42), 0 0 7px rgba(${c},0.3)`;
+              if (hover)  return `0 0 16px rgba(${c},0.3), 0 0 5px rgba(${c},0.2)`;
+              return `0 0 10px rgba(${c},0.18)`;
+            })(),
+            pointerEvents:'none',
+            transition: 'box-shadow 0.3s ease, height 0.22s cubic-bezier(0.34,1.56,0.64,1)',
+          }}/>
+          {/* thumb — outside track so it isn't clipped */}
+          <div ref={thumbRef} style={{
+            position:'absolute', top:'50%',
+            left: (progressRef.current * 100).toFixed(3) + '%',
+            translate: '-50% -50%',
+            width: THUMB_SZ, height: THUMB_SZ,
+            borderRadius: '50%',
+            background: '#fff',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.08)',
+            opacity: (hover || active) ? 1 : 0,
+            transition: 'width 0.18s cubic-bezier(0.34,1.56,0.64,1), height 0.18s cubic-bezier(0.34,1.56,0.64,1), opacity 0.18s ease',
+            pointerEvents:'none',
+          }}/>
+        </div>
       </div>
       <span ref={remainingSpanRef} style={timeStyle}>-{fmt((total||0) - Math.floor(progressRef.current * (total||0)))}</span>
     </div>
@@ -1051,11 +1232,10 @@ const HomeCard = React.memo(function HomeCard({ track, onSelect, artRef, artHidd
   const handleClick = useCallback(() => onSelect(track), [onSelect, track]);
   return (
     <motion.div className="home-card" onClick={handleClick}
-      layout
-      initial={{ opacity: 0, scale: 0.88 }}
+      initial={{ opacity: 0, scale: 0.92 }}
       animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.85 }}
-      transition={{ type:'spring', stiffness: 360, damping: 30, mass: 0.7 }}
+      exit={{ opacity: 0, scale: 0.88 }}
+      transition={{ type:'spring', stiffness: 380, damping: 32, mass: 0.6 }}
       style={{
         borderRadius:16, cursor:'pointer',
         contentVisibility:'auto', containIntrinsicSize:'auto 180px',
@@ -1111,7 +1291,6 @@ const HERO_FADE_MS = 140;
 const HERO_EASE    = 'expo.inOut';
 function HeroClone({ hero, exiting, reverse = false }) {
   const cloneRef = useRef(null);
-  const innerRef = useRef(null);
   const { left: tLeft, top: tTop, size } = hero.targetRect;
   const { left: sLeft, top: sTop, width: sW, height: sH } = hero.startRect;
 
@@ -1124,25 +1303,12 @@ function HeroClone({ hero, exiting, reverse = false }) {
   // run the timeline BEFORE first paint so there is no flash in the target rect
   useLayoutEffect(() => {
     const el = cloneRef.current;
-    const inner = innerRef.current;
-    if (!el || !inner) return;
+    if (!el) return;
     const tl = gsap.timeline({ defaults: { force3D: true, ease: HERO_EASE, duration: DUR } });
     if (reverse) {
-      tl.fromTo(el,
-        { x: 0, y: 0, scale: 1 },
-        { x: dx, y: dy, scale: sc }, 0
-      ).fromTo(inner,
-        { clipPath: `inset(0 round ${BR}px)` },
-        { clipPath: `inset(0 round ${BR / sc}px)` }, 0
-      );
+      tl.fromTo(el, { x: 0, y: 0, scale: 1 }, { x: dx, y: dy, scale: sc }, 0);
     } else {
-      tl.fromTo(el,
-        { x: dx, y: dy, scale: sc },
-        { x: 0, y: 0, scale: 1 }, 0
-      ).fromTo(inner,
-        { clipPath: `inset(0 round ${BR / sc}px)` },
-        { clipPath: `inset(0 round ${BR}px)` }, 0
-      );
+      tl.fromTo(el, { x: dx, y: dy, scale: sc }, { x: 0, y: 0, scale: 1 }, 0);
     }
     return () => tl.kill();
   }, []);
@@ -1158,14 +1324,10 @@ function HeroClone({ hero, exiting, reverse = false }) {
     return () => tween.kill();
   }, [exiting]);
 
-  // pre-paint inline style — clone is born already in its starting transform
-  // forward starts at (dx, dy, scale=sc); reverse starts at identity
+  // pre-paint inline transform — clone is born already in its starting position
   const initialTransform = reverse
     ? 'translate3d(0,0,0) scale(1)'
     : `translate3d(${dx}px, ${dy}px, 0) scale(${sc})`;
-  const initialClip = reverse
-    ? `inset(0 round ${BR}px)`
-    : `inset(0 round ${BR / sc}px)`;
 
   return ReactDOM.createPortal(
     <div ref={cloneRef} style={{
@@ -1175,29 +1337,33 @@ function HeroClone({ hero, exiting, reverse = false }) {
       zIndex:960, pointerEvents:'none',
       transformOrigin:'center center',
       transform: initialTransform,
+      borderRadius: BR,
+      overflow:'hidden',
+      background:'#111116',
       willChange:'transform, opacity',
       backfaceVisibility:'hidden',
-      transformStyle:'preserve-3d',
+      contain:'layout style paint',
     }}>
-      <div ref={innerRef} style={{
-        position:'absolute', inset:0,
-        clipPath: initialClip,
-        background:'#111116',
-        display:'flex', alignItems:'center', justifyContent:'center',
-        willChange:'clip-path',
-        backfaceVisibility:'hidden',
-      }}>
-        {hero.track.coverUrl ? (
-          <img src={hero.track.coverUrl} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}
-            onError={e=>{e.currentTarget.style.display='none'}}/>
-        ) : (
+      {hero.track.coverUrl ? (
+        <img src={hero.track.coverUrl}
+          loading="eager" decoding="sync"
+          style={{
+            position:'absolute', inset:0, width:'100%', height:'100%',
+            objectFit:'cover', display:'block',
+          }}
+          onError={e=>{e.currentTarget.style.display='none'}}/>
+      ) : (
+        <div style={{
+          position:'absolute', inset:0,
+          display:'flex', alignItems:'center', justifyContent:'center',
+        }}>
           <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
             <path d="M9 18V5l12-2v13" stroke="rgba(255,255,255,0.13)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
             <circle cx="6" cy="18" r="3" stroke="rgba(255,255,255,0.13)" strokeWidth="1.5"/>
             <circle cx="18" cy="16" r="3" stroke="rgba(255,255,255,0.13)" strokeWidth="1.5"/>
           </svg>
-        )}
-      </div>
+        </div>
+      )}
     </div>,
     document.body
   );
@@ -1419,7 +1585,7 @@ function ClearCacheCard({ Card, Row, onClearCoversCache, onClearLikesCache }) {
 }
 
 /* ── SettingsView ─────────────────────────────────────────────────────────── */
-function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFolder, onClearCoversCache, onClearLikesCache }) {
+function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFolder, onClearCoversCache, onClearLikesCache, appAccent }) {
   const t = useLang();
   const set = (k, v) => onSettings({ ...settings, [k]: v });
   const [sec, setSec] = useState('playback');
@@ -1500,6 +1666,122 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
       </Card>
     ),
     appearance: (<>
+      <Card title={t('accent_title')}>
+        <div style={{padding:'14px 16px 16px'}}>
+          <div style={{fontSize:11.5, color:'rgba(255,255,255,0.32)', marginBottom:14, lineHeight:1.4}}>
+            {t('accent_sub')}
+          </div>
+          <div style={{display:'flex', flexWrap:'wrap', gap:10}}>
+            {[
+              ['default',  t('accent_default')],
+              ['lavender', t('accent_lavender')],
+              ['mint',     t('accent_mint')],
+              ['rose',     t('accent_rose')],
+              ['amber',    t('accent_amber')],
+            ].map(([key, label]) => {
+              const c = ACCENT_PRESETS[key];
+              const active = (settings.accentMode || 'default') === key;
+              return (
+                <div key={key} onClick={() => set('accentMode', key)}
+                  style={{
+                    display:'flex', flexDirection:'column', alignItems:'center', gap:6,
+                    cursor:'pointer', padding:'8px 6px', borderRadius:10,
+                    flex:'1 0 70px',
+                    background: active ? 'rgba(255,255,255,0.06)' : 'transparent',
+                    transition:'background 0.18s',
+                  }}
+                  onMouseEnter={e => { if (!active) e.currentTarget.style.background='rgba(255,255,255,0.035)'; }}
+                  onMouseLeave={e => { if (!active) e.currentTarget.style.background='transparent'; }}
+                >
+                  <div style={{
+                    width:32, height:32, borderRadius:'50%',
+                    background:`rgb(${c.r},${c.g},${c.b})`,
+                    boxShadow: active
+                      ? `0 0 0 2px #07070a, 0 0 0 4px rgba(${c.r},${c.g},${c.b},0.9), 0 0 18px rgba(${c.r},${c.g},${c.b},0.55)`
+                      : `0 2px 8px rgba(${c.r},${c.g},${c.b},0.25)`,
+                    transition:'box-shadow 0.22s',
+                  }}/>
+                  <div style={{
+                    fontSize:11, fontWeight: active ? 600 : 500,
+                    color: active ? 'rgba(255,255,255,0.92)' : 'rgba(255,255,255,0.45)',
+                    transition:'color 0.18s',
+                  }}>{label}</div>
+                </div>
+              );
+            })}
+          </div>
+          {/* divider */}
+          <div style={{
+            height:1, margin:'16px 0 14px',
+            background: settings.hideDividers ? 'transparent' : 'rgba(255,255,255,0.045)',
+          }}/>
+          {/* cover-derived option, highlighted */}
+          {(() => {
+            const active = settings.accentMode === 'cover';
+            return (
+              <div onClick={() => set('accentMode', 'cover')}
+                style={{
+                  position:'relative',
+                  display:'flex', alignItems:'center', gap:14,
+                  padding:'12px 14px', borderRadius:12, cursor:'pointer',
+                  background: active ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.025)',
+                  border: active ? '1px solid transparent' : '1px solid rgba(255,255,255,0.04)',
+                  transition:'background 0.2s',
+                  overflow:'hidden',
+                }}
+                onMouseEnter={e => { if (!active) e.currentTarget.style.background='rgba(255,255,255,0.045)'; }}
+                onMouseLeave={e => { if (!active) e.currentTarget.style.background='rgba(255,255,255,0.025)'; }}
+              >
+                {/* rainbow border ring when active */}
+                {active && (
+                  <div style={{
+                    position:'absolute', inset:0, borderRadius:12,
+                    padding:1.5,
+                    background:'conic-gradient(from 0deg, #ff8fb1, #ffb164, #ffeb6b, #82dcc3, #9b7dff, #ff8fb1)',
+                    WebkitMask:'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
+                    WebkitMaskComposite:'xor', maskComposite:'exclude',
+                    pointerEvents:'none',
+                  }}/>
+                )}
+                <div style={{
+                  width:38, height:38, borderRadius:'50%',
+                  background:'conic-gradient(from 0deg, #ff8fb1, #ffb164, #ffeb6b, #82dcc3, #9b7dff, #ff8fb1)',
+                  boxShadow: active
+                    ? `0 0 22px rgba(${appAccent.r},${appAccent.g},${appAccent.b},0.55)`
+                    : '0 2px 10px rgba(0,0,0,0.4)',
+                  flexShrink:0,
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  transition:'box-shadow 0.4s',
+                }}>
+                  {/* palette icon */}
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(7,7,10,0.85)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 2a10 10 0 1 0 10 10 4 4 0 0 0-4-4h-2a2 2 0 0 1-2-2v-2a4 4 0 0 0-2-2z"/>
+                    <circle cx="6.5" cy="11.5" r="1"/><circle cx="9.5" cy="7.5" r="1"/><circle cx="14.5" cy="7.5" r="1"/><circle cx="17.5" cy="11.5" r="1"/>
+                  </svg>
+                </div>
+                <div style={{flex:1, minWidth:0}}>
+                  <div style={{fontSize:13, fontWeight:600, color:active ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.78)', letterSpacing:'-0.005em'}}>
+                    {t('accent_cover')}
+                  </div>
+                  <div style={{fontSize:11, color:'rgba(255,255,255,0.38)', marginTop:2}}>
+                    {t('accent_cover_sub')}
+                  </div>
+                </div>
+                {/* live swatch preview */}
+                {active && (
+                  <div style={{
+                    width:14, height:14, borderRadius:'50%',
+                    background:`rgb(${appAccent.r},${appAccent.g},${appAccent.b})`,
+                    boxShadow:`0 0 12px rgba(${appAccent.r},${appAccent.g},${appAccent.b},0.7)`,
+                    transition:'background 0.4s, box-shadow 0.4s',
+                    flexShrink:0,
+                  }}/>
+                )}
+              </div>
+            );
+          })()}
+        </div>
+      </Card>
       <Card title={t('card_interface')}>
         <Row label={t('hide_dividers')} sub={t('hide_dividers_sub')} last><Toggle k="hideDividers"/></Row>
       </Card>
@@ -2530,15 +2812,13 @@ function App() {
   const [avatarFlying,       setAvatarFlying]       = useState(false);
   const [artistView,         setArtistView]         = useState(null);
   const [libCollapsed,  setLibCollapsed]  = useState(false);
-  const [libWidth,      setLibWidth]      = useState(260);
-  const libDragRef = useRef(null);
   const [settings,      setSettings]      = useState({
     autoplay:false, crossfade:0, defaultRepeat:false,
     startWithWindows:false, minimizeToTray:false, musicFolder:'',
     customTitles: {}, minDuration: 30, soundcloudAuth: null,
     sourceMode: 'local', discordRpc: true,
     discordTimestamp: 'progress', discordPause: 'show', discordCover: true,
-    libWidth: 260,
+    accentMode: 'default',
   });
   const [sort,         setSort]         = useState('added');
   const [editingTitle, setEditingTitle] = useState(false);
@@ -2551,6 +2831,7 @@ function App() {
   const [toastExiting,  setToastExiting]  = useState(false);
   const [trackMenu,     setTrackMenu]     = useState(null);
   const [stationActive, setStationActive] = useState(null);
+  const [accentRGB,     setAccentRGB]     = useState(null);
   const [loadingTrackId, setLoadingTrackId] = useState(null);
   const [errorTrackId,   setErrorTrackId]   = useState(null);
   const errorTimerRef = useRef(null);
@@ -2634,6 +2915,39 @@ function App() {
   settingsRef.current  = settings;
   const track = scPlayingTrack || tracks[trackIdx] || tracks[0] || { id:0, title:'', artist:'', duration:0, color:'#333' };
 
+  useEffect(() => {
+    if (!track?.coverUrl) { setAccentRGB(null); return; }
+    let cancelled = false;
+    extractAccentColor(track.coverUrl).then(c => {
+      if (!cancelled) setAccentRGB(c);
+    });
+    return () => { cancelled = true; };
+  }, [track?.id, track?.coverUrl]);
+
+  // computed app-wide accent: cover-derived when mode='cover', otherwise preset
+  const appAccent = useMemo(() => {
+    if (settings.accentMode === 'cover' && accentRGB) {
+      // boost too-dark colors so var(--accent) text stays readable
+      let { r, g, b } = accentRGB;
+      const lum = (r + g + b) / 3;
+      if (lum < 110) {
+        const k = 110 / Math.max(1, lum);
+        r = Math.min(255, Math.round(r * k));
+        g = Math.min(255, Math.round(g * k));
+        b = Math.min(255, Math.round(b * k));
+      }
+      return { r, g, b };
+    }
+    return ACCENT_PRESETS[settings.accentMode] || ACCENT_PRESETS.default;
+  }, [settings.accentMode, accentRGB]);
+
+  // push accent to CSS var so var(--accent) works everywhere
+  useEffect(() => {
+    const { r, g, b } = appAccent;
+    document.documentElement.style.setProperty('--accent', `rgb(${r}, ${g}, ${b})`);
+    document.documentElement.style.setProperty('--accent-rgb', `${r}, ${g}, ${b}`);
+  }, [appAccent]);
+
   /* загружаем настройки и треки при старте */
   useEffect(() => {
     (async () => {
@@ -2641,7 +2955,6 @@ function App() {
         const saved = await window.electronAPI.loadSettings();
         if (saved && Object.keys(saved).length) {
           setSettings(s => ({ ...s, ...saved }));
-          if (typeof saved.libWidth === 'number') setLibWidth(saved.libWidth);
           if (saved.musicFolder) {
             const local = await window.electronAPI.scanMusicFolder(saved.musicFolder);
             if (local.length > 0) {
@@ -3913,18 +4226,17 @@ function App() {
           }}>
         {/* library panel */}
         <div style={{
-          width: libCollapsed ? 0 : libWidth,
+          width: libCollapsed ? 0 : 260,
           flexShrink:0, height:'100%',
           background:'transparent',
           zIndex:9, overflow:'hidden',
           opacity: playerVisible ? 1 : 0,
           transform: playerVisible ? 'translateX(0)' : 'translateX(-28px)',
-          transition: (playerVisible
-            ? 'opacity 0.36s ease 0.1s, transform 0.44s cubic-bezier(0.22,1,0.36,1) 0.1s'
-            : 'opacity 0.14s ease, transform 0.18s ease')
-            + (libDragRef.current ? '' : ', width 0.36s cubic-bezier(0.4,0,0.2,1)'),
+          transition: playerVisible
+            ? 'opacity 0.36s ease 0.1s, transform 0.44s cubic-bezier(0.22,1,0.36,1) 0.1s, width 0.44s cubic-bezier(0.4,0,0.2,1)'
+            : 'opacity 0.14s ease, transform 0.18s ease, width 0.44s cubic-bezier(0.4,0,0.2,1)',
         }}>
-          <div style={{width: libWidth, flexShrink:0, height:'100%', display:'flex', flexDirection:'column'}}>
+          <div style={{width: 260, flexShrink:0, height:'100%', display:'flex', flexDirection:'column'}}>
           {stationActive ? (
             <div style={{padding:'12px 14px 10px', flexShrink:0, display:'flex', flexDirection:'column', alignItems:'center'}}>
               <div style={{
@@ -4015,59 +4327,6 @@ function App() {
         </div>
 
         {/* drag handle — positioned relative to flex parent, sits on library's right edge */}
-        {!libCollapsed && playerVisible && (
-          <div onMouseDown={(e) => {
-            e.preventDefault();
-            const startX = e.clientX;
-            const startW = libWidth;
-            const MIN = 160, MAX = 460, COLLAPSE_AT = 140;
-            libDragRef.current = { startX, startW };
-            document.body.style.userSelect = 'none';
-            document.body.style.cursor = 'col-resize';
-            const onMove = (ev) => {
-              const w = Math.min(MAX, Math.max(0, startW + (ev.clientX - startX)));
-              setLibWidth(w);
-            };
-            const onUp = (ev) => {
-              const raw = Math.min(MAX, Math.max(0, startW + (ev.clientX - startX)));
-              document.removeEventListener('mousemove', onMove);
-              document.removeEventListener('mouseup', onUp);
-              document.body.style.userSelect = '';
-              document.body.style.cursor = '';
-              libDragRef.current = null;
-              if (raw < COLLAPSE_AT) {
-                setLibCollapsed(true);
-                setLibWidth(260);
-                setSettings(s => ({ ...s, libWidth: 260 }));
-              } else {
-                const w = Math.max(MIN, raw);
-                setLibWidth(w);
-                setSettings(s => ({ ...s, libWidth: w }));
-              }
-            };
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('mouseup', onUp);
-          }}
-            style={{
-              position:'absolute', top:0, left: libWidth - 3,
-              width:6, height:'100%',
-              cursor:'col-resize', zIndex:20,
-              background:'transparent',
-              transition: libDragRef.current ? 'none' : 'left 0.36s cubic-bezier(0.4,0,0.2,1)',
-            }}
-            onMouseEnter={e => { const h = e.currentTarget.firstChild; if (h) h.style.background='rgba(255,255,255,0.13)'; }}
-            onMouseLeave={e => { const h = e.currentTarget.firstChild; if (h) h.style.background='rgba(255,255,255,0)'; }}
-          >
-            <div style={{
-              position:'absolute', top:0, left:'50%', translate:'-50% 0',
-              width:2, height:'100%',
-              background:'rgba(255,255,255,0)',
-              transition:'background 0.18s',
-              pointerEvents:'none',
-            }}/>
-          </div>
-        )}
-
         {/* center player */}
         <div style={{
           flex:1, minWidth:0, height:'100%',
@@ -4158,13 +4417,25 @@ function App() {
                 )}
               </div>
             </div>{/* playerInfoRef end */}
-              {/* album art */}
+              {/* album art with ambient glow */}
               <div ref={slideWrapRef} style={{
                 width:'min(100%, clamp(320px, 54vw, 760px), clamp(240px, 58vh, 760px))',
                 marginBottom:24,
+                position:'relative',
               }}>
+                {/* ambient glow blob — uses app accent (cover-derived or preset) */}
+                <div style={{
+                  position:'absolute', inset: '-30%',
+                  borderRadius:'50%',
+                  background: `radial-gradient(circle at center, rgba(${appAccent.r},${appAccent.g},${appAccent.b},0.55) 0%, rgba(${appAccent.r},${appAccent.g},${appAccent.b},0.26) 36%, rgba(${appAccent.r},${appAccent.g},${appAccent.b},0.08) 64%, rgba(${appAccent.r},${appAccent.g},${appAccent.b},0) 90%)`,
+                  filter:'blur(42px)',
+                  opacity: !((hero && !heroExiting) || reverseHero) ? 1 : 0,
+                  transition:'opacity 0.6s ease, background 0.6s ease',
+                  pointerEvents:'none',
+                  zIndex: 0,
+                }}/>
                 <div id="player-album-art" ref={playerArtRef}
-                  style={{opacity: ((hero && !heroExiting) || reverseHero) ? 0 : 1}}>
+                  style={{opacity: ((hero && !heroExiting) || reverseHero) ? 0 : 1, position:'relative', zIndex:1}}>
                   <div ref={artEntranceRef}>
                     <AlbumArt track={track} isPlaying={isPlaying}/>
                   </div>
@@ -4178,7 +4449,8 @@ function App() {
               transition: playerVisible ? 'opacity 0.36s ease 0.28s, transform 0.48s cubic-bezier(0.22,1,0.36,1) 0.28s' : 'opacity 0.1s ease, transform 0.1s ease',
             }}>
               <ProgressBar progressRef={progressRef} total={track.duration || 0}
-                onSeek={handleSeek} isPlaying={isPlaying} visible={playerVisible}/>
+                onSeek={handleSeek} isPlaying={isPlaying} visible={playerVisible}
+                accentRGB={appAccent}/>
             {(()=>{ const P = { spring:0.055, damping:0.84, clamp:10 }; return (
             <div style={{display:'flex', alignItems:'center', gap:14, justifyContent:'center', marginTop:16}}>
               {scPlayingTrack && <div style={{width:27, marginRight:14, flexShrink:0}}/>}
@@ -4222,7 +4494,7 @@ function App() {
           </div>
         )}
 
-        <SettingsView settings={settings} onSettings={setSettings} visible={view==='settings'} onScanTracks={handleScanTracks} onClearFolder={handleClearFolder} onClearCoversCache={handleClearCoversCache} onClearLikesCache={handleClearLikesCache}/>
+        <SettingsView settings={settings} onSettings={setSettings} visible={view==='settings'} onScanTracks={handleScanTracks} onClearFolder={handleClearFolder} onClearCoversCache={handleClearCoversCache} onClearLikesCache={handleClearLikesCache} appAccent={appAccent}/>
         <SoundCloudView visible={view==='soundcloud'} scAuth={settings.soundcloudAuth||null} onLogin={handleScLogin} onLogout={handleScLogout} avatarRef={scAvatarRef}/>
         <SearchView ref={searchViewRef} visible={view==='search'} scAuth={settings.soundcloudAuth||null}
           likedIds={likedIds} onLike={handleLike}
