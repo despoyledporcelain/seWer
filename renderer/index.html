@@ -50,6 +50,7 @@
     padding-right:8px; z-index:1000;
     background:var(--bg);
     border-bottom:1px solid rgba(255,255,255,0.018);
+    transition: background 0.6s ease;
   }
   .win-btn {
     -webkit-app-region: no-drag;
@@ -533,7 +534,7 @@ function PlayerLikeBtn({ liked, onLike, style: extraStyle }) {
         ...extraStyle,
       }}
     >
-      <img src={liked ? '../assets/heart1.png' : '../assets/heart0.png'} width="19" height="19" style={{display:'block', filter:'brightness(0) invert(1)'}}/>
+      <span style={{display:'block',width:19,height:19,background:'var(--accent)',WebkitMaskImage:`url('${liked ? '../assets/heart1.png' : '../assets/heart0.png'}')`,WebkitMaskSize:'contain',WebkitMaskRepeat:'no-repeat',WebkitMaskPosition:'center'}}/>
     </div>
   );
 }
@@ -583,7 +584,7 @@ function ProgressBar({ progressRef, total, onSeek, isPlaying, visible, accentRGB
         dispProg.current += diff * 0.12;
       }
       const p = dispProg.current;
-      if (fillRef.current)  fillRef.current.style.transform = 'scaleX(' + p + ')';
+      if (fillRef.current)  fillRef.current.style.width = (p * 100).toFixed(3) + '%';
       if (thumbRef.current) thumbRef.current.style.left = (p * 100).toFixed(3) + '%';
       const dur = totalRef.current || 0;
       const de = Math.floor(p * dur);
@@ -675,12 +676,12 @@ function ProgressBar({ progressRef, total, onSeek, isPlaying, visible, accentRGB
           >
             <div ref={fillRef} style={{
               position:'absolute', left:0, top:0,
-              height:'100%', width:'100%',
+              height:'100%',
+              width: (progressRef.current * 100).toFixed(3) + '%',
+              borderRadius: '0 999px 999px 0',
               background: accentRGB
                 ? `linear-gradient(90deg, rgba(${accentRGB.r},${accentRGB.g},${accentRGB.b},0.88), rgba(${Math.min(255,accentRGB.r+25)},${Math.min(255,accentRGB.g+25)},${Math.min(255,accentRGB.b+25)},1))`
                 : 'linear-gradient(90deg, rgba(220,220,220,0.92), rgba(255,255,255,1))',
-              transformOrigin:'left center',
-              transform:'scaleX(' + progressRef.current + ')',
               pointerEvents:'none',
               transition:'background 0.6s ease',
             }}/>
@@ -720,7 +721,7 @@ function ProgressBar({ progressRef, total, onSeek, isPlaying, visible, accentRGB
 }
 
 /* ── Thin Volume Slider ───────────────────────────────────────────────────── */
-function ThinVolumeSlider({ volume, onChange }) {
+function ThinVolumeSlider({ volume, onChange, accentKey }) {
   const wrapRef    = useRef(null);
   const canvasRef  = useRef(null);
   const rafRef     = useRef(null);
@@ -744,6 +745,7 @@ function ThinVolumeSlider({ volume, onChange }) {
     if (!dragging.current) volActual.current = volume;
     kick();
   }, [volume]);
+  useEffect(() => { kick(); }, [accentKey]);
 
   const getVal = useCallback((e) => {
     const rect = canvasRef.current.getBoundingClientRect();
@@ -799,11 +801,12 @@ function ThinVolumeSlider({ volume, onChange }) {
         const fillH   = Math.max(barW, trackH * v);
         const fillTop = trackBot - fillH;
         ctx.save();
-        ctx.shadowColor = 'rgba(178,178,178,0.5)';
+        const accentRgb = getComputedStyle(document.documentElement).getPropertyValue('--accent-rgb').trim() || '178,178,178';
+        ctx.shadowColor = `rgba(${accentRgb},0.5)`;
         ctx.shadowBlur  = 8 * dpr;
         ctx.beginPath();
         ctx.roundRect(cx - r, fillTop, barW, fillH, r);
-        ctx.fillStyle = '#c8c8c8';
+        ctx.fillStyle = `rgb(${accentRgb})`;
         ctx.fill();
         ctx.restore();
       }
@@ -960,7 +963,7 @@ function NavIcon({ icon, label, active, onClick, size=38, noActiveBg=false }) {
         background: (active && !noActiveBg) ? 'rgba(178,178,178,0.11)' : 'none',
         display:'flex', alignItems:'center', justifyContent:'center',
         cursor:'pointer', flexShrink:0,
-        opacity: active ? 1 : 0.3,
+        opacity: active ? 1 : 0.5,
         transition:'opacity 0.18s ease, background 0.18s ease',
       }}>
       {icon}
@@ -998,7 +1001,7 @@ const TrackRow = React.memo(function TrackRow({ track, isActive, isLoading, isEr
         }
       </div>
       <div style={{flex:1, overflow:'hidden'}}>
-        <div style={{fontSize:12.5, fontWeight:500,
+        <div style={{fontSize:12.5, fontWeight: isActive ? 700 : 500,
           color: isActive ? 'var(--accent)' : 'rgba(255,255,255,0.78)',
           whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{track.title}</div>
         <div style={{fontSize:11, color:'rgba(255,255,255,0.26)', marginTop:1}}>{track.artist}</div>
@@ -2948,6 +2951,18 @@ function App() {
     document.documentElement.style.setProperty('--accent-rgb', `${r}, ${g}, ${b}`);
   }, [appAccent]);
 
+  // titlebar accent glow — only in player view
+  useEffect(() => {
+    const tb = document.getElementById('titlebar');
+    if (!tb) return;
+    if (view === 'player') {
+      const { r, g, b } = appAccent;
+      tb.style.background = `linear-gradient(90deg, var(--bg) 0%, rgba(${r},${g},${b},0.09) 50%, var(--bg) 100%)`;
+    } else {
+      tb.style.background = '';
+    }
+  }, [view, appAccent]);
+
   /* загружаем настройки и треки при старте */
   useEffect(() => {
     (async () => {
@@ -4489,7 +4504,7 @@ function App() {
           transform: playerVisible ? 'translateX(0)' : 'translateX(8px)',
           transition: playerVisible ? 'opacity 0.36s ease 0.44s, transform 0.48s cubic-bezier(0.22,1,0.36,1) 0.44s' : 'opacity 0.1s ease, transform 0.1s ease',
         }}>
-          <ThinVolumeSlider volume={volume} onChange={setVolume}/>
+          <ThinVolumeSlider volume={volume} onChange={setVolume} accentKey={`${appAccent.r},${appAccent.g},${appAccent.b}`}/>
         </div>
           </div>
         )}
