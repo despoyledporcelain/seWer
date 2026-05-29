@@ -39,25 +39,11 @@ seWer is a music player for Windows. stream your SoundCloud likes or play local 
 - **soundcloud** — log in with your account, sync and stream your liked tracks
 - **local library** — scan a folder, reads tags and cover art automatically
 - **discord rich presence** — shows what you're listening to in your Discord status
-- **crossfade** — smooth transitions between tracks, adjustable from 0 to 12 seconds
-- **shuffle** — randomized queue for both SoundCloud and local playback
-- **media keys** — play, pause, next, previous work globally from your keyboard
-- **system tray** — minimize to tray, double-click to bring back
-
-<br/>
-
-## stack
-
-| | |
-|---|---|
-| runtime | electron 41 |
-| ui | react 18 · babel standalone (no bundler) |
-| audio | html5 audio · music-metadata |
-| font | space grotesk |
-| build | electron-builder · nsis |
+- **station** — start a track station from soundcloud
+- **accents from cover** — colorful ur interface by cover colors
 
 <br/>
 
 <div align="center">
-<sub>made with 🖤</sub>
+<sub>🖤</sub>
 </div>
