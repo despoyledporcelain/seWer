@@ -28,7 +28,7 @@ seWer is a music player for Windows. stream your SoundCloud likes or play local 
 <br/>
 <div align="center">
 
-![main screen](https://i.ibb.co/XxStjQ6n/67.png)
+![main screen](https://i.ibb.co/933Xpm2r/2026-05-29-154146.png)
 
 </div>
 
