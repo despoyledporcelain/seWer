@@ -15,7 +15,7 @@
 ```css
 --bg: #07070a   --border: rgba(255,255,255,0.055)
 --text: #ededf4   --accent: #b2b2b2   --accent-rgb: 178, 178, 178
---titlebar-h: 28px
+--titlebar-h: 46px
 ```
 
 `--accent` / `--accent-rgb` **динамически анимируются** через `useEffect` в `App` при смене `accentMode` или extracted цвета обложки: rAF-лерп по RGB (easeInOutCubic, 400мс) от текущего анимируемого значения к целевому. все места с `var(--accent)` / `var(--accent-rgb)` перетекают покадрово без ререндеров React.
@@ -144,21 +144,21 @@ ROW_H=50. `content-visibility:auto`. абсолютный пилл с transition
 - `contain:'layout style paint'` + `backface-visibility:hidden` — изоляция от соседнего DOM, sub-pixel AA
 - `<img loading="eager" decoding="sync">` — обложка готова к старту анимации
 
-### `Sidebar`
-`{navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth, profileRef, sourceMode, onToggleSource, avatarFlying}`.
-левая панель 58px без border (разделители убраны для чистоты).
-- SC аватар 44×44 вверху → `onNav('soundcloud')`
-- NAV `[home, search, library]` с анимирующимся пиллом
-- collapse-кнопка (только в player)
-- toggle source (только при scAuth)
-- settings.png → настройки
+### `TopBar` (бывш. Sidebar)
+пропсы: `{navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth, sourceMode, onToggleSource}`.
+навигация встроена в тайтлбар (46px): рендерится **порталами** в статический html — левый/правый кластеры в `#topbar-slot`, центрированный сегмент абсолютом в `#titlebar`.
+- **слева**: настройки → source-тумблер local/sc (только при scAuth). аватара нет — аккаунт живёт в настройках
+- **центр** (абсолют `left:50%`, ровно по окну): сегмент Треки|Плеер|Поиск с горизонтальным анимируемым пиллом (`pillRect {left,width}`)
+- **справа**: collapse библиотеки (шеврон, только в плеере), дальше win-кнопки
+- интерактив обёрнут в `-webkit-app-region:no-drag` (тайтлбар — drag-зона)
 
 ### `CrossfadeSlider`
 `{value [0–12], onChange}`. drag через `setPointerCapture`. wheel (passive:false). 6px трек без thumb.
 
 ### `SettingsView`
 `{settings, onSettings, visible, onScanTracks, onClearFolder, onClearCoversCache, onClearLikesCache, appAccent}`.
-секции: `playback`→`vosproizvedenie.png`, `appearance`→`theme.png`, `system`→`system.png`, `about`→`about.png`.
+секции: `account`→SoundCloudIcon, `playback`→`vosproizvedenie.png`, `appearance`→`theme.png`, `system`→`system.png`, `about`→`about.png`.
+**account**: карточка аккаунта SoundCloud. залогинен — аватар 46px + username + «log out»; нет — SC-иконка, `sc_hint` и оранжевая кнопка логина (`scLogin` IPC → `/me` → `onScLogin`). логин/логаут переехали сюда из удалённого SoundCloudView, welcome-кнопка «войти» ведёт в настройки.
 
 **playback**: только CrossfadeSlider.
 
@@ -172,9 +172,6 @@ ROW_H=50. `content-visibility:auto`. абсолютный пилл с transition
 3. карточка «Discord» — toggle `discordRpc` + анимированный блок (timestamp chips, pause chips, cover toggle)
 
 **system**: язык, кэш, запуск, локальная музыка.
-
-### `AvatarFlyClone`
-portal-анимация аватара (SoundCloudView → Sidebar), 440мс.
 
 ### `SearchTrackRow`
 `{track, isLiked, onLike, onClick, onCoverClick, isLoading, isError, hideDividers}`.
@@ -238,11 +235,10 @@ portal-анимация аватара (SoundCloudView → Sidebar), 440мс.
 ### `App` — state
 
 ```
-view              — 'home'|'player'|'search'|'soundcloud'|'settings'|'artist'
+view              — 'home'|'player'|'search'|'settings'|'artist'
 tracks, trackIdx, isPlaying, progress, shuffle, repeat
 navActive, search, volume, hero, playerVisible, homeVisible
 heroExiting, reverseHero, reverseHeroExiting
-avatarFly, avatarFlyExiting, avatarFlying
 libCollapsed, settings, sort, editingTitle, editValue
 scTracks, scLoading, scUpdating, scError
 scPlayingTrack, scPlayingIdx
@@ -289,7 +285,7 @@ slideWrapRef              — обёртка обложки в плеере (GSA
 playerInfoRef             — блок артист+название (GSAP анимация входа)
 audioRef, hlsRef
 handleNextRef, handlePrevRef, isPlayingRef
-homeScrollRef, scAvatarRef, sidebarProfileRef
+homeScrollRef
 scTracksRef, scAuthRef, scCacheRef, scCacheMapRef
 artistCacheRef            — Map<id|username, profile> для ArtistView кеша
 followedIdsRef            — Set<userId> кеш статуса подписок
@@ -407,7 +403,6 @@ useEffect зависит от `[track?.id, isPlaying, settings.discordRpc, disco
   - **home→player**: HeroClone `expo.inOut` 0.38s + playerInfoRef fade+slide (`sine.out` 0.42s delay 0.08s)
   - **player→home**: reverse HeroClone `expo.inOut`
   - **смена трека**: без GSAP — обложки кроссфейдятся в `AlbumArt` (см. выше), info-блок не анимируется
-- **SC логин**: AvatarFlyClone 440мс
 - **artEntrance**: при `view→'player'` без hero → `artEntranceKey++` → scale/opacity, 420мс
 - **toast**: Motion entrance/exit с spring (380/30/0.6)
 

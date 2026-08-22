@@ -27,7 +27,7 @@
     --text:        #ededf4;
     --accent:      #b2b2b2;
     --accent-rgb:  178, 178, 178;
-    --titlebar-h:  28px;
+    --titlebar-h:  46px;
   }
   html, body { width:100%; height:100%; background:transparent; overflow:hidden; font-family:'Proxima Soft',sans-serif; color:var(--text);
     text-rendering:optimizeLegibility; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; }
@@ -43,18 +43,28 @@
   }
   #app-shell::after {
     content:''; position:absolute; inset:0; z-index:0; pointer-events:none;
-    background:
-      radial-gradient(ellipse 115% 80% at 50% -8%, rgba(var(--accent-rgb), 0.07) 0%, transparent 52%),
-      radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,0.5) 100%);
+    background: radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,0.5) 100%);
   }
+  /* акцентная подсветка сверху — только в плеере (body.in-player) */
+  #accent-top {
+    position:absolute; inset:0; z-index:0; pointer-events:none;
+    background: radial-gradient(ellipse 115% 80% at 50% -8%, rgba(var(--accent-rgb), 0.07) 0%, transparent 52%);
+    opacity:0; transition:opacity 0.6s ease;
+  }
+  body.in-player #accent-top { opacity:1; }
   #titlebar {
     flex-shrink:0; height:var(--titlebar-h);
     -webkit-app-region: drag;
+    position:relative;
     display:flex; align-items:center; justify-content:flex-end;
     padding-right:8px; z-index:1000;
     background:var(--bg);
     border-bottom:1px solid rgba(255,255,255,0.018);
     transition: background 0.6s ease;
+  }
+  #topbar-slot {
+    flex:1; height:100%; min-width:0;
+    display:flex; align-items:center;
   }
   .win-btn {
     -webkit-app-region: no-drag;
@@ -116,7 +126,9 @@
 <body>
 
 <div id="app-shell">
+<div id="accent-top"></div>
 <div id="titlebar">
+  <div id="topbar-slot"></div>
   <button class="win-btn" onclick="window.electronAPI.minimize()" title="Свернуть">
     <svg width="10" height="2" viewBox="0 0 10 2" fill="currentColor"><rect width="10" height="2" rx="1"/></svg>
   </button>
@@ -360,7 +372,7 @@ const STRINGS = {
     discord_on_pause:'При паузе',
     discord_pause_show:'Показывать', discord_pause_hide:'Скрывать',
     discord_cover:'Обложка трека', discord_cover_sub:'Показывать art в присутствии',
-    card_language:'Язык интерфейса', language_label:'Язык', language_sub:'Язык элементов управления',
+    card_account:'Аккаунт', card_language:'Язык интерфейса', language_label:'Язык', language_sub:'Язык элементов управления',
     card_startup:'Запуск',
     start_windows:'Запускать при старте Windows', minimize_tray:'Сворачивать в трей',
     card_local:'Локальная музыка', music_folder:'Папка с музыкой', no_folder:'Не выбрана',
@@ -427,7 +439,7 @@ const STRINGS = {
     discord_on_pause:'On pause',
     discord_pause_show:'Show', discord_pause_hide:'Hide',
     discord_cover:'Track artwork', discord_cover_sub:'Show art in presence',
-    card_language:'Interface language', language_label:'Language', language_sub:'Language of UI elements',
+    card_account:'Account', card_language:'Interface language', language_label:'Language', language_sub:'Language of UI elements',
     card_startup:'Startup',
     start_windows:'Launch at Windows startup', minimize_tray:'Minimize to tray',
     card_local:'Local music', music_folder:'Music folder', no_folder:'Not selected',
@@ -1515,19 +1527,23 @@ function HeroClone({ hero, exiting, reverse = false }) {
   );
 }
 
-/* ── Sidebar ─────────────────────────────────────────────────────────────── */
-function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth, profileRef, sourceMode, onToggleSource, avatarFlying }) {
+/* ── TopBar ──────────────────────────────────────────────────────────────── */
+/* навигация в тайтлбаре: слева аватар→настройки→source-тумблер, по центру
+   (абсолютно на окно) сегмент Треки|Плеер|Поиск с горизонтальным пиллом,
+   справа collapse библиотеки (только в плеере). рендерится порталами в
+   #topbar-slot и #titlebar (тайтлбар — статический html вне react-root) */
+function TopBar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth, sourceMode, onToggleSource }) {
   const t = useLang();
-  const navImg = (src) => <img src={src} style={{width:18, height:18, filter:'brightness(0) invert(1)', display:'block'}}/>;
+  const navImg = (src) => <img src={src} style={{width:17, height:17, filter:'brightness(0) invert(1)', display:'block'}}/>;
   const NAV = [
     { id:"home",    label:t('nav_tracks'),  icon: navImg('../assets/tracks.png')  },
-    { id:"search",  label:t('nav_search'),  icon: navImg('../assets/search.png')  },
     { id:"library", label:t('nav_player'),  icon: navImg('../assets/player.png')  },
+    { id:"search",  label:t('nav_search'),  icon: navImg('../assets/search.png')  },
   ];
   const folderIcon = navImg('../assets/local.png');
 
   const navRefs = useRef({});
-  const [pillRect, setPillRect] = useState({ top: 0, height: 38, visible: false });
+  const [pillRect, setPillRect] = useState({ left: 0, width: 34, visible: false });
 
   useLayoutEffect(() => {
     const el = navRefs.current[navActive];
@@ -1535,100 +1551,68 @@ function Sidebar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth
       setPillRect(p => ({ ...p, visible: false }));
       return;
     }
-    setPillRect({ top: el.offsetTop, height: el.offsetHeight, visible: true });
-  }, [navActive, inPlayer]);
+    setPillRect({ left: el.offsetLeft, width: el.offsetWidth, visible: true });
+  }, [navActive]);
 
-  const scActive = navActive === 'soundcloud';
+  const NoDrag = { WebkitAppRegion:'no-drag' };
+  const slot = document.getElementById('topbar-slot');
+  const bar  = document.getElementById('titlebar');
+  if (!slot || !bar) return null;
+
+  /* центрированный сегмент — абсолют внутри #titlebar, центр ровно по окну */
+  const nav = (
+    <div style={{position:'absolute', left:'50%', top:'50%', translate:'-50% -50%',
+      display:'flex', alignItems:'center', gap:4, WebkitAppRegion:'no-drag'}}>
+      <div style={{
+        position:'absolute', top:2, bottom:2, left:0,
+        width: pillRect.width || 34, borderRadius:10,
+        background:'rgba(178,178,178,0.11)',
+        transform:`translateX(${pillRect.left}px)`,
+        opacity: pillRect.visible ? 1 : 0,
+        transition:'transform 0.34s cubic-bezier(0.45,0,0.55,1), opacity 0.18s ease',
+        pointerEvents:'none', zIndex:0,
+      }}/>
+      {NAV.map(n => (
+        <div key={n.id} ref={el => navRefs.current[n.id] = el} style={{position:'relative', zIndex:1}}>
+          <NavIcon icon={n.icon} label={n.label} active={navActive===n.id} onClick={()=>onNav(n.id)} size={34} noActiveBg={true}/>
+        </div>
+      ))}
+    </div>
+  );
 
   return (
-    <div style={{
-      width:58, height:'100%', flexShrink:0,
-      display:'flex', flexDirection:'column', alignItems:'center',
-      paddingTop:8, paddingBottom:18,
-      background:'transparent', zIndex:10,
-    }}>
-      {/* верхняя группа: аватар-кнопка + nav + collapse */}
-      <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:6}}>
-        <div ref={profileRef}
-          onClick={() => onNav('soundcloud')}
-          title={scAuth?.username ? `SoundCloud: ${scAuth.username}` : 'SoundCloud'}
-          style={{
-            width:38, height:38, borderRadius:11,
-            background:'rgba(178,178,178,0.06)',
-            border:'1px solid ' + (scActive ? 'rgba(178,178,178,0.55)' : 'rgba(178,178,178,0.12)'),
-            display:'flex', alignItems:'center', justifyContent:'center',
-            cursor:'pointer', color:'var(--accent)', marginBottom:8, flexShrink:0,
-            overflow:'hidden',
-            transition:'border-color 0.2s ease, background 0.18s ease',
-          }}>
-          {scAuth?.avatarUrl
-            ? <img src={scAuth.avatarUrl} style={{width:'100%',height:'100%',objectFit:'cover', opacity: avatarFlying ? 0 : 1, transition:'opacity 0.1s ease'}}/>
-            : <SoundCloudIcon size={22} fill="rgba(255,100,20,0.8)"/>
-          }
-        </div>
-
-        {/* nav-группа с анимирующимся пиллом */}
-        <div style={{position:'relative', display:'flex', flexDirection:'column', alignItems:'center', gap:6}}>
-          <div style={{
-            position:'absolute', left:'50%',
-            top: 0, height: pillRect.height || 38, width: 38,
-            transform:`translate(-50%, ${pillRect.top}px)`,
-            background:'rgba(178,178,178,0.11)', borderRadius:11,
-            opacity: pillRect.visible ? 1 : 0,
-            transition:'transform 0.34s cubic-bezier(0.45,0,0.55,1), opacity 0.18s ease',
-            willChange:'transform',
-            pointerEvents:'none', zIndex:0,
-          }}/>
-          {NAV.map(n => (
-            <div key={n.id} ref={el => navRefs.current[n.id] = el} style={{position:'relative', zIndex:1}}>
-              <NavIcon icon={n.icon} label={n.label} active={navActive===n.id} onClick={()=>onNav(n.id)} noActiveBg={true}/>
+    <>
+      {ReactDOM.createPortal(
+        <div style={{display:'flex', alignItems:'center', width:'100%', height:'100%'}}>
+          {/* левый кластер: настройки → source-тумблер */}
+          <div style={{display:'flex', alignItems:'center', gap:2, paddingLeft:10}}>
+            <div style={{WebkitAppRegion:'no-drag'}}>
+              <NavIcon label={t('nav_settings')} active={navActive==='settings'} onClick={()=>onNav('settings')} size={32}
+                icon={<img src="../assets/settings.png" style={{width:17,height:17,filter:'brightness(0) invert(1)',display:'block'}}/>}/>
             </div>
-          ))}
-        </div>
-        <div style={{
-          display:'flex', flexDirection:'column', alignItems:'center',
-          overflow:'hidden',
-          maxHeight: inPlayer ? 48 : 0,
-          opacity: inPlayer ? 1 : 0,
-          transform: inPlayer ? 'translateY(0)' : 'translateY(-4px)',
-          pointerEvents: inPlayer ? 'auto' : 'none',
-          transition:'max-height 0.22s cubic-bezier(0.4,0,0.2,1), opacity 0.18s ease, transform 0.2s ease',
-        }}>
-          <div style={{width:28, height:1, background:'rgba(255,255,255,0.07)', margin:'6px 0 4px'}}/>
-          <div style={{
-            width:32, height:32, flexShrink:0, cursor:'pointer',
-            display:'flex', alignItems:'center', justifyContent:'center',
-            color:'rgba(255,255,255,0.3)',
-            transition:'color 0.18s ease',
-          }} onClick={onToggleLib}
-            onMouseEnter={e=>e.currentTarget.style.color='rgba(255,255,255,0.6)'}
-            onMouseLeave={e=>e.currentTarget.style.color='rgba(255,255,255,0.3)'}
-          >
-            <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"
-              style={{transition:'transform 0.26s cubic-bezier(0.4,0,0.2,1)', transform: libCollapsed ? 'rotate(180deg)' : 'rotate(0deg)'}}>
-              <polyline points="15 18 9 12 15 6"/>
-            </svg>
+            <div style={{WebkitAppRegion:'no-drag', opacity: scAuth ? 1 : 0, pointerEvents: scAuth ? 'auto' : 'none', transition:'opacity 0.2s ease'}}>
+              <NavIcon label={t('nav_local')} active={sourceMode==='local'} onClick={onToggleSource} size={32} icon={folderIcon}/>
+            </div>
           </div>
-        </div>
-      </div>
 
-      <div style={{flex:1}}/>
-
-      {/* нижняя группа: оффлайн (если залогинен) + настройки */}
-      <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:6}}>
-        <div style={{
-          maxHeight: scAuth ? 44 : 0,
-          opacity: scAuth ? 1 : 0,
-          overflow:'hidden',
-          transition:'max-height 0.22s cubic-bezier(0.4,0,0.2,1), opacity 0.18s ease',
-        }}>
-          <NavIcon label={t('nav_local')} active={sourceMode==='local'}
-            onClick={onToggleSource} icon={folderIcon}/>
-        </div>
-        <NavIcon label={t('nav_settings')} active={navActive==='settings'} onClick={()=>onNav('settings')}
-          icon={<img src="../assets/settings.png" style={{width:18,height:18,filter:'brightness(0) invert(1)',display:'block'}}/>}/>
-      </div>
-    </div>
+          {/* правая зона: collapse библиотеки (только в плеере) */}
+          <div style={{flex:1, display:'flex', alignItems:'center', justifyContent:'flex-end', paddingRight:6,
+            opacity: inPlayer ? 1 : 0, pointerEvents: inPlayer ? 'auto' : 'none', transition:'opacity 0.2s ease'}}>
+            <div style={{WebkitAppRegion:'no-drag', width:30, height:30, borderRadius:9, cursor:'pointer',
+              display:'flex', alignItems:'center', justifyContent:'center',
+              color:'rgba(255,255,255,0.35)', transition:'color 0.18s ease'}}
+              onClick={onToggleLib}
+              onMouseEnter={e=>e.currentTarget.style.color='rgba(255,255,255,0.7)'}
+              onMouseLeave={e=>e.currentTarget.style.color='rgba(255,255,255,0.35)'}>
+              <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"
+                style={{transition:'transform 0.26s cubic-bezier(0.4,0,0.2,1)', transform: libCollapsed ? 'rotate(180deg)' : 'rotate(0deg)'}}>
+                <polyline points="15 18 9 12 15 6"/>
+              </svg>
+            </div>
+          </div>
+        </div>, slot)}
+      {ReactDOM.createPortal(nav, bar)}
+    </>
   );
 }
 
@@ -1731,8 +1715,21 @@ function ClearCacheCard({ Card, Row, onClearCoversCache, onClearLikesCache }) {
 }
 
 /* ── SettingsView ─────────────────────────────────────────────────────────── */
-function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFolder, onClearCoversCache, onClearLikesCache, appAccent }) {
+function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFolder, onClearCoversCache, onClearLikesCache, appAccent, scAuth, onScLogin, onScLogout }) {
   const t = useLang();
+  const [scLoading, setScLoading] = useState(false);
+  const [scError, setScError] = useState(null);
+  const scLogin = async () => {
+    setScLoading(true); setScError(null);
+    try {
+      const creds = await window.electronAPI.scLogin();
+      if (!creds) { setScLoading(false); return; }
+      const res = await window.electronAPI.scFetch('https://api-v2.soundcloud.com/me', creds.token, creds.clientId);
+      if (res.data) onScLogin({ ...creds, userId: res.data.id, username: res.data.username, avatarUrl: res.data.avatar_url || null });
+      else setScError(t('profile_error'));
+    } catch { setScError(t('conn_error')); }
+    setScLoading(false);
+  };
   const set = (k, v) => onSettings({ ...settings, [k]: v });
   const [sec, setSec] = useState('playback');
   const secRefs  = useRef({});
@@ -1793,6 +1790,8 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
   );
 
   const SECS = [
+    { id:'account',  label:t('card_account'),
+      icon:<SoundCloudIcon size={14} fill="rgba(255,255,255,0.5)"/> },
     { id:'playback', label:t('sec_playback'),
       icon:<img src="../assets/vosproizvedenie.png" style={{width:15,height:15,filter:'brightness(0) invert(1)',display:'block'}}/> },
     { id:'appearance', label:t('sec_appearance'),
@@ -1804,6 +1803,68 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
   ];
 
   const content = {
+    account: (
+      <Card title={t('card_account')}>
+        {scAuth ? (
+          <div style={{display:'flex', alignItems:'center', gap:14, padding:'16px'}}>
+            <div style={{
+              width:46, height:46, borderRadius:14, flexShrink:0, overflow:'hidden',
+              background:'rgba(178,178,178,0.06)',
+              display:'flex', alignItems:'center', justifyContent:'center',
+              color:'var(--accent)',
+            }}>
+              {scAuth.avatarUrl
+                ? <img src={scAuth.avatarUrl} style={{width:'100%',height:'100%',objectFit:'cover'}}/>
+                : <svg width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.6" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+              }
+            </div>
+            <div style={{flex:1, minWidth:0}}>
+              <div style={{fontSize:14.5, fontWeight:600, letterSpacing:'-0.015em', color:'rgba(255,255,255,0.85)',
+                whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{scAuth.username || t('unknown')}</div>
+              <div style={{fontSize:10, color:'rgba(255,255,255,0.26)', letterSpacing:'0.08em', textTransform:'uppercase', marginTop:3}}>soundcloud</div>
+            </div>
+            <button onClick={onScLogout} style={{
+              background:'rgba(255,255,255,0.04)', border:'none',
+              borderRadius:9, padding:'7px 16px', flexShrink:0,
+              fontSize:12, fontWeight:500, color:'rgba(255,255,255,0.5)',
+              cursor:'pointer', fontFamily:'inherit',
+              transition:'background 0.15s, color 0.15s',
+            }}
+              onMouseEnter={e=>{ e.currentTarget.style.background='rgba(255,255,255,0.07)'; e.currentTarget.style.color='rgba(255,255,255,0.75)'; }}
+              onMouseLeave={e=>{ e.currentTarget.style.background='rgba(255,255,255,0.04)'; e.currentTarget.style.color='rgba(255,255,255,0.5)'; }}
+            >{t('logout')}</button>
+          </div>
+        ) : (
+          <div style={{padding:'16px'}}>
+            <div style={{display:'flex', alignItems:'center', gap:14, marginBottom:14}}>
+              <div style={{
+                width:46, height:46, borderRadius:14, flexShrink:0,
+                background:'rgba(255,85,0,0.07)',
+                display:'flex', alignItems:'center', justifyContent:'center',
+              }}>
+                <SoundCloudIcon size={24} fill="rgba(255,100,20,0.65)"/>
+              </div>
+              <div style={{flex:1, minWidth:0}}>
+                <div style={{fontSize:13.5, fontWeight:600, letterSpacing:'-0.015em', color:'rgba(255,255,255,0.6)', marginBottom:4}}>{t('sc_not_connected')}</div>
+                <div style={{fontSize:11.5, color:'rgba(255,255,255,0.26)', lineHeight:1.55}}>{t('sc_hint').split('\n').map((l,i)=><span key={i}>{l}{i===0&&<br/>}</span>)}</div>
+              </div>
+            </div>
+            {scError && <div style={{fontSize:11, color:'rgba(255,80,60,0.7)', marginBottom:10}}>{scError}</div>}
+            <button onClick={scLogin} disabled={scLoading} style={{
+              background: scLoading ? 'rgba(255,85,0,0.06)' : 'rgba(255,85,0,0.1)',
+              border:'none', borderRadius:10, padding:'9px 22px',
+              fontSize:12.5, fontWeight:500,
+              color: scLoading ? 'rgba(255,130,60,0.4)' : 'rgba(255,130,60,0.85)',
+              cursor: scLoading ? 'default' : 'pointer', fontFamily:'inherit',
+              transition:'background 0.15s, color 0.15s',
+            }}
+              onMouseEnter={e=>{ if(!scLoading) e.currentTarget.style.background='rgba(255,85,0,0.17)'; }}
+              onMouseLeave={e=>{ e.currentTarget.style.background=scLoading?'rgba(255,85,0,0.06)':'rgba(255,85,0,0.1)'; }}
+            >{scLoading ? t('opening_browser') : t('login_browser')}</button>
+          </div>
+        )}
+      </Card>
+    ),
     playback: (
       <Card title={t('card_audio')}>
         <Row label={t('crossfade')} sub={t('crossfade_sub')} last>
@@ -2163,121 +2224,6 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
         <div style={{maxWidth:480}}>
           {content[sec]}
         </div>
-      </div>
-    </div>
-  );
-}
-
-/* ── AvatarFlyClone ──────────────────────────────────────────────────────── */
-function AvatarFlyClone({ fly, exiting }) {
-  const { avatarUrl, startRect: s, targetRect: t } = fly;
-  const dx = (s.left + s.width/2)  - (t.left + t.width/2);
-  const dy = (s.top  + s.height/2) - (t.top  + t.height/2);
-  const sc = s.width / t.width;
-  const [ready, setReady] = useState(false);
-  useEffect(() => { requestAnimationFrame(() => requestAnimationFrame(() => setReady(true))); }, []);
-  return ReactDOM.createPortal(
-    <div style={{
-      position:'fixed', left:t.left, top:t.top,
-      width:t.width, height:t.height, borderRadius:12,
-      overflow:'hidden', zIndex:970, pointerEvents:'none',
-      transformOrigin:'center center',
-      transform: ready ? 'translate(0,0) scale(1)' : `translate(${dx}px,${dy}px) scale(${sc})`,
-      opacity: exiting ? 0 : 1,
-      transition: ready ? 'transform 0.38s cubic-bezier(0.22,1,0.36,1), opacity 0.12s ease' : 'none',
-    }}>
-      <img src={avatarUrl} style={{width:'100%',height:'100%',objectFit:'cover'}}/>
-    </div>,
-    document.body
-  );
-}
-
-/* ── SoundCloudView ──────────────────────────────────────────────────────── */
-function SoundCloudView({ visible, scAuth, onLogin, onLogout, avatarRef }) {
-  const t = useLang();
-  const [loading, setLoading] = useState(false);
-  const [error,   setError]   = useState(null);
-
-  const handleLogin = async () => {
-    setLoading(true); setError(null);
-    try {
-      const creds = await window.electronAPI.scLogin();
-      if (!creds) { setLoading(false); return; }
-      const res = await window.electronAPI.scFetch('https://api-v2.soundcloud.com/me', creds.token, creds.clientId);
-      if (res.data) onLogin({ ...creds, userId: res.data.id, username: res.data.username, avatarUrl: res.data.avatar_url || null });
-      else setError(t('profile_error'));
-    } catch { setError(t('conn_error')); }
-    setLoading(false);
-  };
-
-  const SC_ICON = <SoundCloudIcon size={40} fill="rgba(255,100,20,0.65)"/>;
-
-  const transStyle = {
-    position:'absolute', inset:0,
-    opacity: visible ? 1 : 0,
-    transform: visible ? 'none' : 'translateY(8px)',
-    transition:'opacity 0.28s ease, transform 0.28s ease',
-    pointerEvents: visible ? 'auto' : 'none',
-  };
-
-  if (scAuth) return (
-    <div style={{...transStyle, display:'flex', alignItems:'center', justifyContent:'center'}}>
-      <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:18, padding:'24px'}}>
-        <div style={{
-          width:104, height:104, borderRadius:'50%',
-          background:'rgba(178,178,178,0.06)',
-          display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden',
-          color:'var(--accent)',
-        }}>
-          {scAuth.avatarUrl
-            ? <img src={scAuth.avatarUrl} style={{width:'100%',height:'100%',objectFit:'cover'}}/>
-            : <svg width="42" height="42" fill="none" stroke="currentColor" strokeWidth="1.6" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-          }
-        </div>
-        <div style={{textAlign:'center'}}>
-          <div style={{fontSize:11, color:'rgba(255,255,255,0.28)', letterSpacing:'0.08em', textTransform:'uppercase', marginBottom:8}}>signed as</div>
-          <div style={{fontSize:20, fontWeight:600, letterSpacing:'-0.02em', color:'rgba(255,255,255,0.85)'}}>{scAuth.username || t('unknown')}</div>
-        </div>
-        <button onClick={onLogout} style={{
-          background:'rgba(255,255,255,0.04)', border:'none',
-          borderRadius:9, padding:'7px 18px', marginTop:8,
-          fontSize:12, fontWeight:500, color:'rgba(255,255,255,0.5)',
-          cursor:'pointer', fontFamily:'inherit',
-          transition:'background 0.15s, color 0.15s',
-        }}
-          onMouseEnter={e=>{ e.currentTarget.style.background='rgba(255,255,255,0.07)'; e.currentTarget.style.color='rgba(255,255,255,0.75)'; }}
-          onMouseLeave={e=>{ e.currentTarget.style.background='rgba(255,255,255,0.04)'; e.currentTarget.style.color='rgba(255,255,255,0.5)'; }}
-        >{t('logout')}</button>
-      </div>
-    </div>
-  );
-
-  return (
-    <div style={{...transStyle, display:'flex', alignItems:'center', justifyContent:'center'}}>
-      <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:20}}>
-        <div ref={avatarRef} style={{
-          width:72, height:72, borderRadius:20, flexShrink:0,
-          background:'rgba(255,85,0,0.07)',
-          display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden',
-        }}>
-          {SC_ICON}
-        </div>
-        <div style={{textAlign:'center'}}>
-          <div style={{fontSize:15,fontWeight:600,letterSpacing:'-0.015em',color:'rgba(255,255,255,0.6)',marginBottom:7}}>{t('sc_not_connected')}</div>
-          <div style={{fontSize:12,color:'rgba(255,255,255,0.22)',lineHeight:1.6}}>{t('sc_hint').split('\n').map((l,i)=><span key={i}>{l}{i===0&&<br/>}</span>)}</div>
-        </div>
-        {error && <div style={{fontSize:11,color:'rgba(255,80,60,0.7)'}}>{error}</div>}
-        <button onClick={handleLogin} disabled={loading} style={{
-          background: loading ? 'rgba(255,85,0,0.06)' : 'rgba(255,85,0,0.1)',
-          border:'none', borderRadius:10, padding:'9px 24px',
-          fontSize:13, fontWeight:500,
-          color: loading ? 'rgba(255,130,60,0.4)' : 'rgba(255,130,60,0.85)',
-          cursor: loading ? 'default' : 'pointer', fontFamily:'inherit',
-          transition:'background 0.15s, color 0.15s',
-        }}
-          onMouseEnter={e=>{ if(!loading){ e.currentTarget.style.background='rgba(255,85,0,0.17)'; }}}
-          onMouseLeave={e=>{ e.currentTarget.style.background=loading?'rgba(255,85,0,0.06)':'rgba(255,85,0,0.1)'; }}
-        >{loading ? t('opening_browser') : t('login_browser')}</button>
       </div>
     </div>
   );
@@ -2953,9 +2899,6 @@ function App() {
   const [heroExiting,        setHeroExiting]        = useState(false);
   const [reverseHero,        setReverseHero]        = useState(null);
   const [reverseHeroExiting, setReverseHeroExiting] = useState(false);
-  const [avatarFly,          setAvatarFly]          = useState(null);
-  const [avatarFlyExiting,   setAvatarFlyExiting]   = useState(false);
-  const [avatarFlying,       setAvatarFlying]       = useState(false);
   const [artistView,         setArtistView]         = useState(null);
   const [libCollapsed,  setLibCollapsed]  = useState(false);
   const [settings,      setSettings]      = useState({
@@ -3022,8 +2965,6 @@ function App() {
   const playerInfoRef  = useRef(null);
   const isPlayingRef   = useRef(false);
   const homeScrollRef     = useRef(null);
-  const scAvatarRef       = useRef(null);
-  const sidebarProfileRef = useRef(null);
   const scTracksRef       = useRef([]);
   const scAuthRef         = useRef(null);
   const scCacheRef        = useRef([]);
@@ -3115,16 +3056,21 @@ function App() {
     return () => cancelAnimationFrame(accentRafRef.current);
   }, [appAccent]);
 
-  // titlebar accent glow — only in player view
+  // titlebar accent glow + верхняя акцентная подсветка — only in player view.
+  // привязано к playerVisible, а не к view: при уходе в настройки setView
+  // отложен на 300мс — свечение гасло бы с запозданием, в отличие от
+  // поиска/библиотеки, где view меняется сразу
   useEffect(() => {
+    const inPlayer = view === 'player' && playerVisible;
+    document.body.classList.toggle('in-player', inPlayer);
     const tb = document.getElementById('titlebar');
     if (!tb) return;
-    if (view === 'player') {
+    if (inPlayer) {
       tb.style.background = 'linear-gradient(90deg, var(--bg) 0%, rgba(var(--accent-rgb),0.09) 50%, var(--bg) 100%)';
     } else {
       tb.style.background = '';
     }
-  }, [view]);
+  }, [view, playerVisible]);
 
   /* загружаем настройки и треки при старте */
   useEffect(() => {
@@ -3689,17 +3635,7 @@ function App() {
   }, [settings.soundcloudAuth]);
 
   const handleScLogin = useCallback((auth) => {
-    const startEl  = scAvatarRef.current;
-    const targetEl = sidebarProfileRef.current;
     setSettings(s => ({ ...s, soundcloudAuth: auth, sourceMode: 'sc' }));
-    if (startEl && targetEl && auth.avatarUrl) {
-      const startRect  = startEl.getBoundingClientRect();
-      const targetRect = targetEl.getBoundingClientRect();
-      setAvatarFlying(true);
-      setAvatarFly({ avatarUrl: auth.avatarUrl, startRect, targetRect });
-      setTimeout(() => { setAvatarFlying(false); setAvatarFlyExiting(true); }, 400);
-      setTimeout(() => { setAvatarFly(null); setAvatarFlyExiting(false); }, 560);
-    }
   }, []);
   const handleScLogout = useCallback(() => {
     scCacheRef.current = [];
@@ -3737,7 +3673,7 @@ function App() {
           setPlayerVisible(false);
           setHomeVisible(true);
           setView('home');
-        } else if (view === 'settings' || view === 'soundcloud' || view === 'search') {
+        } else if (view === 'settings' || view === 'search') {
           setHomeVisible(true);
           setView('home');
         }
@@ -4158,7 +4094,7 @@ function App() {
         setPlayerVisible(false);
         setHomeVisible(true);
         setView('home');
-      } else if (view === 'settings' || view === 'soundcloud' || view === 'search' || view === 'artist') {
+      } else if (view === 'settings' || view === 'search' || view === 'artist') {
         setHomeVisible(true);
         setView('home');
       }
@@ -4166,10 +4102,6 @@ function App() {
       if (view === 'home') setHomeVisible(false);
       if (view === 'player') setPlayerVisible(false);
       setView('search');
-    } else if (id === 'soundcloud') {
-      if (view === 'home') setHomeVisible(false);
-      if (view === 'player') setPlayerVisible(false);
-      setTimeout(() => setView('soundcloud'), view === 'home' ? 240 : 300);
     } else if (id === 'settings') {
       if (view === 'player') setPlayerVisible(false);
       if (view === 'home') setHomeVisible(false);
@@ -4200,8 +4132,6 @@ function App() {
     } else if (view === 'settings') {
       setPlayerVisible(true);
       setView('player');
-    } else if (view === 'soundcloud') {
-      setTimeout(() => { setPlayerVisible(true); setView('player'); }, 240);
     } else if (view === 'search') {
       setPlayerVisible(true);
       setView('player');
@@ -4218,11 +4148,10 @@ function App() {
     <div style={{display:'flex', width:'100%', height:'100%', overflow:'hidden'}}>
       {hero && hero.targetRect && <HeroClone hero={hero} exiting={heroExiting}/>}
       {reverseHero && reverseHero.targetRect && <HeroClone hero={reverseHero} exiting={reverseHeroExiting} reverse={true}/>}
-      {avatarFly && <AvatarFlyClone fly={avatarFly} exiting={avatarFlyExiting}/>}
-      <Sidebar navActive={navActive} onNav={handleNav}
+      <TopBar navActive={navActive} onNav={handleNav}
         libCollapsed={libCollapsed} onToggleLib={()=>setLibCollapsed(v=>!v)}
-        inPlayer={view==='player'} scAuth={settings.soundcloudAuth||null} profileRef={sidebarProfileRef}
-        sourceMode={sourceMode} onToggleSource={handleToggleSource} avatarFlying={avatarFlying}/>
+        inPlayer={view==='player'} scAuth={settings.soundcloudAuth||null}
+        sourceMode={sourceMode} onToggleSource={handleToggleSource}/>
 
       <div style={{position:'relative', flex:1, height:'100%', overflow:'hidden'}}>
 
@@ -4344,7 +4273,7 @@ function App() {
                     </svg>
                     {t('pick_folder')}
                   </button>
-                  <button onClick={() => handleNav('soundcloud')} style={{
+                  <button onClick={() => handleNav('settings')} style={{
                     display:'flex', alignItems:'center', gap:8,
                     background:'rgba(255,85,0,0.1)',
                     border:'none', borderRadius:10, padding:'9px 18px',
@@ -4658,8 +4587,7 @@ function App() {
           </div>
         )}
 
-        <SettingsView settings={settings} onSettings={setSettings} visible={view==='settings'} onScanTracks={handleScanTracks} onClearFolder={handleClearFolder} onClearCoversCache={handleClearCoversCache} onClearLikesCache={handleClearLikesCache} appAccent={appAccent}/>
-        <SoundCloudView visible={view==='soundcloud'} scAuth={settings.soundcloudAuth||null} onLogin={handleScLogin} onLogout={handleScLogout} avatarRef={scAvatarRef}/>
+        <SettingsView settings={settings} onSettings={setSettings} visible={view==='settings'} onScanTracks={handleScanTracks} onClearFolder={handleClearFolder} onClearCoversCache={handleClearCoversCache} onClearLikesCache={handleClearLikesCache} appAccent={appAccent} scAuth={settings.soundcloudAuth||null} onScLogin={handleScLogin} onScLogout={handleScLogout}/>
         <SearchView ref={searchViewRef} visible={view==='search'} scAuth={settings.soundcloudAuth||null}
           likedIds={likedIds} onLike={handleLike}
           onPlayTrack={(t, queue) => { searchQueueRef.current = queue || null; handleScTrackClick(t, -1); }}
