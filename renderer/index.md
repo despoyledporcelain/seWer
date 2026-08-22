@@ -107,10 +107,11 @@ div-based pill bar. высота **10px → 14px** при hover/drag (spring ove
 canvas TW=28px, вертикальный. drag вверх = больше. fill рисуется из `LIVE_ACCENT` (подписка `onAccentChange` → перерисовка в такт акцент-анимации), glow, без thumb.
 
 ### `AlbumArt`
-`{track, isPlaying}`. контейнер всегда с `#111116` фоном + `note.png` placeholder сзади (opacity 0.13).
-- если `track.coverUrl` есть — `<img>` поверх. на `onError` ставит `opacity:0` (не display:none) → placeholder виден.
-- **retry до 2 раз** с задержкой 0.5с/1с при ошибке (cache-bust query string)
-- **focus/visibilitychange listener**: когда окно вернулось из фона и `<img>` не загружен (`naturalWidth===0`), форсит reload с cache-bust. защита от Chromium image-cache eviction в фоне.
+`{track}`. контейнер всегда с `#111116` фоном + `note.png` placeholder сзади (opacity 0.13).
+- **double-buffer crossfade** при смене `coverUrl`: новая обложка — новый скрытый слой (`CoverLayer`) поверх старой, после `load` + `decode()` плавно проявляется (opacity 0.45s), старая остаётся под ней до конца кроссфейда (prune через 800мс после ready; ready ставится ТОЛЬКО после `decode()` — иначе prune успевал до конца fade и обложка «обрезалась» в темноту). тёмной вспышки/«пустого бокса» нет. тот же `coverUrl` — новый слой не добавляется, анимации нет.
+- каждый слой — **canvas**: кавер рисуется в битмап с уже скруглёнными углами (`ctx.roundRect(16*dpr)` + `clip` + `drawImage` cover-fit с запасом 1px, размер в device pixels). CSS-клипов на нём нет вообще — композитным слоям и растеризации нечего недоклипить, белые искорки в углах невозможны физически (углы битмапа прозрачные). перерисовка при ресайзе (ResizeObserver + window resize). битмапу не страшен image-cache eviction — visibilitychange-форсерелоад не нужен.
+- **retry до 2 раз** с задержкой 0.5с/1с при ошибке (cache-bust query string), после — слой удаляется, виден нижний/placeholder
+- eviction-защита не нужна: canvas-битмап не пропадает из кэша (это касалось только `<img>`).
 
 ### `MagBtn`
 `{onClick, active, children, size=52}`. **motion.button** с `whileTap={{scale:0.82}}`, spring (600/22/0.4).
@@ -136,8 +137,8 @@ ROW_H=50. `content-visibility:auto`. абсолютный пилл с transition
 
 ### `HeroClone` ⚡
 `{hero, exiting, reverse=false}`. portal → document.body. **GSAP timeline** `expo.inOut`, `force3D:true`.
-- **одиночный div** (без inner): static `border-radius:16` + `overflow:hidden` для cover-clip. clipPath-анимация убрана — была CPU-bound через rasterize.
-- animation **только transform** (translate3d + scale) — GPU-only композит
+- **одиночный div** (без inner): `overflow:hidden`, `border-radius` **анимируется** по 4 углам от `16px×4` (scale 1, плеер) до `corners/sc` (визуально ровно углы карточки-цели на приземлении — без щелчка углов). `corners [tl,tr,br,bl]` читаются хелпером `cssCorners(artEl)` при создании hero и передаются в объекте.
+- animation **transform** (translate3d + scale) + borderRadius; img внутри — параллельно анимируется `clip-path: inset(0 round …)` в такт радиусу родителя
 - `useLayoutEffect` + pre-paint inline `transform: translate3d(dx,dy,0) scale(sc)` → no flash при mount
 - exit: `gsap.to(opacity:0)` с `power2.out` 140мс
 - `contain:'layout style paint'` + `backface-visibility:hidden` — изоляция от соседнего DOM, sub-pixel AA
@@ -286,8 +287,6 @@ artRefs, artRefCacheRef   — refs на обложки HomeCard
 playerArtRef              — ref на AlbumArt в плеере
 slideWrapRef              — обёртка обложки в плеере (GSAP slide)
 playerInfoRef             — блок артист+название (GSAP анимация входа)
-trackDirRef               — 'next'|'prev' направление GSAP slide
-slideReadyRef             — пропуск первого mount
 audioRef, hlsRef
 handleNextRef, handlePrevRef, isPlayingRef
 homeScrollRef, scAvatarRef, sidebarProfileRef
@@ -407,7 +406,7 @@ useEffect зависит от `[track?.id, isPlaying, settings.discordRpc, disco
 - **GSAP** (timeline-сложные):
   - **home→player**: HeroClone `expo.inOut` 0.38s + playerInfoRef fade+slide (`sine.out` 0.42s delay 0.08s)
   - **player→home**: reverse HeroClone `expo.inOut`
-  - **смена трека**: GSAP `fromTo` на `slideWrapRef` (`y: ±14 → 0`, `power2.out` 0.5s); направление из `trackDirRef`
+  - **смена трека**: без GSAP — обложки кроссфейдятся в `AlbumArt` (см. выше), info-блок не анимируется
 - **SC логин**: AvatarFlyClone 440мс
 - **artEntrance**: при `view→'player'` без hero → `artEntranceKey++` → scale/opacity, 420мс
 - **toast**: Motion entrance/exit с spring (380/30/0.6)

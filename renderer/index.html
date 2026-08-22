@@ -860,32 +860,129 @@ function ThinVolumeSlider({ volume, onChange, onLiveChange }) {
 }
 
 /* ── Album Art ───────────────────────────────────────────────────────────── */
-function AlbumArt({ track, isPlaying }) {
-  const imgRef = useRef(null);
-  const retryRef = useRef(0);
-  const url = track.coverUrl || null;
+/* double-buffer crossfade: новая обложка грузится скрытым слоем поверх старой,
+   после load+decode плавно проявляется (0.45s), старая остаётся под ней до
+   конца кроссфейда — тёмной вспышки и «пустого бокса» при смене трека нет */
+function CoverLayer({ url, onLoaded, onFailed }) {
+  /* кавер рисуется в canvas с уже скруглёнными углами (roundRect + clip в
+     битмап при загрузке): CSS-клипов нет вообще — композитным слоям нечего
+     обрезать по-кривому, белые пиксели обложки физически не могут выйти за
+     скругление. углы битмапа прозрачные, под ними фон контейнера */
+  const canvasRef = useRef(null);
+  const imgRef    = useRef(null);
+  const retryRef  = useRef(0);
 
-  // when window returns to foreground, if img happens to be hidden (eviction),
-  // force a reload from the same src to bring it back
+  const draw = useCallback(() => {
+    const cv = canvasRef.current, im = imgRef.current;
+    if (!cv || !im || !im.naturalWidth) return;
+    const dpr  = window.devicePixelRatio || 1;
+    const rect = cv.getBoundingClientRect();
+    const w = Math.max(1, Math.round(rect.width  * dpr));
+    const h = Math.max(1, Math.round(rect.height * dpr));
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    const ctx = cv.getContext('2d');
+    ctx.clearRect(0, 0, w, h);
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(0, 0, w, h, 16 * dpr);
+    ctx.clip();
+    /* cover-fit с запасом 1px: край битмапа картинки за пределами скругления */
+    const bw = w + 2 * dpr, bh = h + 2 * dpr;
+    const sc = Math.max(bw / im.naturalWidth, bh / im.naturalHeight);
+    const dw = im.naturalWidth * sc, dh = im.naturalHeight * sc;
+    ctx.drawImage(im, (w - dw) / 2, (h - dh) / 2, dw, dh);
+    ctx.restore();
+  }, []);
+
+  /* загрузка → decode → отрисовка → fade-in → ready */
   useEffect(() => {
-    if (!url) return;
-    const onVis = () => {
-      if (document.visibilityState !== 'visible') return;
-      const el = imgRef.current;
-      if (!el) return;
-      if (el.style.opacity === '0' || !el.complete || el.naturalWidth === 0) {
-        const sep = url.includes('?') ? '&' : '?';
-        el.src = url + sep + '_r=' + Date.now();
-        el.style.opacity = '1';
+    let dead = false;
+    const im = new Image();
+    imgRef.current = im;
+    im.decoding = 'async';
+    im.onload = () => {
+      if (dead) return;
+      const ready = () => {
+        if (dead) return;
+        draw();
+        if (canvasRef.current) canvasRef.current.style.opacity = '1';
+        retryRef.current = 0;
+        onLoaded(url);
+      };
+      if (im.decode) im.decode().then(ready).catch(ready); else ready();
+    };
+    im.onerror = () => {
+      if (dead) return;
+      if (retryRef.current < 2) {
+        retryRef.current++;
+        setTimeout(() => {
+          if (dead) return;
+          const sep = url.includes('?') ? '&' : '?';
+          im.src = url + sep + '_r=' + Date.now();
+        }, 500 * retryRef.current);
+      } else {
+        onFailed(url);
       }
     };
-    document.addEventListener('visibilitychange', onVis);
-    window.addEventListener('focus', onVis);
-    return () => {
-      document.removeEventListener('visibilitychange', onVis);
-      window.removeEventListener('focus', onVis);
-    };
+    im.src = url;
+    return () => { dead = true; };
+  }, [url, draw]);
+
+  /* перерисовка при ресайзе окна/контейнера (canvas фиксированного битмапа) */
+  useEffect(() => {
+    const cv = canvasRef.current;
+    if (!cv) return;
+    const ro = new ResizeObserver(() => draw());
+    ro.observe(cv);
+    window.addEventListener('resize', draw);
+    return () => { ro.disconnect(); window.removeEventListener('resize', draw); };
+  }, [draw]);
+
+  return (
+    <canvas ref={canvasRef}
+      style={{position:'absolute',inset:0,width:'100%',height:'100%',display:'block',opacity:0,transition:'opacity 0.45s ease',pointerEvents:'none'}}/>
+  );
+}
+
+function AlbumArt({ track }) {
+  const url = track?.coverUrl || null;
+  const [layers, setLayers] = useState(() => (url ? [{ url }] : []));
+  const pruneTimer = useRef(null);
+  const topUrl = layers.length ? layers[layers.length - 1].url : null;
+
+  /* новая обложка → новый слой сверху; без обложки → только placeholder */
+  useEffect(() => {
+    if (url === topUrl) return;
+    if (pruneTimer.current) { clearTimeout(pruneTimer.current); pruneTimer.current = null; }
+    setLayers(url ? [...layers, { url }] : []);
   }, [url]);
+
+  /* верхний слой проявился → срезаем нижние после кроссфейда */
+  useEffect(() => {
+    if (layers.length < 2) return;
+    const top = layers[layers.length - 1];
+    if (!top.ready) return;
+    if (pruneTimer.current) clearTimeout(pruneTimer.current);
+    pruneTimer.current = setTimeout(() => {
+      pruneTimer.current = null;
+      setLayers(prev => {
+        if (prev.length < 2) return prev;
+        const t = prev[prev.length - 1];
+        return t.ready ? [t] : prev;
+      });
+    }, 800);
+  }, [layers]);
+
+  useEffect(() => () => { if (pruneTimer.current) clearTimeout(pruneTimer.current); }, []);
+
+  const markLoaded = u => setLayers(prev => {
+    const i = prev.findIndex(l => l.url === u);
+    if (i < 0 || prev[i].ready) return prev;
+    const next = prev.slice();
+    next[i] = { url: u, ready: true };
+    return next;
+  });
+  const dropLayer = u => setLayers(prev => prev.filter(l => l.url !== u));
 
   return (
     <div style={{
@@ -895,25 +992,9 @@ function AlbumArt({ track, isPlaying }) {
     }}>
       {/* placeholder underneath — always rendered */}
       <img src="../assets/note.png" style={{width:32,height:32,filter:'brightness(0) invert(1)',opacity:0.13}}/>
-      {/* cover on top, fades out on error */}
-      {url && (
-        <img ref={imgRef} src={url} decoding="async"
-          style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover',transition:'opacity 0.2s'}}
-          onLoad={e => { e.currentTarget.style.opacity = '1'; retryRef.current = 0; }}
-          onError={e => {
-            e.currentTarget.style.opacity = '0';
-            if (retryRef.current < 2) {
-              retryRef.current++;
-              const el = e.currentTarget;
-              setTimeout(() => {
-                if (!el.isConnected) return;
-                const sep = url.includes('?') ? '&' : '?';
-                el.src = url + sep + '_r=' + Date.now();
-              }, 500 * retryRef.current);
-            }
-          }}/>
-      )}
-    </div>
+      {layers.map(l => (
+        <CoverLayer key={l.url} url={l.url} onLoaded={markLoaded} onFailed={dropLayer}/>
+      ))}    </div>
   );
 }
 
@@ -1035,7 +1116,7 @@ const TrackRow = React.memo(function TrackRow({ track, isActive, isLoading, isEr
         overflow:'hidden', position:'relative',
       }}>
         {track.coverUrl
-          ? <img src={track.coverUrl} loading="lazy" decoding="async" style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}
+          ? <img src={track.coverUrl} loading="lazy" decoding="async" style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover',clipPath:'inset(0 round 7px)',display:'block'}}
               onError={e=>{e.currentTarget.style.display='none'}}/>
           : <img src="../assets/note.png" style={{width:11,height:11,filter:'brightness(0) invert(1)',opacity:isActive?0.9:0.2}}/>
         }
@@ -1298,11 +1379,11 @@ const HomeCard = React.memo(function HomeCard({ track, onSelect, artRef, artHidd
         opacity: artHidden ? 0 : 1,
         width:'100%', aspectRatio:'1', position:'relative',
         background:'#111116',
-        borderRadius:16, overflow:'hidden',
+        borderRadius:'0 0 16px 16px', overflow:'hidden',
         display:'flex', alignItems:'center', justifyContent:'center',
       }}>
         {track.coverUrl ? (
-          <img src={track.coverUrl} loading="lazy" decoding="async" style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}
+          <img src={track.coverUrl} loading="lazy" decoding="async" style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover',clipPath:'inset(0 round 0 0 16px 16px)',display:'block'}}
             onError={e=>{e.currentTarget.style.display='none'}}/>
         ) : (
           <img src="../assets/note.png" style={{width:24,height:24,filter:'brightness(0) invert(1)',opacity:0.13}}/>
@@ -1333,6 +1414,17 @@ const HomeCard = React.memo(function HomeCard({ track, onSelect, artRef, artHidd
 const HERO_DUR_MS  = 380;
 const HERO_FADE_MS = 140;
 const HERO_EASE    = 'expo.inOut';
+/* 4 радиуса углов элемента [tl,tr,br,bl] из computed style */
+function cssCorners(el) {
+  try {
+    const nums = getComputedStyle(el).borderRadius.split('/')[0].trim().split(/\s+/).map(parseFloat);
+    if (!nums.length || nums.some(isNaN)) return [16,16,16,16];
+    if (nums.length === 1) return [nums[0],nums[0],nums[0],nums[0]];
+    if (nums.length === 2) return [nums[0],nums[1],nums[0],nums[1]];
+    if (nums.length === 3) return [nums[0],nums[1],nums[2],nums[1]];
+    return nums.slice(0,4);
+  } catch { return [16,16,16,16]; }
+}
 function HeroClone({ hero, exiting, reverse = false }) {
   const cloneRef = useRef(null);
   const { left: tLeft, top: tTop, size } = hero.targetRect;
@@ -1341,18 +1433,28 @@ function HeroClone({ hero, exiting, reverse = false }) {
   const dx = (sLeft + sW/2) - (tLeft + size/2);
   const dy = (sTop + sH/2) - (tTop + size/2);
   const sc = sW / size;
-  const BR = 16;
+  /* углы карточки-цели [tl,tr,br,bl]; на конце полёта клон уменьшен через scale,
+     поэтому радиусы анимируем до corners/sc — визуально приезжаем ровно в углы
+     карточки, приземление без щелчка */
+  const corners = hero.corners || [16,16,16,16];
+  const BR4     = '16px 16px 16px 16px';
+  const BR_END  = corners.map(c => (c / sc) + 'px').join(' ');
+  const CLIP4   = 'inset(0 round 16px)';
+  const CLIP_END = `inset(0 round ${BR_END})`;
   const DUR = HERO_DUR_MS / 1000;
 
   // run the timeline BEFORE first paint so there is no flash in the target rect
   useLayoutEffect(() => {
     const el = cloneRef.current;
     if (!el) return;
+    const img = el.querySelector('img');
     const tl = gsap.timeline({ defaults: { force3D: true, ease: HERO_EASE, duration: DUR } });
     if (reverse) {
-      tl.fromTo(el, { x: 0, y: 0, scale: 1 }, { x: dx, y: dy, scale: sc }, 0);
+      tl.fromTo(el, { x: 0, y: 0, scale: 1, borderRadius: BR4 }, { x: dx, y: dy, scale: sc, borderRadius: BR_END }, 0);
+      if (img) tl.fromTo(img, { clipPath: CLIP4 }, { clipPath: CLIP_END }, 0);
     } else {
-      tl.fromTo(el, { x: dx, y: dy, scale: sc }, { x: 0, y: 0, scale: 1 }, 0);
+      tl.fromTo(el, { x: dx, y: dy, scale: sc, borderRadius: BR_END }, { x: 0, y: 0, scale: 1, borderRadius: BR4 }, 0);
+      if (img) tl.fromTo(img, { clipPath: CLIP_END }, { clipPath: CLIP4 }, 0);
     }
     return () => tl.kill();
   }, []);
@@ -1381,7 +1483,7 @@ function HeroClone({ hero, exiting, reverse = false }) {
       zIndex:960, pointerEvents:'none',
       transformOrigin:'center center',
       transform: initialTransform,
-      borderRadius: BR,
+      borderRadius: reverse ? BR4 : BR_END,
       overflow:'hidden',
       background:'#111116',
       willChange:'transform, opacity',
@@ -1393,7 +1495,7 @@ function HeroClone({ hero, exiting, reverse = false }) {
           loading="eager" decoding="sync"
           style={{
             position:'absolute', inset:0, width:'100%', height:'100%',
-            objectFit:'cover', display:'block',
+            objectFit:'cover', display:'block', clipPath: reverse ? CLIP4 : CLIP_END,
           }}
           onError={e=>{e.currentTarget.style.display='none'}}/>
       ) : (
@@ -2205,7 +2307,7 @@ function SearchTrackRow({ track, isLiked, onLike, onClick, onCoverClick, isLoadi
         background:'#111116', overflow:'hidden', position:'relative',
         cursor: isLoading ? 'default' : 'pointer',
       }}>
-        {track.coverUrl && <img src={track.coverUrl} loading="lazy" decoding="async" style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}
+        {track.coverUrl && <img src={track.coverUrl} loading="lazy" decoding="async" style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover',clipPath:'inset(0 round 8px)',display:'block'}}
           onError={e=>{e.currentTarget.style.display='none'}}/>}
         {isLoading
           ? <div style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.55)',display:'flex',alignItems:'center',justifyContent:'center'}}>
@@ -2918,8 +3020,6 @@ function App() {
   const handlePrevRef  = useRef(null);
   const artEntranceRef    = useRef(null);
   const playerInfoRef  = useRef(null);
-  const trackDirRef    = useRef('next');
-  const slideReadyRef  = useRef(false);
   const isPlayingRef   = useRef(false);
   const homeScrollRef     = useRef(null);
   const scAvatarRef       = useRef(null);
@@ -3174,18 +3274,6 @@ function App() {
     }
   }, [playerVisible]);
 
-  /* gsap — анимация смены трека */
-  useEffect(() => {
-    if (!slideReadyRef.current) { slideReadyRef.current = true; return; }
-    const el = artEntranceRef.current;
-    if (!el || (hero && !heroExiting)) return;
-    const y = trackDirRef.current === 'prev' ? 16 : -16;
-    gsap.fromTo(el,
-      { y, opacity: 0.4, scale: 0.975 },
-      { y: 0, opacity: 1, scale: 1, duration: 0.52, ease: 'expo.out', force3D: true, clearProps: 'all' }
-    );
-  }, [trackIdx, scPlayingTrack?.id]);
-
   /* плавный ресайз — отключаем transitions пока тянут окно */
   useEffect(() => {
     let t;
@@ -3256,7 +3344,6 @@ function App() {
   }, [shuffle]);
 
   function handleNext() {
-    trackDirRef.current = 'next';
     if (repeat === 'one') {
       const audio = audioRef.current;
       if (audio) { audio.currentTime = 0; audio.play().catch(() => {}); }
@@ -3307,7 +3394,6 @@ function App() {
   handleNextRef.current = handleNext;
 
   function handlePrev() {
-    trackDirRef.current = 'prev';
     if (progressRef.current > 0.05) {
       progressRef.current = 0;
       if (audioRef.current) audioRef.current.currentTime = 0;
@@ -3869,7 +3955,7 @@ function App() {
       const startRect = artEl.getBoundingClientRect();
       const targetRect = { left: par.left, top: par.top, size: par.width };
       startPlay();
-      setHero({ track: t, startRect, targetRect });
+      setHero({ track: t, startRect, targetRect, corners: cssCorners(artEl) });
       setHomeVisible(false);
       setPlayerVisible(true);
       setView('player');
@@ -4064,6 +4150,7 @@ function App() {
             track: track,
             targetRect: { left: par.left, top: par.top, size: par.width },
             startRect:  { left: cardRect.left, top: cardRect.top, width: cardRect.width, height: cardRect.height },
+            corners: cssCorners(artEl),
           });
           setTimeout(() => setReverseHeroExiting(true), HERO_DUR_MS - 80);
           setTimeout(() => { setReverseHero(null); setReverseHeroExiting(false); }, HERO_DUR_MS - 80 + HERO_FADE_MS + 20);
@@ -4103,7 +4190,7 @@ function App() {
         }
         const startRect = artEl.getBoundingClientRect();
         const targetRect = { left: par.left, top: par.top, size: par.width };
-        setHero({ track: track, startRect, targetRect });
+        setHero({ track: track, startRect, targetRect, corners: cssCorners(artEl) });
         setTimeout(() => setHeroExiting(true), HERO_DUR_MS - 80);
         setTimeout(() => { setHero(null); setHeroExiting(false); }, HERO_DUR_MS - 80 + HERO_FADE_MS + 20);
       }
