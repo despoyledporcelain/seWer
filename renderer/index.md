@@ -18,7 +18,9 @@
 --titlebar-h: 28px
 ```
 
-`--accent` / `--accent-rgb` **динамически переписываются** через `useEffect` в `App` при смене `accentMode` или extracted цвета обложки. все места с `var(--accent)` (Sidebar pill, NavIcon active, MagBtn active, TrackRow active, лайк, caret) меняют цвет автоматически.
+`--accent` / `--accent-rgb` **динамически анимируются** через `useEffect` в `App` при смене `accentMode` или extracted цвета обложки: rAF-лерп по RGB (easeInOutCubic, 400мс) от текущего анимируемого значения к целевому. все места с `var(--accent)` / `var(--accent-rgb)` перетекают покадрово без ререндеров React.
+
+**live accent store** (module-level): `LIVE_ACCENT {r,g,b}` + `onAccentChange(fn)` подписка. App обновляет `LIVE_ACCENT` и звенит подписчикам каждый кадр анимации. canvas-компоненты (`ThinVolumeSlider`) подписываются и перерисовываются в такт.
 
 **анимации:** `breathe`, `spin`, `fadeInUp`, `fadeOutDown`, `artEntrance` (легаси — частично заменены Motion-компонентами)
 
@@ -94,15 +96,15 @@ useLang()      — хук: возвращает t(key), читает LangContext
 `{liked, onLike, style?}`. сердечко 19px в плеере (для SC треков). scale 1.18 при hover.
 
 ### `ProgressBar` (бывш. WaveProgressBar)
-`{progressRef, total, onSeek, isPlaying, visible, accentRGB}`.
+`{progressRef, total, onSeek, isPlaying, visible}`.
 div-based pill bar. высота **10px → 14px** при hover/drag (spring overshoot). external padding 10px = hit-zone ~30px. rAF обновляет `fillRef.style.transform = scaleX(p)` + thumb `left = p*100%` + текстовые таймкоды.
-- **fill gradient** использует `accentRGB` (lighter справа) с fallback на бело-серый
-- **glow layer** (отдельный div, не клиппится track-overflow) — accent box-shadow усиливается на hover/drag
+- **fill gradient** на `rgba(var(--accent-rgb),...)` + `color-mix(... 86%, white)` — перетекает с глобальной акцент-анимацией; `transition: background 0.18s linear` как low-pass
+- **glow layer** (отдельный div, не клиппится track-overflow) — accent box-shadow (`var(--accent-rgb)`) усиливается на hover/drag
 - **thumb** — белый круг 14→16px, opacity 0 при idle, появляется при hover/drag, центрирован через `translate: -50% -50%`
 - **time tooltip** — при hover/drag над курсором показывается dark pill с `fmt(time)`
 
 ### `ThinVolumeSlider`
-canvas TW=28px, вертикальный. drag вверх = больше. `#c8c8c8` fill с glow, без thumb.
+canvas TW=28px, вертикальный. drag вверх = больше. fill рисуется из `LIVE_ACCENT` (подписка `onAccentChange` → перерисовка в такт акцент-анимации), glow, без thumb.
 
 ### `AlbumArt`
 `{track, isPlaying}`. контейнер всегда с `#111116` фоном + `note.png` placeholder сзади (opacity 0.13).
@@ -259,7 +261,7 @@ accentRGB       — null | { r, g, b } extracted from track.coverUrl
 - если `accentMode === 'cover'` и `accentRGB` есть → boost luminance to ≥110, returns `{r,g,b}`
 - иначе → `ACCENT_PRESETS[settings.accentMode] || ACCENT_PRESETS.default`
 
-**useEffect [appAccent]** → `document.documentElement.style.setProperty('--accent', 'rgb(r,g,b)')` + `--accent-rgb`
+**useEffect [appAccent]** → rAF-лерп (400мс, easeInOutCubic) `--accent` + `--accent-rgb` + `LIVE_ACCENT`/`_accentSubs` (см. css-переменные выше)
 
 **useEffect [track.id, track.coverUrl]** → `extractAccentColor(coverUrl)` → `setAccentRGB(c)`
 
@@ -389,9 +391,9 @@ useEffect зависит от `[track?.id, isPlaying, settings.discordRpc, disco
 - порядок: playerInfoRef (артист → название) → slideWrapRef (обложка + **ambient glow blob**) → ProgressBar → controls
 - **ambient glow** (за обложкой, `zIndex:0`, opacity 1 кроме hero):
   - `position:absolute inset:-30%, borderRadius:50%`
-  - `background: radial-gradient` с `appAccent` (4 stops: 0.55 → 0.26 → 0.08 → 0)
+  - `background: radial-gradient` на `var(--accent-rgb)` (4 stops: 0.55 → 0.26 → 0.08 → 0) — перетекает с глобальной акцент-анимацией покадрово, crossfade-слои не нужны
   - `filter: blur(42px)`
-  - `transition: opacity 0.6s ease, background 0.6s ease`
+  - `transition: opacity 0.6s ease`
 - **обложка**: `width: min(100%, clamp(320px, 54vw, 760px), clamp(240px, 58vh, 760px))`
 - **прогресс-бар**: `width: min(100%, clamp(260px, 34vw, 520px))`
 - **библиотека**: фиксированный 260px, схлопывается через `width:0` (overflow:hidden), кнопка collapse в сайдбаре

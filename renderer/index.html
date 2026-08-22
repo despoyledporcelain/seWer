@@ -143,6 +143,16 @@ const ACCENT_PRESETS = {
   amber:    { r: 255, g: 178, b: 100 },
 };
 
+/* ── live accent ─────────────────────────────────────────────────────────── */
+/* актуальное анимируемое значение акцента: App лерпит его покадрово,
+   canvas-компоненты подписываются и перерисовываются в такт */
+const LIVE_ACCENT = { r: 178, g: 178, b: 178 };
+const _accentSubs = new Set();
+function onAccentChange(fn) {
+  _accentSubs.add(fn);
+  return () => _accentSubs.delete(fn);
+}
+
 /* ── color extraction ────────────────────────────────────────────────────── */
 const _accentCache = new Map();
 function extractAccentColor(url) {
@@ -544,7 +554,7 @@ function PlayerLikeBtn({ liked, onLike, style: extraStyle }) {
 }
 
 /* ── Progress Bar ────────────────────────────────────────────────────────── */
-function ProgressBar({ progressRef, total, onSeek, isPlaying, visible, accentRGB }) {
+function ProgressBar({ progressRef, total, onSeek, isPlaying, visible }) {
   const trackRef         = useRef(null);
   const fillRef          = useRef(null);
   const thumbRef         = useRef(null);
@@ -683,11 +693,9 @@ function ProgressBar({ progressRef, total, onSeek, isPlaying, visible, accentRGB
               height:'100%',
               width: (progressRef.current * 100).toFixed(3) + '%',
               borderRadius: '0 999px 999px 0',
-              background: accentRGB
-                ? `linear-gradient(90deg, rgba(${accentRGB.r},${accentRGB.g},${accentRGB.b},0.88), rgba(${Math.min(255,accentRGB.r+25)},${Math.min(255,accentRGB.g+25)},${Math.min(255,accentRGB.b+25)},1))`
-                : 'linear-gradient(90deg, rgba(220,220,220,0.92), rgba(255,255,255,1))',
+              background: 'linear-gradient(90deg, rgba(var(--accent-rgb),0.88), color-mix(in srgb, rgb(var(--accent-rgb)) 86%, white))',
               pointerEvents:'none',
-              transition:'background 0.6s ease',
+              transition:'background 0.18s linear',
             }}/>
           </div>
           {/* glow layer (outside track so it isn't clipped) */}
@@ -696,13 +704,12 @@ function ProgressBar({ progressRef, total, onSeek, isPlaying, visible, accentRGB
             height: TRACK_H, width: `${(progressRef.current * 100).toFixed(3)}%`,
             borderRadius: 999,
             boxShadow: (() => {
-              const c = accentRGB ? `${accentRGB.r},${accentRGB.g},${accentRGB.b}` : '255,255,255';
-              if (active) return `0 0 20px rgba(${c},0.42), 0 0 7px rgba(${c},0.3)`;
-              if (hover)  return `0 0 16px rgba(${c},0.3), 0 0 5px rgba(${c},0.2)`;
-              return `0 0 10px rgba(${c},0.18)`;
+              if (active) return '0 0 20px rgba(var(--accent-rgb),0.42), 0 0 7px rgba(var(--accent-rgb),0.3)';
+              if (hover)  return '0 0 16px rgba(var(--accent-rgb),0.3), 0 0 5px rgba(var(--accent-rgb),0.2)';
+              return '0 0 10px rgba(var(--accent-rgb),0.18)';
             })(),
             pointerEvents:'none',
-            transition: 'box-shadow 0.3s ease, height 0.22s cubic-bezier(0.34,1.56,0.64,1)',
+            transition: 'box-shadow 0.18s linear, height 0.22s cubic-bezier(0.34,1.56,0.64,1)',
           }}/>
           {/* thumb — outside track so it isn't clipped */}
           <div ref={thumbRef} style={{
@@ -725,7 +732,7 @@ function ProgressBar({ progressRef, total, onSeek, isPlaying, visible, accentRGB
 }
 
 /* ── Thin Volume Slider ───────────────────────────────────────────────────── */
-function ThinVolumeSlider({ volume, onChange, onLiveChange, accentKey }) {
+function ThinVolumeSlider({ volume, onChange, onLiveChange }) {
   const wrapRef    = useRef(null);
   const canvasRef  = useRef(null);
   const rafRef     = useRef(null);
@@ -734,7 +741,6 @@ function ThinVolumeSlider({ volume, onChange, onLiveChange, accentKey }) {
   const dragging   = useRef(false);
   const onChangeCb = useRef(onChange);     /* commit to React state (mouseup only) */
   const onLiveCb   = useRef(onLiveChange); /* live apply during drag (no re-render) */
-  const accentRef  = useRef(accentKey || '178,178,178');
   const TW = 28;
 
   const drawRef = useRef(null);
@@ -750,7 +756,8 @@ function ThinVolumeSlider({ volume, onChange, onLiveChange, accentKey }) {
     if (!dragging.current) volActual.current = volume;
     kick();
   }, [volume]);
-  useEffect(() => { accentRef.current = accentKey || '178,178,178'; kick(); }, [accentKey]);
+  /* перерисовка в такт анимации акцента */
+  useEffect(() => onAccentChange(kick), []);
 
   const getVal = useCallback((e) => {
     const rect = canvasRef.current.getBoundingClientRect();
@@ -806,7 +813,7 @@ function ThinVolumeSlider({ volume, onChange, onLiveChange, accentKey }) {
         const fillH   = Math.max(barW, trackH * v);
         const fillTop = trackBot - fillH;
         ctx.save();
-        const accentRgb = accentRef.current;
+        const accentRgb = `${LIVE_ACCENT.r},${LIVE_ACCENT.g},${LIVE_ACCENT.b}`;
         ctx.shadowColor = `rgba(${accentRgb},0.5)`;
         ctx.shadowBlur  = 8 * dpr;
         ctx.beginPath();
@@ -914,33 +921,17 @@ function AlbumArt({ track, isPlaying }) {
 /* glow за обложкой: два слоя crossfade'ятся по opacity при смене accent —
    композитится на gpu, без покадрового перерасчёта blur (в отличие от
    transition:background, который дёргал слайд) */
-function AmbientGlow({ accent, visible }) {
-  const [slots, setSlots] = useState(() => [{ a: accent, on: true }, { a: accent, on: false }]);
-  const activeRef = useRef(0);
-  const keyRef = useRef(accent.r + ',' + accent.g + ',' + accent.b);
-  useEffect(() => {
-    const key = accent.r + ',' + accent.g + ',' + accent.b;
-    if (key === keyRef.current) return;
-    keyRef.current = key;
-    const next = activeRef.current === 0 ? 1 : 0;
-    activeRef.current = next;
-    setSlots(prev => prev.map((s, i) => i === next ? { a: accent, on: true } : { ...s, on: false }));
-  }, [accent.r, accent.g, accent.b]);
-  const grad = (a) => `radial-gradient(circle at center, rgba(${a.r},${a.g},${a.b},0.55) 0%, rgba(${a.r},${a.g},${a.b},0.26) 36%, rgba(${a.r},${a.g},${a.b},0.08) 64%, rgba(${a.r},${a.g},${a.b},0) 90%)`;
+function AmbientGlow({ visible }) {
+  // градиент на CSS-переменной: анимированный lerp --accent-rgb
+  // перетекает покадрово без ререндеров и без crossfade-слоёв
   return (
     <div style={{
       position:'absolute', inset:'-30%', borderRadius:'50%',
+      background: 'radial-gradient(circle at center, rgba(var(--accent-rgb),0.55) 0%, rgba(var(--accent-rgb),0.26) 36%, rgba(var(--accent-rgb),0.08) 64%, rgba(var(--accent-rgb),0) 90%)',
+      filter:'blur(42px)',
       opacity: visible ? 1 : 0, transition:'opacity 0.6s ease',
       pointerEvents:'none', zIndex:0,
-    }}>
-      {slots.map((s, i) => (
-        <div key={i} style={{
-          position:'absolute', inset:0, borderRadius:'50%',
-          background: grad(s.a), filter:'blur(42px)',
-          opacity: s.on ? 1 : 0, transition:'opacity 0.6s ease',
-        }}/>
-      ))}
-    </div>
+    }}/>
   );
 }
 
@@ -1172,7 +1163,7 @@ function TrackContextMenu({ menu, onClose, onCopyLink, onStartStation }) {
   );
 }
 
-function VirtualTrackList({ items, activeId, loadingId, errorId, onClickItem, onContextMenuItem, scrollToActive, scrollTargetId, accentRGB }) {
+function VirtualTrackList({ items, activeId, loadingId, errorId, onClickItem, onContextMenuItem, scrollToActive, scrollTargetId }) {
   const ROW_H = 50;
   const BUFFER = 5;
   const FADE = 18;
@@ -1259,8 +1250,8 @@ function VirtualTrackList({ items, activeId, loadingId, errorId, onClickItem, on
           top:2, left:6, right:6, height: ROW_H - 2,
           transform:`translateY(${activeIdx * ROW_H}px)`,
           borderRadius:9,
-          background: accentRGB ? `rgba(${accentRGB.r},${accentRGB.g},${accentRGB.b},0.14)` : 'rgba(178,178,178,0.09)',
-          transition:'transform 0.42s cubic-bezier(0.45,0,0.55,1), background 0.55s ease',
+          background: 'rgba(var(--accent-rgb),0.14)',
+          transition:'transform 0.42s cubic-bezier(0.45,0,0.55,1)',
           willChange:'transform',
           zIndex:0,
         }}/>
@@ -2994,10 +2985,34 @@ function App() {
   }, [settings.accentMode, accentRGB]);
 
   // push accent to CSS var so var(--accent) works everywhere
+  // animated lerp: акцент плавно перетекает от текущего цвета к целевому
+  const accentAnimRef = useRef({ r: 178, g: 178, b: 178 });
+  const accentRafRef  = useRef(0);
   useEffect(() => {
-    const { r, g, b } = appAccent;
-    document.documentElement.style.setProperty('--accent', `rgb(${r}, ${g}, ${b})`);
-    document.documentElement.style.setProperty('--accent-rgb', `${r}, ${g}, ${b}`);
+    const target = appAccent;
+    const from   = { ...accentAnimRef.current };
+    const root   = document.documentElement.style;
+    const DUR = 400;
+    const t0  = performance.now();
+    const ease = x => x < 0.5 ? 4*x*x*x : 1 - Math.pow(-2*x + 2, 3) / 2;
+    cancelAnimationFrame(accentRafRef.current);
+    const step = now => {
+      const p = Math.min(1, (now - t0) / DUR);
+      const e = ease(p);
+      const c = {
+        r: Math.round(from.r + (target.r - from.r) * e),
+        g: Math.round(from.g + (target.g - from.g) * e),
+        b: Math.round(from.b + (target.b - from.b) * e),
+      };
+      accentAnimRef.current = c;
+      LIVE_ACCENT.r = c.r; LIVE_ACCENT.g = c.g; LIVE_ACCENT.b = c.b;
+      root.setProperty('--accent',     `rgb(${c.r}, ${c.g}, ${c.b})`);
+      root.setProperty('--accent-rgb', `${c.r}, ${c.g}, ${c.b}`);
+      _accentSubs.forEach(fn => fn());
+      if (p < 1) accentRafRef.current = requestAnimationFrame(step);
+    };
+    accentRafRef.current = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(accentRafRef.current);
   }, [appAccent]);
 
   // titlebar accent glow — only in player view
@@ -3005,12 +3020,11 @@ function App() {
     const tb = document.getElementById('titlebar');
     if (!tb) return;
     if (view === 'player') {
-      const { r, g, b } = appAccent;
-      tb.style.background = `linear-gradient(90deg, var(--bg) 0%, rgba(${r},${g},${b},0.09) 50%, var(--bg) 100%)`;
+      tb.style.background = 'linear-gradient(90deg, var(--bg) 0%, rgba(var(--accent-rgb),0.09) 50%, var(--bg) 100%)';
     } else {
       tb.style.background = '';
     }
-  }, [view, appAccent]);
+  }, [view]);
 
   /* загружаем настройки и треки при старте */
   useEffect(() => {
@@ -4393,7 +4407,7 @@ function App() {
             scrollToActive={libScrollTrigger}
             scrollTargetId={libScrollTargetId}
             onContextMenuItem={(tr, x, y) => setTrackMenu({ track: tr, x, y })}
-            accentRGB={appAccent}
+            
           />
           </div>
         </div>
@@ -4496,7 +4510,7 @@ function App() {
                 position:'relative',
               }}>
                 {/* ambient glow blob — uses app accent (cover-derived or preset) */}
-                <AmbientGlow accent={appAccent} visible={!((hero && !heroExiting) || reverseHero)}/>
+                <AmbientGlow visible={!((hero && !heroExiting) || reverseHero)}/>
                 <div id="player-album-art" ref={playerArtRef}
                   style={{opacity: ((hero && !heroExiting) || reverseHero) ? 0 : 1, position:'relative', zIndex:1}}>
                   <div ref={artEntranceRef}>
@@ -4513,7 +4527,7 @@ function App() {
             }}>
               <ProgressBar progressRef={progressRef} total={track.duration || 0}
                 onSeek={handleSeek} isPlaying={isPlaying} visible={playerVisible}
-                accentRGB={appAccent}/>
+                />
             {(()=>{ const P = { spring:0.055, damping:0.84, clamp:10 }; return (
             <div style={{display:'flex', alignItems:'center', gap:14, justifyContent:'center', marginTop:16}}>
               {scPlayingTrack && <div style={{width:27, marginRight:14, flexShrink:0}}/>}
@@ -4552,7 +4566,7 @@ function App() {
           transform: playerVisible ? 'translateX(0)' : 'translateX(8px)',
           transition: playerVisible ? 'opacity 0.36s ease 0.44s, transform 0.48s cubic-bezier(0.22,1,0.36,1) 0.44s' : 'opacity 0.1s ease, transform 0.1s ease',
         }}>
-          <ThinVolumeSlider volume={volume} onChange={setVolume} onLiveChange={handleVolumeLive} accentKey={`${appAccent.r},${appAccent.g},${appAccent.b}`}/>
+          <ThinVolumeSlider volume={volume} onChange={setVolume} onLiveChange={handleVolumeLive}/>
         </div>
           </div>
         )}
