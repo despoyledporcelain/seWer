@@ -264,12 +264,27 @@ ipcMain.handle('sc-login', () => new Promise((resolve) => {
   authWin.on('closed', () => { if (!resolved) resolve(null) })
 }))
 
-ipcMain.handle('sc-fetch', async (_, url, token, clientId, method = 'GET') => {
-  const isWrite = method === 'PUT' || method === 'DELETE'
+/* анти-бот DataDome: write-запросы не чаще раза в 1.5с, а после 403/429 —
+   минутная пауза на ВСЕ write. иначе SC мягко блокирует сессию */
+let scWriteLastAt = 0
+let scWriteBlockedUntil = 0
+
+ipcMain.handle('sc-fetch', async (_, url, token, clientId, method = 'GET', body = null, contentType = null) => {
+  /* PUT/DELETE/POST — через сессию с DataDome cookie (нужно для
+     редактирования/создания плейлистов); остальное — обычный https GET.
+     body-строка шлётся как есть (form-encoded), объект — JSON.stringify */
+  const isWrite = method === 'PUT' || method === 'DELETE' || method === 'POST'
+  /* app_version/app_locale — как у веб-клиента SC (из HAR рабочего PUT) */
   const fullUrl = url.includes('client_id=') ? url
-    : `${url}${url.includes('?') ? '&' : '?'}client_id=${encodeURIComponent(clientId)}${isWrite ? '&app_locale=en' : ''}`
+    : `${url}${url.includes('?') ? '&' : '?'}client_id=${encodeURIComponent(clientId)}${isWrite ? '&app_version=1787325861&app_locale=en' : ''}`
 
   if (isWrite) {
+    const now = Date.now()
+    if (now < scWriteBlockedUntil)
+      return { error: 429, body: 'write backoff (после 403/429 ждём минуту)', blocked: true }
+    const wait = scWriteLastAt + 1500 - now
+    if (wait > 0) await new Promise(r => setTimeout(r, wait))
+    scWriteLastAt = Date.now()
     try {
       const ses = require('electron').session.fromPartition('persist:soundcloud')
       const cookies = await ses.cookies.get({ url: 'https://soundcloud.com' })
@@ -278,15 +293,24 @@ ipcMain.handle('sc-fetch', async (_, url, token, clientId, method = 'GET') => {
         method,
         headers: {
           'Authorization': `OAuth ${token}`,
-          'Accept': 'application/json, text/javascript, */*; q=0.1',
+          'Accept': 'application/json, text/javascript, */*; q=0.01',
+          /* Content-Type только с телом: follow/unfollow идут без тела,
+             а json-тип без тела SC пытается парсить → 400 (по HAR сайта) */
+          ...(body != null ? { 'Content-Type': contentType || 'application/json' } : {}),
           'Origin': 'https://soundcloud.com',
           'Referer': 'https://soundcloud.com/',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64.64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36',
           ...(datadome ? { 'x-datadome-clientid': datadome.value } : {}),
         },
+        ...(body != null ? { body: typeof body === 'string' ? body : JSON.stringify(body) } : {}),
       })
       const text = await res.text()
-      if (res.status !== 200 && res.status !== 201 && res.status !== 204) return { error: res.status }
+      if (res.status === 403 || res.status === 429) {
+        scWriteBlockedUntil = Date.now() + 60_000
+        return { error: res.status, body: text.slice(0, 600), blocked: true }
+      }
+      if (res.status !== 200 && res.status !== 201 && res.status !== 204)
+        return { error: res.status, body: text.slice(0, 600) }
       if (!text.trim()) return { data: null }
       try { return { data: JSON.parse(text) } } catch { return { error: 'parse_error' } }
     } catch (e) { return { error: String(e) } }

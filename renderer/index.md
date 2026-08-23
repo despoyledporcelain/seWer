@@ -2,6 +2,10 @@
 
 весь ui — один файл ~4500 строк. jsx компилируется babel standalone в браузере.
 
+## глобальные поведения
+- **Tab отключён** (`window keydown → preventDefault`) — фокус-рамка не бегает по вкладкам/кнопкам, десктоп-поведение
+- **нативный drag выключен** (`* { -webkit-user-drag: none }`) — обложки/иконки/кнопки не таскаются; `*:focus { outline: none }` — без обводок после клика
+
 ## структура файла
 
 | строки    | что                                                        |
@@ -22,7 +26,9 @@
 
 **live accent store** (module-level): `LIVE_ACCENT {r,g,b}` + `onAccentChange(fn)` подписка. App обновляет `LIVE_ACCENT` и звенит подписчикам каждый кадр анимации. canvas-компоненты (`ThinVolumeSlider`) подписываются и перерисовываются в такт.
 
-**анимации:** `breathe`, `spin`, `fadeInUp`, `fadeOutDown`, `artEntrance` (легаси — частично заменены Motion-компонентами), `likePop`+`likeGlow` (пружинный pop + accent-glow при лайке, классы `.like-pop .like-glow`, перезапуск через remount по key), `shimmer` (скелетоны, класс `.skel`, псевдоэлемент-свип, стаггер через `--skel-delay`)
+**гейт свечений**: `LIVE_GLOW {on}` (module-level) + `--glow-opacity` (CSS var, 0/1) + `body.glow-off` (класс). App ставит всё это в `useEffect [settings.accentMode]` при `accentMode==='off'` и дёргает `_accentSubs` для перерисовки canvas. глушат: `#accent-top` (`body.in-player:not(.glow-off)`), titlebar-градиент (эффект пропускает background), `AmbientGlow` (проп `off` → null), glow-слой ProgressBar (`opacity: var(--glow-opacity)`), shadowBlur слайдера громкости (`LIVE_GLOW.on`), `.like-glow` (`body.glow-off .like-glow { animation:none }` — pop остаётся).
+
+**анимации:** `breathe`, `spin`, `fadeInUp`, `fadeOutDown`, `artEntrance` (легаси — частично заменены Motion-компонентами), `likePop`+`likeGlow` (пружинный pop + accent-glow при лайке, классы `.like-pop .like-glow`; HomeCard/SearchTrackRow — remount по key, правило `.like-pop.like-glow` играет оба сразу; `body.glow-off` глушит glow-часть; в PlayerLikeBtn заменено на Motion — см. компонент), `stEq` (мини-эквалайзер станции, класс `.st-eq`, 3 столбика `var(--accent)`), `shimmer` (скелетоны, класс `.skel`, псевдоэлемент-свип, стаггер через `--skel-delay`)
 
 **скроллбары:** `.scroll-thin` (8px зона, 2px визуально), `.scroll-home` (отступы под хедер сетки)
 
@@ -54,6 +60,7 @@ assets/
   forward.png / rewind.png  — prev/next
   shuffle.png / repeat.png / repeat1.png — управление
   tracks.png / search.png / player.png   — sidebar nav
+  playlists.png                          — nav вкладки «Плейлисты» (+ empty state PlaylistsView)
   local.png / settings.png               — sidebar bottom
   note.png                  — заглушка обложки (TrackRow, AlbumArt, HomeCard, HeroClone)
   vosproizvedenie.png / system.png / about.png — секции настроек + иконка прослушиваний в SearchTrackRow
@@ -69,6 +76,9 @@ assets/
 - `SoundCloudIcon({ size, fill })` — инлайн SVG логотип SC
 - `scHashColor(id)` → `hsl(...)` по id трека
 - `mapScTrack(t, noTitle)` → SC track object (см. ниже)
+- `mapScPlaylist(p, auth)` → `{id, title, ownerName, ownerAvatarUrl, coverUrl, trackCount, isOwn (p.user_id===auth.userId), permalinkUrl, tracks}` — tracks встроены у SC не всегда полностью
+- `fetchPlaylistTracks(id, auth, noTitle)` → полный список треков плейлиста (`GET /playlists/{id}/tracks`, пагинация limit=200)
+- `plRecsUrl(id)` → URL рекомендаций плейлиста (station-эндпоинт `soundcloud:playlist-stations:{id}`); изолирован для лёгкой замены
 - `extractAccentColor(url)` → Promise<`{r,g,b}` | null>. 3-пасса с relaxing thresholds (sat/lum/count) + mean fallback + dark-boost. кеширует по URL в `_accentCache`. crossOrigin=anonymous.
 - `ACCENT_PRESETS` — `{ default, lavender, mint, rose, amber }` → `{r,g,b}`
 
@@ -85,7 +95,11 @@ useLang()      — хук: возвращает t(key), читает LangContext
 компоненты вызывают `const t = useLang()` внутри себя.
 **исключение**: `SearchView` использует `const T = useLang()` — буква `t` занята переменной трека в `.map(t => ...)`.
 
-ключи добавленные в сессиях: `back`, `subscribe`, `subscribed`, `artist_label`, `follow_err`, `unfollow_err`, `copy_link`, `link_copied`, `copy_link_err`, `start_station`, `station_for`, `station_exit`, `station_err`, `accent_title`, `accent_sub`, `accent_default/lavender/mint/rose/amber/cover`, `accent_cover_sub`.
+ключи добавленные в сессиях: `back`, `subscribe`, `subscribed`, `artist_label`, `follow_err`, `unfollow_err`, `copy_link`, `link_copied`, `copy_link_err`, `start_station`, `station_for`, `station_exit`, `station_label`, `station_err`, `accent_title`, `accent_sub`, `accent_default/lavender/mint/rose/amber/cover`, `accent_cover_sub`, `nav_playlists`, `playlists_empty`, `playlists_empty_sub`, `accent_seg_off`, `accent_seg_color`, `accent_off_title`, `accent_off_sub`, `pl_new_title`, `pl_create_err`, `pl_edit`, `pl_login_hint`, `ed_saving`, `ed_saved`, `ed_save_err`, `ed_add`, `ed_add_search`, `ed_add_recs`, `ed_added`, `ed_empty`, `ed_recs_empty`, `ed_rec_loading`, `ed_track_del`, `pl_count_1/2/5`.
+
+## ipc-мост (обновление)
+
+`scFetch(url, token, clientId, method, body?, contentType?)` — 5-й параметр body (объект → JSON.stringify, строка → как есть), 6-й — опциональный Content-Type (дефолт `application/json`). PUT/DELETE/**POST** идут через ses.fetch-ветку с DataDome cookie; URL-суффикс `client_id&app_version&app_locale` (как у веб-клиента, из HAR). **Content-Type ставится только при наличии body** — запросы без тела (follow/unfollow: `POST`/`DELETE /me/followings/{id}`) сайт шлёт без него, а json-тип с пустым телом SC пытается парсить → 400 «Unable to parse JSON». **анти-бот DataDome**: write-запросы троттлятся (минимум 1.5с между), при ответе 403/429 — минутный backoff на все write (`{error, blocked:true}`), renderer показывает тост `sc_blocked`. ошибки write-ветки возвращаются с `body` (первые 600 симв ответа SC). нужно для `PUT /playlists/{id}` (порядок треков), `POST /playlists` (создание), подписки на артистов.
 
 ## компоненты
 
@@ -93,7 +107,7 @@ useLang()      — хук: возвращает t(key), читает LangContext
 `{text, style, onClick, maxWidth?}`. ellipsis + tooltip. `useLayoutEffect` проверяет overflow. tooltip → portal-like absolute div с `fadeInUp 0.15s`. центрирование через CSS `translate: -50% 0` (не transform — конфликтовал с keyframes).
 
 ### `PlayerLikeBtn`
-`{liked, onLike, style?}`. сердечко 19px в плеере (для SC треков). scale 1.18 при hover. при лайке — `likePop`+`likeGlow` (remount по `popKey`).
+`{liked, onLike, style?}`. сердечко 19px в плеере (для SC треков). hover: scale 1.16. при лайке — **Motion-анимация** (replay по `key={'pop'+popKey}` remount): пружинный поп `scale [1, 1.45, 0.82, 1.12, 1]` + лёгкий поворот `rotate [0,-8,5,0,0]` (0.55с, easeOut) + расходящееся кольцо-вспышка (`ring`-слой, border accent, scale 0.55→1.8, fade). CSS-классы `like-pop/like-glow` здесь больше не участвуют (остались для HomeCard/SearchTrackRow).
 
 ### `LikeHeart`
 `{liked, size, className?, style?}`. сердце-маска по `heart0/1.png`, заливка `currentColor` (лайкнутое — `var(--accent)`). используется в PlayerLikeBtn, HomeCard, SearchTrackRow — красится в живой акцент без CSS-фильтров.
@@ -153,7 +167,7 @@ ROW_H=50. `content-visibility:auto`. абсолютный пилл с transition
 пропсы: `{navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth, sourceMode, onToggleSource}`.
 навигация встроена в тайтлбар (46px): рендерится **порталами** в статический html — левый/правый кластеры в `#topbar-slot`, центрированный сегмент абсолютом в `#titlebar`.
 - **слева**: настройки → source-тумблер local/sc (только при scAuth). аватара нет — аккаунт живёт в настройках
-- **центр** (абсолют `left:50%`, ровно по окну): сегмент Треки|Плеер|Поиск с горизонтальным анимируемым пиллом (`pillRect {left,width}`)
+- **центр** (абсолют `left:50%`): сегмент Плейлисты|Треки|Плеер|Поиск с горизонтальным анимируемым пиллом (`pillRect {left,width}`); id вкладок: `playlists`/`home`/`library`/`search`. **вкладка «Плеер» стоит ровно по центру окна** (слева 2 вкладки, справа 1): сегмент смещается на `navShift` (useLayoutEffect меряет центр library-кнопки относительно контейнера + resize), кнопка «Плеер» крупнее остальных (38px vs 34, иконка 19px vs 17)
 - **справа**: collapse библиотеки (шеврон, только в плеере), дальше win-кнопки
 - интерактив обёрнут в `-webkit-app-region:no-drag` (тайтлбар — drag-зона)
 
@@ -169,13 +183,16 @@ ROW_H=50. `content-visibility:auto`. абсолютный пилл с transition
 **playback**: только CrossfadeSlider.
 
 **appearance** (порядок):
-1. **карточка «Акцентный цвет»** (новое):
-   - 5 swatches (default/lavender/mint/rose/amber) — круги 32px с Apple-style focus ring при active
-   - divider
-   - выделенная карточка **«От обложки»** с conic-gradient rainbow border (CSS mask `xor` trick), палитра-иконка в круглом gradient, live preview swatch (`appAccent` real-time)
-   - выбор пишет в `settings.accentMode`
+1. **карточка «Акцент и свечение»**:
+   - **сегмент Выкл | Цвет | От обложки** — `LayoutGroup` + `layoutId="accentSegPill"` (spring 420/34/0.7), у каждой опции мелкая svg-иконка (power / droplet / image); клик пишет `settings.accentMode` (`'off'|'color'|'cover'`)
+   - под сегментом контекстный блок (key=mode, `fadeInUp 0.22s`):
+     - `color` → 5 swatches (default/lavender/mint/rose/amber), круги 32px с Apple-style focus ring; клик пишет `accentPreset` + `accentMode:'color'`
+     - `cover` → карточка с conic-gradient rainbow border (CSS mask `xor` trick), палитра-иконка, live preview swatch (`appAccent` real-time)
+     - `off` → приглушённая карточка «свечения выключены» (power-иконка)
 2. карточка «Интерфейс» — `hideDividers` toggle (влияет на разделители в SettingsView **и** SearchTrackRow)
 3. карточка «Discord» — toggle `discordRpc` + анимированный блок (timestamp chips, pause chips, cover toggle)
+
+миграция: старый `accentMode` (`'default'|'lavender'|...|'cover'`) при загрузке настроек раскладывается в новую пару `accentMode` + `accentPreset` (useEffect в App).
 
 **system**: язык, кэш, запуск, локальная музыка.
 
@@ -194,6 +211,33 @@ ROW_H=50. `content-visibility:auto`. абсолютный пилл с transition
 - `SearchView`: первая загрузка (до результатов) — `SearchSkeleton` под стрипой на 36%
 - `ArtistView`: загрузка треков таба — 6× `TrackRowSkeleton`
 - home: `scLoading && activeList пуст` — `HomeGridSkeleton` (сетка как у HomeCard, 15 блоков)
+
+### `PlaylistsView`
+`{visible, scAuth, playlists, loading, error, creating, onOpen, onEdit, onCreate, onRetry, onLogin}`. вкладка плейлистов (nav id `playlists`, view `'playlists'`): сетка `PlaylistCard` как home (`minmax(128px,1fr)`, gap 18, `HomeGridSkeleton` на загрузке), caps-заголовок + счётчик + кнопка «+» (создание POST /playlists, спиннер на время запроса). `!scAuth` → подсказка со входом (кнопка → настройки/аккаунт). пусто → `playlists_empty`, ошибка → `load_failed`+retry. грузится effect'ом при заходе во вкладку (авто-ретрая НЕТ — только кнопка «повторить», иначе петля запросов).
+`loadPlaylists(auth, force?)` — эндпоинты с фолбэками (`fetchAll(url, extract, maxPages)` с пагинацией next_href, ошибки не глотает — console + `playlistsError`):
+- свои: `users/{id}/playlists` → фолбэк `/me/playlists`;
+- лайкнутые: `users/{id}/playlist_likes` (item.playlist или прямой айтем) → фолбэк смешанные `users/{id}/likes` (лайки треков уже работают с него), extract `it?.playlist`;
+- userId из auth или `/me`; полный фейл (свои И лайкнутые упали) → `playlistsError`, `playlistsRef` НЕ заполняется чтобы retry работал; свой перекрывает лайкнутого, свои сверху; кеш в `playlistsRef`.
+
+### `PlaylistCard`
+скелет = HomeCard: полоска (владелец 10.5 / название 12) + квадратная обложка + hover-оверлей с play (оверлей `position:absolute inset:0` как у HomeCard — НЕ flex-айтемом, иначе при hover вспыхивает тёмный квадрат; hover целиком на CSS `.home-card*`, без JS-стейта); переиспользует css `.home-card*`. отличия: бейдж трек-каунта слева-снизу на обложке, вместо сердечка — ✎ (класс `.home-card-like`, только `isOwn`) → `onEdit`.
+
+### `PlaylistEditor`
+`{visible, playlist, scAuth, onClose, onUpdated, onDelete, fallbackTracks, onPlayTrack, loadingTrackId, errorTrackId}`. полноэкранный оверлей (view `'playlistEditor'`, zIndex 60, всегда смонтирован). открывается из ✎ карточки (from='playlists') или ✎ в чипе сайдбара (from='player'); назад → откуда пришёл.
+- **загрузка**: на open — полный список треков (`fetchPlaylistTracks`, если встроенных меньше trackCount; встроенные p.tracks фильтруются от SC-заглушек `{id}` — приходят только первые ~4 полными)
+- **Reorder-лист** (`Reorder.Group/Item` из Motion): drag всей строки (cursor grab, ≡-хендл), `whileDrag` scale+shadow+bg; ✕ удаляет. `onReorder` → `touch()`
+- **панель «Добавить»**: сегмент Рекомендации|Поиск (LayoutGroup+`layoutId="plEdTabPill"`);
+  - Рекомендации (`loadRecs`): `plRecsUrl(playlist.id)` (station плейлиста) → фолбэк station случайного трека из плейлиста (`soundcloud:track-stations:{id}`, ⟳ крутит выборку) → фолбэк `fallbackTracks` (последние лайкнутые из App, для пустого плейлиста);
+  - Поиск: input + debounce 380ms → `/search/tracks?q=` (как SearchView, только треки);
+  - строки-кандидаты — `PlaylistAddRow` (обложка 36 кликабельна: превью-прослушивание через основной плеер `onPlayTrack` → `handleScTrackClick(tr, -1)`, спиннер `loadingTrackId`/ошибка `errorTrackId` как у обложек в поиске; кнопка + / ✓-добавлено, дедуп по `inList` Set)
+- **сохранение вручную** (автосейва НЕТ — беречь лимиты DataDome): `touch()` только помечает dirty (статус-пилюля `ed_dirty` «не сохранено» янтарным); в шапке появляется кнопка «Сохранить» (`ed_save_btn`, акцентная рамка) → `saveNow`. формат PUT — как у веб-клиента SC (HAR): ПОЛНЫЙ объект плейлиста с tracks = голые id; сырой объект кэшируется в `plObjRef` (GET `/playlists/{id}` один раз за сессию редактора), запасной формат — `{playlist:{tracks:[ids]}}`. после PUT одна сверка порядка через `/playlists/{id}/tracks` без ретраев. статусы: `ed_dirty` / `ed_saving` / `ed_saved` / `ed_save_err` (клик = retry)
+- **выход с несохранённым**: `close()` (←) при dirty показывает модал-гард (`exitGuard`): «Сохранить и выйти» (спиннер, при ошибке остаёмся) / «Не сохранять» / «отмена». редактор — `React.forwardRef` + `useImperativeHandle({requestClose})`: мышкая кнопка «назад» и вкладки верхнего бара (handleNav перехватывает view==='playlistEditor' и зовёт requestClose, навигация блокируется до решения) проходят через тот же гард
+- **удаление**: 🗑 в шапке → инлайн-подтверждение «удалить? ✓/✕» → `onDelete(playlist)` = App `handleDeletePlaylist` (`DELETE /playlists/{id}`): чистит `playlists`/`playlistsRef`, выходит из режима прослушивания если плейлист активен, закрывает редактор; ошибка → тост `pl_del_err`, редактор остаётся
+- **низ**: спейсер 130px после панели добавления — список можно проскроллить ниже края
+- **onUpdated(id, newTracks)**: App обновляет `playlists` и живо синхронит `playlistActive`/`playlistQueueRef` если редактируется активный плейлист
+- плюрализм счётчика: `countLabel(n)` — `pl_count_1/2/5`
+
+`fetchPlaylistTracks(id, auth, noTitle)` — `/playlists/{id}/tracks?limit=200` (голый массив ИЛИ `{collection, next_href}`, пагинация ≤10 стр.) → если пусто, фолбэк объект `/playlists/{id}` → `.tracks`. айтемы-заглушки без title/media гидратируются пачками `/tracks?ids=` (по 25), порядок — как в плейлисте; негидратируемые (удалённые с SC) выбрасываются. `handleOpenPlaylist` НЕ затирает встроенные треки пустым результатом догрузки.
 
 ### `SearchView`
 `{visible, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, onResultsLoaded, onArtistClick, loadingTrackId, errorTrackId, hideDividers}`.
@@ -249,7 +293,7 @@ ROW_H=50. `content-visibility:auto`. абсолютный пилл с transition
 ### `App` — state
 
 ```
-view              — 'home'|'player'|'search'|'settings'|'artist'
+view              — 'home'|'player'|'search'|'settings'|'artist'|'playlists'|'playlistEditor'
 tracks, trackIdx, isPlaying, progress, shuffle, repeat
 navActive, search, volume, hero, playerVisible, homeVisible
 heroExiting, reverseHero, reverseHeroExiting
@@ -263,14 +307,18 @@ artEntranceKey
 artistView      — null | { id?, username, avatarUrl?, followersCount?, bannerUrl? }
 trackMenu       — null | { track, x, y }
 stationActive   — null | { origTrack, tracks }
+playlistActive  — null | { playlist, tracks }
+playlists, playlistsLoading, playlistsError   — вкладка плейлистов (null = не грузили)
+creatingPlaylist, editingPlaylist             — { playlist, from: 'playlists'|'player' }
 accentRGB       — null | { r, g, b } extracted from track.coverUrl
 ```
 
 `lang` и `t` — не state, вычисляются при каждом рендере из `settings.language`.
 
-**appAccent** — `useMemo([settings.accentMode, accentRGB])`:
+**appAccent** — `useMemo([settings.accentMode, settings.accentPreset, accentRGB])`:
 - если `accentMode === 'cover'` и `accentRGB` есть → boost luminance to ≥110, returns `{r,g,b}`
-- иначе → `ACCENT_PRESETS[settings.accentMode] || ACCENT_PRESETS.default`
+- если `accentMode === 'color'` → `ACCENT_PRESETS[settings.accentPreset] || default`
+- иначе (`'off'` или cover без цвета) → `ACCENT_PRESETS.default` (статичный серый)
 
 **useEffect [appAccent]** → rAF-лерп (400мс, easeInOutCubic) `--accent` + `--accent-rgb` + `LIVE_ACCENT`/`_accentSubs` (см. css-переменные выше)
 
@@ -286,7 +334,7 @@ accentRGB       — null | { r, g, b } extracted from track.coverUrl
   language: 'RU',
   hideDividers,
   discordRpc, discordTimestamp, discordPause, discordCover,
-  accentMode: 'default',  // 'default'|'lavender'|'mint'|'rose'|'amber'|'cover'
+  accentMode: 'color', accentPreset: 'default',  // accentMode: 'off'|'color'|'cover'
 }
 ```
 
@@ -311,6 +359,8 @@ discordTimerRef, discordProgressRef
 prevSearchRef, homeSearchRef, libSearchRef
 searchQueueRef            — queue из SearchView/ArtistView (для next/prev)
 stationQueueRef           — queue станции (приоритет над searchQueue в next/prev)
+playlistQueueRef          — queue активного плейлиста (между станцией и поиском)
+playlistsRef              — кеш списка плейлистов
 scShuffleOrderRef, scShuffleIdxRef
 prevViewRef               — view из которого открылся ArtistView
 customTitlesRef, minDurationRef, editCancelRef
@@ -332,7 +382,7 @@ customTitlesRef, minDurationRef, editCancelRef
 ### `App` — mouse side-buttons
 
 useEffect на `[view, tracks, trackIdx, handleCloseArtist]` слушает `window.mouseup`:
-- **button=3** (XButton1 back): artist → handleCloseArtist; player/settings/soundcloud/search → home
+- **button=3** (XButton1 back): artist → handleCloseArtist; player/settings/soundcloud/search/playlists → home
 - **button=4** (XButton2 forward): если есть текущий трек и `view ∉ {player, artist}` → плеер
 
 ### `App` — crossfade
@@ -353,11 +403,11 @@ useEffect на `[view, tracks, trackIdx, handleCloseArtist]` слушает `win
 7. HLS → hls.js manifest → play; иначе progressive → `audio.src` → play
 8. `setLoadingTrackId(null)` в `.then()`
 
-list priority в next/prev и handleScTrackClick: `stationQueueRef > searchQueueRef > scTracks/filteredSc`
+list priority в next/prev и handleScTrackClick: `stationQueueRef > playlistQueueRef > searchQueueRef > scTracks/filteredSc`. плейлист и станция взаимоисключающие (открытие одного чистит другое): `handleOpenPlaylist` / `handleExitPlaylist` / `handleCreatePlaylist` (POST → сразу редактор) / `handleOpenPlEditor` / `handleClosePlEditor` / `handlePlaylistUpdated` (синхрон списка + активного плейлиста).
 
 ### `App` — handleLike
 
-`PUT /users/{userId}/track_likes/{id}` / `DELETE`. через `sc-fetch` (main process с DataDome cookie). при ошибке — тост.
+`PUT /users/{userId}/track_likes/{id}` / `DELETE`. через `sc-fetch` (main process с DataDome cookie). **оптимистичный**: `apply(liked)` сразу обновляет `scTracks`/кеш (сердце заливается мгновенно, трек прыгает вверх списка лайков), при ошибке API — откат `apply(already)` + тост.
 
 ### `App` — initScLikes (кеш-миграция)
 
@@ -405,7 +455,7 @@ useEffect зависит от `[track?.id, isPlaying, settings.discordRpc, disco
   - `transition: opacity 0.6s ease`
 - **обложка**: `width: min(100%, clamp(320px, 54vw, 760px), clamp(240px, 58vh, 760px))`
 - **прогресс-бар**: `width: min(100%, clamp(260px, 34vw, 520px))`
-- **библиотека**: фиксированный 260px, схлопывается через `width:0` (overflow:hidden), кнопка collapse в сайдбаре
+- **библиотека**: фиксированный 260px, схлопывается через `width:0` (overflow:hidden), кнопка collapse в сайдбаре. шапка — `AnimatePresence mode="wait"`: обычный режим → поиск; `stationActive` → **контекст-чип станции** (обложка 26px / radio-иконка, caps «СТАНЦИЯ» + мини-эквалайзер `.st-eq`, название трека ellipsis, круглая кнопка ✕ справа; вход/выход fade+slide 0.2с); `playlistActive` → **чип плейлиста** (обложка/нота, caps «ПЛЕЙЛИСТ» + счётчик, название, ✎-редактор если isOwn + ✕-выход). список: `items = station ? станции : playlistActive ? треки плейлиста : activeList`
 
 ### `App` — анимации
 

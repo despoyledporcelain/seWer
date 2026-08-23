@@ -45,13 +45,13 @@
     content:''; position:absolute; inset:0; z-index:0; pointer-events:none;
     background: radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,0.5) 100%);
   }
-  /* акцентная подсветка сверху — только в плеере (body.in-player) */
+  /* акцентная подсветка сверху — только в плеере (body.in-player) и при вкл. свечениях */
   #accent-top {
     position:absolute; inset:0; z-index:0; pointer-events:none;
     background: radial-gradient(ellipse 115% 80% at 50% -8%, rgba(var(--accent-rgb), 0.07) 0%, transparent 52%);
     opacity:0; transition:opacity 0.6s ease;
   }
-  body.in-player #accent-top { opacity:1; }
+  body.in-player:not(.glow-off) #accent-top { opacity:1; }
   #titlebar {
     flex-shrink:0; height:var(--titlebar-h);
     -webkit-app-region: drag;
@@ -66,6 +66,11 @@
     flex:1; height:100%; min-width:0;
     display:flex; align-items:center;
   }
+  /* десктоп-поведение: ничего не таскается нативным drag'ом (обложки/иконки),
+     фокус после клика не рисует обводок */
+  * { -webkit-user-drag: none; }
+  *:focus { outline: none; }
+  input:focus, textarea:focus { outline: none; }
   .win-btn {
     -webkit-app-region: no-drag;
     width:24px; height:24px; border-radius:6px; border:none;
@@ -139,6 +144,11 @@
   }
   .like-pop  { animation:likePop 0.48s cubic-bezier(0.34,1.56,0.64,1); }
   .like-glow { animation:likeGlow 0.6s ease-out; }
+  /* оба класса на одном элементе: shorthand animation друг друга перекрывал —
+     объединяем, pop и glow играют одновременно */
+  .like-pop.like-glow { animation:likePop 0.48s cubic-bezier(0.34,1.56,0.64,1), likeGlow 0.6s ease-out; }
+  /* режим «выкл»: glow-часть глушится, pop остаётся */
+  body.glow-off .like-glow { animation:likePop 0.48s cubic-bezier(0.34,1.56,0.64,1); }
   /* skeleton shimmer */
   .skel { position:relative; overflow:hidden; background:rgba(255,255,255,0.045); }
   .skel::before {
@@ -150,6 +160,13 @@
     will-change:transform;
   }
   @keyframes shimmer { to { transform:translateX(100%); } }
+  /* мини-эквалайзер для станции (живой индикатор) */
+  .st-eq i { display:block; width:2px; height:100%; border-radius:1px;
+    background:var(--accent); transform-origin:bottom;
+    animation:stEq 0.9s ease-in-out infinite; }
+  .st-eq i:nth-child(2) { animation-delay:0.25s; }
+  .st-eq i:nth-child(3) { animation-delay:0.5s; }
+  @keyframes stEq { 0%, 100% { transform:scaleY(0.35); } 50% { transform:scaleY(1); } }
   .track-row { background:none; transition:background 0.15s ease; }
   .track-row:not(.active):hover { background:rgba(255,255,255,0.03); }
 </style>
@@ -175,7 +192,11 @@
 </div>
 <script type="text/babel">
 const { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } = React;
-const { motion, AnimatePresence, LayoutGroup } = Motion;
+const { motion, AnimatePresence, LayoutGroup, Reorder } = Motion;
+
+/* десктоп-поведение вместо сайт-поведения:
+   Tab не гоняет фокус по вкладкам/кнопкам (рамка-«бегунка» больше не появляется) */
+window.addEventListener('keydown', e => { if (e.key === 'Tab') e.preventDefault(); });
 
 /* ── accent presets ──────────────────────────────────────────────────────── */
 const ACCENT_PRESETS = {
@@ -190,6 +211,9 @@ const ACCENT_PRESETS = {
 /* актуальное анимируемое значение акцента: App лерпит его покадрово,
    canvas-компоненты подписываются и перерисовываются в такт */
 const LIVE_ACCENT = { r: 178, g: 178, b: 178 };
+/* гейт свечений (настройка «Акцент и свечение» → Выкл): App переключает,
+   canvas-компоненты читают при каждой перерисовке */
+const LIVE_GLOW = { on: true };
 const _accentSubs = new Set();
 function onAccentChange(fn) {
   _accentSubs.add(fn);
@@ -360,6 +384,71 @@ function mapScTrack(t, noTitle) {
   };
 }
 
+/* playlist-объект SC (из users/{id}/playlists / лайков).
+   ВАЖНО: во встроенном p.tracks SC отдаёт первые ~4 трека полными,
+   остальные — заглушки {id} без title/media — фильтруем их, чтобы
+   сработала ленивая догрузка /playlists/{id}/tracks */
+function mapScPlaylist(p, auth) {
+  const noTitle = null;
+  return {
+    id: p.id,
+    title: p.title || '—',
+    ownerName: p.user?.username || '',
+    ownerAvatarUrl: p.user?.avatar_url || null,
+    coverUrl: p.artwork_url ? p.artwork_url.replace('-large', '-t500x500') : null,
+    trackCount: p.track_count ?? (p.tracks ? p.tracks.length : 0),
+    isOwn: auth ? p.user_id === auth.userId : false,
+    permalinkUrl: p.permalink_url || null,
+    tracks: (p.tracks || []).filter(t => t && t.title && t.media).map(t => mapScTrack(t, noTitle)),
+  };
+}
+
+/* полный список треков плейлиста. /playlists/{id}/tracks отдаёт голый массив
+   ИЛИ {collection, next_href}, и там бывают заглушки {id} без title/media —
+   гидратируем их пачками /tracks?ids= (порядок сохраняем как в плейлисте).
+   фолбэк если пусто: полный объект /playlists/{id} → .tracks */
+async function fetchPlaylistTracks(id, auth, noTitle) {
+  let raw = [];
+  let url = `https://api-v2.soundcloud.com/playlists/${id}/tracks?limit=200`;
+  let pages = 0;
+  while (url && pages < 10) {
+    const res = await window.electronAPI.scFetch(url, auth.token, auth.clientId);
+    if (res.error) break;
+    const col = Array.isArray(res.data) ? res.data : res.data?.collection;
+    if (!col) break;
+    raw.push(...col.filter(x => x?.id));
+    url = Array.isArray(res.data) ? null : (res.data?.next_href || null);
+    pages++;
+  }
+  if (raw.length === 0) {
+    const res = await window.electronAPI.scFetch(
+      `https://api-v2.soundcloud.com/playlists/${id}`, auth.token, auth.clientId);
+    raw = (res.data?.tracks || []).filter(x => x?.id);
+  }
+  const need = raw.filter(x => !(x.title && x.media)).map(x => x.id);
+  const hydrated = new Map();
+  for (let i = 0; i < need.length; i += 25) {
+    const res = await window.electronAPI.scFetch(
+      `https://api-v2.soundcloud.com/tracks?ids=${need.slice(i, i + 25).join(',')}`,
+      auth.token, auth.clientId
+    );
+    if (res.error) continue;
+    const arr = Array.isArray(res.data) ? res.data : res.data?.collection;
+    for (const tr of (arr || [])) if (tr?.id) hydrated.set(tr.id, tr);
+  }
+  const out = [];
+  for (const x of raw) {
+    const tr = (x.title && x.media) ? x : hydrated.get(x.id);
+    if (tr?.title && tr?.media) out.push(mapScTrack(tr, noTitle));
+  }
+  return out;
+}
+
+/* рекомендации для плейлиста — station-эндпоинт SC (как radio плейлиста).
+   URL изолирован тут: если SC поменяет — правится одно место */
+const plRecsUrl = id =>
+  `https://api-v2.soundcloud.com/stations/soundcloud:playlist-stations:${id}/tracks?limit=50`;
+
 function splitArtists(str) {
   if (!str) return [{ name: '', sep: null }];
   const re = /(\s*[&×,.]\s*|\s+(?:ft\.?|feat\.?|with|vs\.?)\s+)/gi;
@@ -378,7 +467,7 @@ function splitArtists(str) {
 const STRINGS = {
   ru: {
     minimize:'Свернуть', maximize:'Развернуть', close:'Закрыть',
-    nav_tracks:'Треки', nav_search:'Поиск', nav_player:'Плеер',
+    nav_tracks:'Треки', nav_search:'Поиск', nav_player:'Плеер', nav_playlists:'Плейлисты',
     nav_local:'Локальная библиотека', nav_settings:'Настройки',
     unavailable:'недоступен',
     off:'выкл', sec:'с',
@@ -429,6 +518,19 @@ const STRINGS = {
     pick_folder:'выбрать папку', login_sc:'войти в soundcloud',
     loading_likes:'загружаем лайки...', load_failed:'не удалось загрузить',
     not_found:'ничего не найдено', no_likes:'лайков нет', retry:'повторить',
+    playlists_empty:'плейлистов пока нет', playlists_empty_sub:'лайкнутые плейлисты soundcloud\nпоявятся в этой вкладке',
+    pl_new_title:'Новый плейлист', pl_create_err:'не удалось создать плейлист',
+    pl_del:'Удалить плейлист', pl_del_sure:'удалить?', pl_del_err:'не удалось удалить плейлист',
+    sc_blocked:'soundcloud ограничил запросы (анти-бот) — подожди пару минут',
+    pl_edit:'Редактировать плейлист', pl_login_hint:'войди в soundcloud,\nчтобы видеть плейлисты',
+    ed_saving:'сохраняем…', ed_saved:'сохранено', ed_save_err:'ошибка сохранения',
+    ed_save_btn:'Сохранить', ed_dirty:'не сохранено', ed_unsaved:'Есть несохранённые изменения',
+    ed_save_exit:'Сохранить и выйти', ed_discard:'Не сохранять',
+    ed_add:'Добавить', ed_add_search:'Поиск', ed_add_recs:'Рекомендации',
+    ed_added:'добавлено', ed_empty:'пусто — добавь треки ниже',
+    ed_recs_empty:'рекомендаций нет', ed_rec_loading:'подбираем рекомендации…',
+    ed_track_del:'убрать из плейлиста',
+    pl_count_1:'трек', pl_count_2:'трека', pl_count_5:'треков',
     unlike_err:'ошибка: не удалось убрать лайк', like_err:'ошибка: не удалось поставить лайк',
     track_unavailable:'трек недоступен', no_title:'Без названия',
     userid_err:'не удалось получить userId', api_err:'ошибка api',
@@ -438,14 +540,16 @@ const STRINGS = {
     subscribe:'Подписаться', subscribed:'Вы подписаны',
     follow_err:'не удалось подписаться', unfollow_err:'не удалось отписаться',
     copy_link:'Скопировать ссылку', link_copied:'Ссылка скопирована', copy_link_err:'не удалось скопировать ссылку',
-    start_station:'Запустить станцию', station_for:'Станция по треку', station_exit:'выйти', station_err:'не удалось запустить станцию',
-    accent_title:'Акцентный цвет', accent_sub:'Применяется ко всем активным элементам интерфейса',
+    start_station:'Запустить станцию', station_for:'Станция по треку', station_label:'Станция', station_exit:'выйти', station_err:'не удалось запустить станцию',
+    accent_title:'Акцент и свечение', accent_sub:'Свечения и цвет активных элементов интерфейса',
     accent_default:'По умолчанию', accent_lavender:'Лавандовый', accent_mint:'Мятный', accent_rose:'Розовый', accent_amber:'Янтарный', accent_cover:'От обложки',
     accent_cover_sub:'Динамически меняется под обложку трека',
+    accent_seg_off:'Выкл', accent_seg_color:'Цвет',
+    accent_off_title:'Свечения выключены', accent_off_sub:'Фоновые свечения скрыты, акцент — статичный серый',
   },
   en: {
     minimize:'Minimize', maximize:'Maximize', close:'Close',
-    nav_tracks:'Tracks', nav_search:'Search', nav_player:'Player',
+    nav_tracks:'Tracks', nav_search:'Search', nav_player:'Player', nav_playlists:'Playlists',
     nav_local:'Local library', nav_settings:'Settings',
     unavailable:'unavailable',
     off:'off', sec:'s',
@@ -496,6 +600,19 @@ const STRINGS = {
     pick_folder:'choose folder', login_sc:'log in to soundcloud',
     loading_likes:'loading likes...', load_failed:'failed to load',
     not_found:'nothing found', no_likes:'no likes', retry:'retry',
+    playlists_empty:'no playlists yet', playlists_empty_sub:'soundcloud playlists you like\nwill appear in this tab',
+    pl_new_title:'New playlist', pl_create_err:'could not create playlist',
+    pl_del:'Delete playlist', pl_del_sure:'delete?', pl_del_err:'could not delete playlist',
+    sc_blocked:'soundcloud rate-limited requests (anti-bot) — wait a couple of minutes',
+    pl_edit:'Edit playlist', pl_login_hint:'log in to soundcloud\nto see your playlists',
+    ed_saving:'saving…', ed_saved:'saved', ed_save_err:'save failed',
+    ed_save_btn:'Save', ed_dirty:'unsaved', ed_unsaved:'You have unsaved changes',
+    ed_save_exit:'Save and exit', ed_discard:'Discard',
+    ed_add:'Add tracks', ed_add_search:'Search', ed_add_recs:'Recommended',
+    ed_added:'added', ed_empty:'empty — add tracks below',
+    ed_recs_empty:'no recommendations', ed_rec_loading:'picking recommendations…',
+    ed_track_del:'remove from playlist',
+    pl_count_1:'track', pl_count_2:'tracks', pl_count_5:'tracks',
     unlike_err:'error: could not remove like', like_err:'error: could not add like',
     track_unavailable:'track unavailable', no_title:'Untitled',
     userid_err:'could not get userId', api_err:'api error',
@@ -505,10 +622,12 @@ const STRINGS = {
     subscribe:'Follow', subscribed:'Following',
     follow_err:'could not follow', unfollow_err:'could not unfollow',
     copy_link:'Copy link', link_copied:'Link copied', copy_link_err:'could not copy link',
-    start_station:'Start station', station_for:'Station for', station_exit:'exit', station_err:'could not start station',
-    accent_title:'Accent color', accent_sub:'Applied to all active interface elements',
+    start_station:'Start station', station_for:'Station for', station_label:'Station', station_exit:'exit', station_err:'could not start station',
+    accent_title:'Accent & glow', accent_sub:'Glow effects and the color of active interface elements',
     accent_default:'Default', accent_lavender:'Lavender', accent_mint:'Mint', accent_rose:'Rose', accent_amber:'Amber', accent_cover:'From cover',
     accent_cover_sub:'Dynamically follows the current track artwork',
+    accent_seg_off:'Off', accent_seg_color:'Color',
+    accent_off_title:'Glow disabled', accent_off_sub:'Background glows hidden, accent is flat gray',
   },
 };
 const LangContext = React.createContext('ru');
@@ -600,14 +719,32 @@ function PlayerLikeBtn({ liked, onLike, style: extraStyle }) {
       onMouseLeave={() => setHov(false)}
       style={{
         flexShrink:0, cursor:'pointer', padding:4, lineHeight:0,
-        transform: hov ? 'scale(1.18)' : 'scale(1)',
-        transition:'opacity 0.18s ease, transform 0.15s ease',
         opacity: liked ? (hov ? 1 : 0.85) : (hov ? 0.6 : 0.25),
+        transition:'opacity 0.18s ease',
         ...extraStyle,
       }}
     >
-      <LikeHeart key={popKey} liked={liked} size={19}
-        className={popKey ? 'like-pop like-glow' : undefined}/>
+      <div style={{position:'relative', display:'flex', transform: hov ? 'scale(1.16)' : 'scale(1)', transition:'transform 0.15s ease'}}>
+        {/* кольцо-вспышка: расходится и гаснет при каждом лайке */}
+        {popKey > 0 && (
+          <motion.div key={'ring' + popKey}
+            initial={{ scale: 0.55, opacity: 0.55 }}
+            animate={{ scale: 1.8, opacity: 0 }}
+            transition={{ duration: 0.5, ease: 'easeOut' }}
+            style={{position:'absolute', inset:-8, borderRadius:'50%',
+              border:'1.5px solid var(--accent)', pointerEvents:'none'}}/>
+        )}
+        {/* сердце: пружинный поп с лёгким поворотом, replay по key */}
+        <motion.div key={'pop' + popKey}
+          initial={{ scale: 1, rotate: 0 }}
+          animate={popKey > 0
+            ? { scale: [1, 1.45, 0.82, 1.12, 1], rotate: [0, -8, 5, 0, 0] }
+            : { scale: 1, rotate: 0 }}
+          transition={{ duration: 0.55, ease: 'easeOut' }}
+          style={{position:'relative'}}>
+          <LikeHeart liked={liked} size={19}/>
+        </motion.div>
+      </div>
     </div>
   );
 }
@@ -762,13 +899,14 @@ function ProgressBar({ progressRef, total, onSeek, isPlaying, visible }) {
             position:'absolute', left:0, top:'50%', translate:'0 -50%',
             height: TRACK_H, width: `${(progressRef.current * 100).toFixed(3)}%`,
             borderRadius: 999,
+            opacity:'var(--glow-opacity, 1)',
             boxShadow: (() => {
               if (active) return '0 0 20px rgba(var(--accent-rgb),0.42), 0 0 7px rgba(var(--accent-rgb),0.3)';
               if (hover)  return '0 0 16px rgba(var(--accent-rgb),0.3), 0 0 5px rgba(var(--accent-rgb),0.2)';
               return '0 0 10px rgba(var(--accent-rgb),0.18)';
             })(),
             pointerEvents:'none',
-            transition: 'box-shadow 0.18s linear, height 0.22s cubic-bezier(0.34,1.56,0.64,1)',
+            transition: 'box-shadow 0.18s linear, height 0.22s cubic-bezier(0.34,1.56,0.64,1), opacity 0.3s ease',
           }}/>
           {/* thumb — outside track so it isn't clipped */}
           <div ref={thumbRef} style={{
@@ -873,8 +1011,10 @@ function ThinVolumeSlider({ volume, onChange, onLiveChange }) {
         const fillTop = trackBot - fillH;
         ctx.save();
         const accentRgb = `${LIVE_ACCENT.r},${LIVE_ACCENT.g},${LIVE_ACCENT.b}`;
-        ctx.shadowColor = `rgba(${accentRgb},0.5)`;
-        ctx.shadowBlur  = 8 * dpr;
+        if (LIVE_GLOW.on) {
+          ctx.shadowColor = `rgba(${accentRgb},0.5)`;
+          ctx.shadowBlur  = 8 * dpr;
+        }
         ctx.beginPath();
         ctx.roundRect(cx - r, fillTop, barW, fillH, r);
         ctx.fillStyle = `rgb(${accentRgb})`;
@@ -1061,9 +1201,10 @@ function AlbumArt({ track }) {
 /* glow за обложкой: два слоя crossfade'ятся по opacity при смене accent —
    композитится на gpu, без покадрового перерасчёта blur (в отличие от
    transition:background, который дёргал слайд) */
-function AmbientGlow({ visible }) {
+function AmbientGlow({ visible, off }) {
   // градиент на CSS-переменной: анимированный lerp --accent-rgb
   // перетекает покадрово без ререндеров и без crossfade-слоёв
+  if (off) return null;
   return (
     <div style={{
       position:'absolute', inset:'-30%', borderRadius:'50%',
@@ -1583,39 +1724,56 @@ function HeroClone({ hero, exiting, reverse = false }) {
 
 /* ── TopBar ──────────────────────────────────────────────────────────────── */
 /* навигация в тайтлбаре: слева аватар→настройки→source-тумблер, по центру
-   (абсолютно на окно) сегмент Треки|Плеер|Поиск с горизонтальным пиллом,
-   справа collapse библиотеки (только в плеере). рендерится порталами в
+   (абсолютно на окно) сегмент Плейлисты|Треки|Плеер|Поиск с горизонтальным
+   пиллом, справа collapse библиотеки (только в плеере). рендерится порталами в
    #topbar-slot и #titlebar (тайтлбар — статический html вне react-root) */
 function TopBar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth, sourceMode, onToggleSource }) {
   const t = useLang();
-  const navImg = (src) => <img src={src} style={{width:17, height:17, filter:'brightness(0) invert(1)', display:'block'}}/>;
+  const navImg = (src, s=17) => <img src={src} style={{width:s, height:s, filter:'brightness(0) invert(1)', display:'block'}}/>;
   const NAV = [
+    { id:"playlists", label:t('nav_playlists'), icon: navImg('../assets/playlists.png') },
     { id:"home",    label:t('nav_tracks'),  icon: navImg('../assets/tracks.png')  },
-    { id:"library", label:t('nav_player'),  icon: navImg('../assets/player.png')  },
+    { id:"library", label:t('nav_player'),  icon: navImg('../assets/player.png', 19), size:38 },
     { id:"search",  label:t('nav_search'),  icon: navImg('../assets/search.png')  },
   ];
   const folderIcon = navImg('../assets/local.png');
 
   const navRefs = useRef({});
+  const navWrapRef = useRef(null);
   const [pillRect, setPillRect] = useState({ left: 0, width: 34, visible: false });
+  /* вкладка «Плеер» стоит ровно по центру окна: сегмент смещается так,
+     чтобы центр library-кнопки попал на 50% ширины (слева 2 вкладки, справа 1) */
+  const [navShift, setNavShift] = useState(0);
 
   useLayoutEffect(() => {
     const el = navRefs.current[navActive];
-    if (!el || (navActive !== 'home' && navActive !== 'search' && navActive !== 'library')) {
+    if (!el || (navActive !== 'playlists' && navActive !== 'home' && navActive !== 'search' && navActive !== 'library')) {
       setPillRect(p => ({ ...p, visible: false }));
       return;
     }
     setPillRect({ left: el.offsetLeft, width: el.offsetWidth, visible: true });
   }, [navActive]);
 
+  useLayoutEffect(() => {
+    const measure = () => {
+      const wrap = navWrapRef.current, el = navRefs.current['library'];
+      if (!wrap || !el) return;
+      setNavShift(wrap.offsetWidth / 2 - (el.offsetLeft + el.offsetWidth / 2));
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, []);
+
   const NoDrag = { WebkitAppRegion:'no-drag' };
   const slot = document.getElementById('topbar-slot');
   const bar  = document.getElementById('titlebar');
   if (!slot || !bar) return null;
 
-  /* центрированный сегмент — абсолют внутри #titlebar, центр ровно по окну */
+  /* центрированный сегмент — абсолют внутри #titlebar; «Плеер» ровно по центру окна */
   const nav = (
-    <div style={{position:'absolute', left:'50%', top:'50%', translate:'-50% -50%',
+    <div ref={navWrapRef} style={{position:'absolute', left:'50%', top:'50%', translate:'-50% -50%',
+      transform:`translateX(${navShift}px)`,
       display:'flex', alignItems:'center', gap:4, WebkitAppRegion:'no-drag'}}>
       <div style={{
         position:'absolute', top:2, bottom:2, left:0,
@@ -1628,7 +1786,7 @@ function TopBar({ navActive, onNav, libCollapsed, onToggleLib, inPlayer, scAuth,
       }}/>
       {NAV.map(n => (
         <div key={n.id} ref={el => navRefs.current[n.id] = el} style={{position:'relative', zIndex:1}}>
-          <NavIcon icon={n.icon} label={n.label} active={navActive===n.id} onClick={()=>onNav(n.id)} size={34} noActiveBg={true}/>
+          <NavIcon icon={n.icon} label={n.label} active={navActive===n.id} onClick={()=>onNav(n.id)} size={n.size || 34} noActiveBg={true}/>
         </div>
       ))}
     </div>
@@ -1931,113 +2089,167 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
           <div style={{fontSize:11.5, color:'rgba(255,255,255,0.32)', marginBottom:14, lineHeight:1.4}}>
             {t('accent_sub')}
           </div>
-          <div style={{display:'flex', flexWrap:'wrap', gap:10}}>
-            {[
-              ['default',  t('accent_default')],
-              ['lavender', t('accent_lavender')],
-              ['mint',     t('accent_mint')],
-              ['rose',     t('accent_rose')],
-              ['amber',    t('accent_amber')],
-            ].map(([key, label]) => {
-              const c = ACCENT_PRESETS[key];
-              const active = (settings.accentMode || 'default') === key;
-              return (
-                <div key={key} onClick={() => set('accentMode', key)}
-                  style={{
-                    display:'flex', flexDirection:'column', alignItems:'center', gap:6,
-                    cursor:'pointer', padding:'8px 6px', borderRadius:10,
-                    flex:'1 0 70px',
-                    background: active ? 'rgba(255,255,255,0.06)' : 'transparent',
-                    transition:'background 0.18s',
-                  }}
-                  onMouseEnter={e => { if (!active) e.currentTarget.style.background='rgba(255,255,255,0.035)'; }}
-                  onMouseLeave={e => { if (!active) e.currentTarget.style.background='transparent'; }}
-                >
-                  <div style={{
-                    width:32, height:32, borderRadius:'50%',
-                    background:`rgb(${c.r},${c.g},${c.b})`,
-                    boxShadow: active
-                      ? `0 0 0 2px #07070a, 0 0 0 4px rgba(${c.r},${c.g},${c.b},0.9), 0 0 18px rgba(${c.r},${c.g},${c.b},0.55)`
-                      : `0 2px 8px rgba(${c.r},${c.g},${c.b},0.25)`,
-                    transition:'box-shadow 0.22s',
-                  }}/>
-                  <div style={{
-                    fontSize:11, fontWeight: active ? 600 : 500,
-                    color: active ? 'rgba(255,255,255,0.92)' : 'rgba(255,255,255,0.45)',
-                    transition:'color 0.18s',
-                  }}>{label}</div>
-                </div>
-              );
-            })}
-          </div>
-          {/* divider */}
-          <div style={{
-            height:1, margin:'16px 0 14px',
-            background: settings.hideDividers ? 'transparent' : 'rgba(255,255,255,0.045)',
-          }}/>
-          {/* cover-derived option, highlighted */}
           {(() => {
-            const active = settings.accentMode === 'cover';
+            const mode = settings.accentMode || 'color';
+            const preset = ACCENT_PRESETS[settings.accentPreset] ? settings.accentPreset : 'default';
+            const segIcon = paths => (
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{paths}</svg>
+            );
+            const SEGS = [
+              ['off',   t('accent_seg_off'),   segIcon(<><path d="M12 3v9"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></>)],
+              ['color', t('accent_seg_color'), segIcon(<path d="M12 2.7s6.3 6.8 6.3 11.1a6.3 6.3 0 1 1-12.6 0C5.7 9.5 12 2.7 12 2.7z"/>)],
+              ['cover', t('accent_cover'),     segIcon(<><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="m21 16-5-5-4.5 4.5"/></>)],
+            ];
             return (
-              <div onClick={() => set('accentMode', 'cover')}
-                style={{
-                  position:'relative',
-                  display:'flex', alignItems:'center', gap:14,
-                  padding:'12px 14px', borderRadius:12, cursor:'pointer',
-                  background: active ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.025)',
-                  border: active ? '1px solid transparent' : '1px solid rgba(255,255,255,0.04)',
-                  transition:'background 0.2s',
-                  overflow:'hidden',
-                }}
-                onMouseEnter={e => { if (!active) e.currentTarget.style.background='rgba(255,255,255,0.045)'; }}
-                onMouseLeave={e => { if (!active) e.currentTarget.style.background='rgba(255,255,255,0.025)'; }}
-              >
-                {/* rainbow border ring when active */}
-                {active && (
-                  <div style={{
-                    position:'absolute', inset:0, borderRadius:12,
-                    padding:1.5,
-                    background:'conic-gradient(from 0deg, #ff8fb1, #ffb164, #ffeb6b, #82dcc3, #9b7dff, #ff8fb1)',
-                    WebkitMask:'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
-                    WebkitMaskComposite:'xor', maskComposite:'exclude',
-                    pointerEvents:'none',
-                  }}/>
-                )}
-                <div style={{
-                  width:38, height:38, borderRadius:'50%',
-                  background:'conic-gradient(from 0deg, #ff8fb1, #ffb164, #ffeb6b, #82dcc3, #9b7dff, #ff8fb1)',
-                  boxShadow: active
-                    ? `0 0 22px rgba(${appAccent.r},${appAccent.g},${appAccent.b},0.55)`
-                    : '0 2px 10px rgba(0,0,0,0.4)',
-                  flexShrink:0,
-                  display:'flex', alignItems:'center', justifyContent:'center',
-                  transition:'box-shadow 0.4s',
-                }}>
-                  {/* palette icon */}
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(7,7,10,0.85)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M12 2a10 10 0 1 0 10 10 4 4 0 0 0-4-4h-2a2 2 0 0 1-2-2v-2a4 4 0 0 0-2-2z"/>
-                    <circle cx="6.5" cy="11.5" r="1"/><circle cx="9.5" cy="7.5" r="1"/><circle cx="14.5" cy="7.5" r="1"/><circle cx="17.5" cy="11.5" r="1"/>
-                  </svg>
-                </div>
-                <div style={{flex:1, minWidth:0}}>
-                  <div style={{fontSize:13, fontWeight:600, color:active ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.78)', letterSpacing:'-0.005em'}}>
-                    {t('accent_cover')}
+              <>
+                {/* сегмент Выкл | Цвет | От обложки — пилл плавно ездит между опциями */}
+                <LayoutGroup>
+                  <div style={{display:'flex', gap:3, padding:3, borderRadius:11, background:'rgba(255,255,255,0.035)'}}>
+                    {SEGS.map(([id, label, icon]) => {
+                      const active = mode === id;
+                      return (
+                        <div key={id} onClick={() => onSettings(s => ({ ...s, accentMode: id }))}
+                          style={{position:'relative', flex:1, display:'flex', alignItems:'center', justifyContent:'center',
+                            padding:'8px 0', borderRadius:9, cursor:'pointer', userSelect:'none',
+                            color: active ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.38)',
+                            transition:'color 0.18s ease'}}>
+                          {active && (
+                            <motion.div layoutId="accentSegPill"
+                              transition={{ type:'spring', stiffness:420, damping:34, mass:0.7 }}
+                              style={{position:'absolute', inset:0, borderRadius:9, background:'rgba(255,255,255,0.07)'}}/>
+                          )}
+                          <span style={{position:'relative', display:'flex', alignItems:'center', gap:6, fontSize:11.5,
+                            fontWeight: active ? 600 : 500}}>{icon}{label}</span>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <div style={{fontSize:11, color:'rgba(255,255,255,0.38)', marginTop:2}}>
-                    {t('accent_cover_sub')}
-                  </div>
+                </LayoutGroup>
+                {/* контекстный блок под выбранным режимом */}
+                <div key={mode} style={{marginTop:16, animation:'fadeInUp 0.22s ease'}}>
+                  {mode === 'color' && (
+                    <div style={{display:'flex', flexWrap:'wrap', gap:10}}>
+                      {[
+                        ['default',  t('accent_default')],
+                        ['lavender', t('accent_lavender')],
+                        ['mint',     t('accent_mint')],
+                        ['rose',     t('accent_rose')],
+                        ['amber',    t('accent_amber')],
+                      ].map(([key, label]) => {
+                        const c = ACCENT_PRESETS[key];
+                        const active = preset === key;
+                        return (
+                          <div key={key} onClick={() => onSettings(s => ({ ...s, accentMode:'color', accentPreset:key }))}
+                            style={{
+                              display:'flex', flexDirection:'column', alignItems:'center', gap:6,
+                              cursor:'pointer', padding:'8px 6px', borderRadius:10,
+                              flex:'1 0 70px',
+                              background: active ? 'rgba(255,255,255,0.06)' : 'transparent',
+                              transition:'background 0.18s',
+                            }}
+                            onMouseEnter={e => { if (!active) e.currentTarget.style.background='rgba(255,255,255,0.035)'; }}
+                            onMouseLeave={e => { if (!active) e.currentTarget.style.background='transparent'; }}
+                          >
+                            <div style={{
+                              width:32, height:32, borderRadius:'50%',
+                              background:`rgb(${c.r},${c.g},${c.b})`,
+                              boxShadow: active
+                                ? `0 0 0 2px #07070a, 0 0 0 4px rgba(${c.r},${c.g},${c.b},0.9), 0 0 18px rgba(${c.r},${c.g},${c.b},0.55)`
+                                : `0 2px 8px rgba(${c.r},${c.g},${c.b},0.25)`,
+                              transition:'box-shadow 0.22s',
+                            }}/>
+                            <div style={{
+                              fontSize:11, fontWeight: active ? 600 : 500,
+                              color: active ? 'rgba(255,255,255,0.92)' : 'rgba(255,255,255,0.45)',
+                              transition:'color 0.18s',
+                            }}>{label}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {mode === 'cover' && (
+                    <div onClick={() => onSettings(s => ({ ...s, accentMode:'cover' }))}
+                      style={{
+                        position:'relative',
+                        display:'flex', alignItems:'center', gap:14,
+                        padding:'12px 14px', borderRadius:12, cursor:'pointer',
+                        background:'rgba(255,255,255,0.05)',
+                        border:'1px solid transparent',
+                        transition:'background 0.2s',
+                        overflow:'hidden',
+                      }}
+                    >
+                      {/* rainbow border ring */}
+                      <div style={{
+                        position:'absolute', inset:0, borderRadius:12,
+                        padding:1.5,
+                        background:'conic-gradient(from 0deg, #ff8fb1, #ffb164, #ffeb6b, #82dcc3, #9b7dff, #ff8fb1)',
+                        WebkitMask:'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
+                        WebkitMaskComposite:'xor', maskComposite:'exclude',
+                        pointerEvents:'none',
+                      }}/>
+                      <div style={{
+                        width:38, height:38, borderRadius:'50%',
+                        background:'conic-gradient(from 0deg, #ff8fb1, #ffb164, #ffeb6b, #82dcc3, #9b7dff, #ff8fb1)',
+                        boxShadow:`0 0 22px rgba(${appAccent.r},${appAccent.g},${appAccent.b},0.55)`,
+                        flexShrink:0,
+                        display:'flex', alignItems:'center', justifyContent:'center',
+                        transition:'box-shadow 0.4s',
+                      }}>
+                        {/* palette icon */}
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(7,7,10,0.85)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 2a10 10 0 1 0 10 10 4 4 0 0 0-4-4h-2a2 2 0 0 1-2-2v-2a4 4 0 0 0-2-2z"/>
+                          <circle cx="6.5" cy="11.5" r="1"/><circle cx="9.5" cy="7.5" r="1"/><circle cx="14.5" cy="7.5" r="1"/><circle cx="17.5" cy="11.5" r="1"/>
+                        </svg>
+                      </div>
+                      <div style={{flex:1, minWidth:0}}>
+                        <div style={{fontSize:13, fontWeight:600, color:'rgba(255,255,255,0.95)', letterSpacing:'-0.005em'}}>
+                          {t('accent_cover')}
+                        </div>
+                        <div style={{fontSize:11, color:'rgba(255,255,255,0.38)', marginTop:2}}>
+                          {t('accent_cover_sub')}
+                        </div>
+                      </div>
+                      {/* live swatch preview */}
+                      <div style={{
+                        width:14, height:14, borderRadius:'50%',
+                        background:`rgb(${appAccent.r},${appAccent.g},${appAccent.b})`,
+                        boxShadow:`0 0 12px rgba(${appAccent.r},${appAccent.g},${appAccent.b},0.7)`,
+                        transition:'background 0.4s, box-shadow 0.4s',
+                        flexShrink:0,
+                      }}/>
+                    </div>
+                  )}
+                  {mode === 'off' && (
+                    <div style={{
+                      display:'flex', alignItems:'center', gap:14,
+                      padding:'12px 14px', borderRadius:12,
+                      background:'rgba(255,255,255,0.025)', border:'1px solid rgba(255,255,255,0.04)',
+                    }}>
+                      <div style={{
+                        width:38, height:38, borderRadius:'50%', background:'rgba(255,255,255,0.05)',
+                        display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0,
+                        color:'rgba(255,255,255,0.35)',
+                      }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 3v9"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/>
+                        </svg>
+                      </div>
+                      <div style={{flex:1, minWidth:0}}>
+                        <div style={{fontSize:13, fontWeight:600, color:'rgba(255,255,255,0.6)', letterSpacing:'-0.005em'}}>
+                          {t('accent_off_title')}
+                        </div>
+                        <div style={{fontSize:11, color:'rgba(255,255,255,0.3)', marginTop:2, lineHeight:1.5}}>
+                          {t('accent_off_sub')}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                {/* live swatch preview */}
-                {active && (
-                  <div style={{
-                    width:14, height:14, borderRadius:'50%',
-                    background:`rgb(${appAccent.r},${appAccent.g},${appAccent.b})`,
-                    boxShadow:`0 0 12px rgba(${appAccent.r},${appAccent.g},${appAccent.b},0.7)`,
-                    transition:'background 0.4s, box-shadow 0.4s',
-                    flexShrink:0,
-                  }}/>
-                )}
-              </div>
+              </>
             );
           })()}
         </div>
@@ -2437,6 +2649,769 @@ function SearchTrackRow({ track, isLiked, onLike, onClick, onCoverClick, isLoadi
 }
 
 /* ── SearchView ──────────────────────────────────────────────────────────── */
+/* ── PlaylistCard ─────────────────────────────────────────────────────────── */
+/* карточка плейлиста — скелет как у HomeCard: полоска-заголовок (владелец /
+   название) + квадратная обложка + hover-оверлей с play. ✎ — только на своих
+   плейлистах (SC не даёт редактировать чужие), трек-каунт — бейдж на обложке */
+function PlaylistCard({ playlist, onOpen, onEdit }) {
+  const t = useLang();
+  const pl_edit_title = t('pl_edit');
+  const cover = (
+    <>
+      {playlist.coverUrl
+        ? <img src={playlist.coverUrl} loading="lazy" decoding="async"
+            style={{position:'absolute', inset:0, width:'100%', height:'100%', objectFit:'cover',
+              clipPath:'inset(0 round 0 0 16px 16px)', display:'block'}}
+            onError={e => { e.currentTarget.style.display = 'none'; }}/>
+        : <img src="../assets/note.png" style={{width:24, height:24, filter:'brightness(0) invert(1)', opacity:0.13}}/>}
+      {/* трек-каунт бейдж */}
+      <div style={{
+        position:'absolute', left:7, bottom:7,
+        display:'flex', alignItems:'center', gap:4,
+        padding:'3px 8px', borderRadius:999,
+        background:'rgba(0,0,0,0.45)', backdropFilter:'blur(4px)', WebkitBackdropFilter:'blur(4px)',
+        fontSize:10, fontWeight:600, color:'rgba(255,255,255,0.8)',
+        fontVariantNumeric:'tabular-nums', pointerEvents:'none',
+      }}>{playlist.trackCount}</div>
+      {/* hover: затемнение + play (оверлей абсолютный на всю обложку, как HomeCard) */}
+      <div className="home-card-overlay" style={{
+        position:'absolute', inset:0, background:'rgba(0,0,0,0.32)',
+        display:'flex', alignItems:'center', justifyContent:'center',
+      }}>
+        <div className="home-card-play" style={{
+          width:46, height:46, borderRadius:'50%',
+          display:'flex', alignItems:'center', justifyContent:'center',
+        }}>
+          <svg width="26" height="26" fill="#fff" viewBox="0 0 24 24" style={{marginLeft:2}}><polygon points="6,4 20,12 6,20"/></svg>
+        </div>
+      </div>
+      {playlist.isOwn && (
+        <div className="home-card-like" style={{position:'absolute', right:7, bottom:7, color:'rgba(255,255,255,0.75)'}}
+          title={pl_edit_title}
+          onClick={e => { e.stopPropagation(); onEdit(playlist); }}
+          onMouseEnter={e => e.currentTarget.style.color = 'rgba(255,255,255,0.95)'}
+          onMouseLeave={e => e.currentTarget.style.color = 'rgba(255,255,255,0.75)'}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/>
+          </svg>
+        </div>
+      )}
+    </>
+  );
+  return (
+    <motion.div className="home-card"
+      onClick={() => onOpen(playlist)}
+      initial={{ opacity: 0, scale: 0.92 }} animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.88 }}
+      transition={{ type:'spring', stiffness: 380, damping: 32, mass: 0.6 }}
+      style={{borderRadius:16, cursor:'pointer', contentVisibility:'auto', containIntrinsicSize:'auto 180px'}}>
+      <div style={{padding:'8px 8px 7px', background:'rgba(255,255,255,0.05)', borderRadius:'16px 16px 0 0'}}>
+        <div style={{fontSize:10.5, opacity:0.3, overflow:'hidden', textOverflow:'ellipsis',
+          whiteSpace:'nowrap', marginBottom:2}}>{playlist.ownerName}</div>
+        <div style={{fontSize:12, fontWeight:500, opacity:0.88, overflow:'hidden',
+          textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{playlist.title}</div>
+      </div>
+      <div style={{width:'100%', aspectRatio:'1', position:'relative', background:'#111116',
+        borderRadius:'0 0 16px 16px', display:'flex', alignItems:'center', justifyContent:'center',
+        overflow:'hidden'}}>
+        {cover}
+      </div>
+    </motion.div>
+  );
+}
+
+/* ── PlaylistsView ────────────────────────────────────────────────────────── */
+/* вкладка плейлистов: лайкнутые + свои SC-плейлисты, сетка как в home.
+   ✎ на карточке / «✎» в чипе сайдбара → редактор; клик → плеер с плейлистом */
+function PlaylistsView({ visible, scAuth, playlists, loading, error, creating,
+                         onOpen, onEdit, onCreate, onRetry, onLogin }) {
+  const t = useLang();
+  return (
+    <div style={{
+      position:'absolute', inset:0,
+      opacity: visible ? 1 : 0,
+      pointerEvents: visible ? 'auto' : 'none',
+      transition:'opacity 0.14s ease',
+    }}>
+      <div className="scroll-thin scroll-home" style={{
+        position:'absolute', top:0, left:0, right:10, bottom:0,
+        overflowY:'auto', padding:'32px 4px 32px 36px',
+      }}>
+        {!scAuth ? (
+          /* не залогинен — подсказка со входом */
+          <div style={{
+            display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+            minHeight:'calc(100vh - 180px)', gap:22, textAlign:'center',
+          }}>
+            <div style={{
+              width:72, height:72, borderRadius:20,
+              background:'rgba(255,255,255,0.035)',
+              display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0,
+            }}>
+              <img src="../assets/playlists.png" style={{width:32, height:32, display:'block',
+                filter:'brightness(0) invert(1)', opacity:0.4}}/>
+            </div>
+            <div style={{fontSize:13, color:'rgba(255,255,255,0.32)', lineHeight:1.6, maxWidth:340}}>
+              {t('pl_login_hint').split('\n').map((l,i) => <span key={i}>{l}{i===0 && <br/>}</span>)}
+            </div>
+            <button onClick={onLogin} style={{
+              display:'flex', alignItems:'center', gap:8,
+              background:'rgba(255,85,0,0.1)', border:'none', borderRadius:10,
+              padding:'9px 18px', fontSize:13, fontWeight:500,
+              color:'rgba(255,130,60,0.85)', cursor:'pointer', fontFamily:'inherit',
+              transition:'background 0.15s',
+            }}
+              onMouseEnter={e => { e.currentTarget.style.background='rgba(255,85,0,0.17)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background='rgba(255,85,0,0.1)'; }}>
+              <SoundCloudIcon size={14} fill="rgba(255,130,60,0.9)"/>
+              {t('login_sc')}
+            </button>
+          </div>
+        ) : (
+          <>
+            <div style={{display:'flex', alignItems:'center', gap:16, marginBottom:24}}>
+              <div style={{fontSize:12, fontWeight:500, color:'rgba(255,255,255,0.22)',
+                letterSpacing:'0.06em', textTransform:'uppercase', flexShrink:0}}>
+                {t('nav_playlists')}
+              </div>
+              {loading && <div style={{fontSize:11, color:'rgba(255,255,255,0.32)'}}>{t('loading_dots')}</div>}
+              {!loading && playlists && playlists.length > 0 && (
+                <div style={{fontSize:11, color:'rgba(255,255,255,0.16)'}}>{playlists.length}</div>
+              )}
+              {error && (
+                <div style={{fontSize:11, color:'rgba(255,80,60,0.75)', maxWidth:320, lineHeight:1.5, wordBreak:'break-all'}}>
+                  {t('load_failed')} — <span style={{cursor:'pointer', textDecoration:'underline'}}
+                    onClick={onRetry}>{t('retry')}</span>
+                </div>
+              )}
+              {/* создать плейлист */}
+              <div onClick={() => !creating && onCreate()} title={t('pl_new_title')} style={{
+                marginLeft:'auto', width:28, height:28, borderRadius:9, flexShrink:0,
+                display:'flex', alignItems:'center', justifyContent:'center',
+                color:'rgba(255,255,255,0.35)', cursor:creating ? 'default' : 'pointer',
+                background:'rgba(255,255,255,0.045)', transition:'background 0.15s, color 0.15s',
+                opacity: creating ? 0.5 : 1,
+              }}
+                onMouseEnter={e => { if (!creating) { e.currentTarget.style.background='rgba(255,255,255,0.08)'; e.currentTarget.style.color='rgba(255,255,255,0.8)'; } }}
+                onMouseLeave={e => { e.currentTarget.style.background='rgba(255,255,255,0.045)'; e.currentTarget.style.color='rgba(255,255,255,0.35)'; }}>
+                {creating
+                  ? <div style={{width:11, height:11, border:'2px solid rgba(255,255,255,0.15)', borderTopColor:'rgba(255,255,255,0.6)', borderRadius:'50%', animation:'spin 0.75s linear infinite'}}/>
+                  : <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>}
+              </div>
+            </div>
+            {loading && (!playlists || playlists.length === 0) ? (
+              <HomeGridSkeleton/>
+            ) : playlists && playlists.length === 0 && !error ? (
+              <div style={{
+                display:'flex', alignItems:'center', justifyContent:'center',
+                padding:'80px 20px', fontSize:13, color:'rgba(255,255,255,0.32)', textAlign:'center',
+              }}>{t('playlists_empty')}</div>
+            ) : (
+              <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(128px, 1fr))', gap:18}}>
+                <AnimatePresence initial={false}>
+                  {playlists && playlists.map(pl => (
+                    <PlaylistCard key={pl.id} playlist={pl} onOpen={onOpen} onEdit={onEdit}/>
+                  ))}
+                </AnimatePresence>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── PlaylistAddRow ───────────────────────────────────────────────────────── */
+/* строка-кандидат добавления (поиск/рекомендации редактора): обложка кликабельна —
+   превью-прослушивание через основной плеер (как обложки в поиске), справа + / ✓ */
+function PlaylistAddRow({ tr, added, onAdd, onPlay, isLoading, isError }) {
+  const [hov, setHov] = useState(false);
+  return (
+    <div style={{
+      display:'flex', alignItems:'center', gap:12, padding:'7px 0',
+      borderBottom:'1px solid rgba(255,255,255,0.032)',
+    }}>
+      <div onClick={e => { e.stopPropagation(); if (!isLoading) onPlay(tr); }}
+        onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
+        style={{width:36, height:36, borderRadius:8, flexShrink:0, background:'#111116',
+          overflow:'hidden', position:'relative',
+          cursor: isLoading ? 'default' : 'pointer',
+          outline: isError ? '1px solid rgba(255,80,60,0.55)' : 'none'}}>
+        {tr.coverUrl
+          ? <img src={tr.coverUrl} loading="lazy" style={{position:'absolute', inset:0, width:'100%', height:'100%', objectFit:'cover', clipPath:'inset(0 round 8px)', display:'block'}}
+              onError={e => { e.currentTarget.style.display = 'none'; }}/>
+          : <img src="../assets/note.png" style={{width:10, height:10, filter:'brightness(0) invert(1)', opacity:0.2, position:'absolute', inset:0, margin:'auto'}}/>}
+        {isLoading
+          ? <div style={{position:'absolute', inset:0, background:'rgba(0,0,0,0.55)', display:'flex', alignItems:'center', justifyContent:'center'}}>
+              <div style={{width:12, height:12, border:'2px solid rgba(255,255,255,0.15)', borderTopColor:'rgba(255,255,255,0.6)', borderRadius:'50%', animation:'spin 0.75s linear infinite'}}/>
+            </div>
+          : <div style={{
+              position:'absolute', inset:0,
+              background: isError ? 'rgba(120,20,20,0.45)' : 'rgba(0,0,0,0.5)',
+              display:'flex', alignItems:'center', justifyContent:'center',
+              opacity: (hov || isError) ? 1 : 0, transition:'opacity 0.15s',
+            }}>
+              {isError
+                ? <svg width="11" height="11" fill="none" stroke="rgba(255,120,110,0.95)" strokeWidth="2.4" strokeLinecap="round" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                : <svg width="11" height="11" fill="white" viewBox="0 0 24 24" style={{marginLeft:1}}><polygon points="6,4 20,12 6,20"/></svg>}
+            </div>}
+      </div>
+      <div style={{flex:1, minWidth:0}}>
+        <div style={{fontSize:12.5, color:'rgba(255,255,255,0.85)', fontWeight:500,
+          overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{tr.title}</div>
+        <div style={{fontSize:11, color:'rgba(255,255,255,0.32)',
+          overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{tr.artist}</div>
+      </div>
+      <div style={{fontSize:11, color:'rgba(255,255,255,0.28)', fontVariantNumeric:'tabular-nums', flexShrink:0}}>
+        {fmt(tr.duration)}
+      </div>
+      <div onClick={() => !added && onAdd(tr)} style={{
+        width:26, height:26, borderRadius:8, flexShrink:0,
+        display:'flex', alignItems:'center', justifyContent:'center',
+        cursor: added ? 'default' : 'pointer',
+        color: added ? 'var(--accent)' : 'rgba(255,255,255,0.55)',
+        background: added ? 'rgba(255,255,255,0.05)' : 'transparent',
+        border: added ? '1px solid rgba(255,255,255,0.06)' : '1px solid rgba(255,255,255,0.08)',
+        transition:'background 0.15s, color 0.15s',
+      }}
+        onMouseEnter={e => { if (!added) e.currentTarget.style.background='rgba(255,255,255,0.08)'; }}
+        onMouseLeave={e => { if (!added) e.currentTarget.style.background='transparent'; }}>
+        {added
+          ? <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>}
+      </div>
+    </div>
+  );
+}
+
+/* ── PlaylistEditor ───────────────────────────────────────────────────────── */
+/* полноэкранный редактор своего плейлиста: Reorder-лист треков (drag, delete),
+   панель добавления (Поиск / Рекомендации), автосейв в SC через ~1с */
+const PlaylistEditor = React.forwardRef(function PlaylistEditor({ visible, playlist, scAuth, onClose, onUpdated, onDelete, fallbackTracks,
+                         onPlayTrack, loadingTrackId, errorTrackId }, ref) {
+  const t = useLang();
+  const [tracks, setTracks] = useState([]);
+  const [loaded, setLoaded]   = useState(false);
+  const [status, setStatus]   = useState('idle');   /* idle | saving | saved | error */
+  const [tab, setTab]         = useState('recs');   /* recs | search */
+  const [query, setQuery]     = useState('');
+  const [results, setResults] = useState([]);
+  const [recs, setRecs]       = useState(null);
+  const [recsLoading, setRecsLoading] = useState(false);
+  const [searching, setSearching]     = useState(false);
+  const debounceRef = useRef(null);
+  const queryRef    = useRef('');
+  const dirtyRef    = useRef(false);
+  const tracksRef   = useRef([]);
+  const plObjRef    = useRef(null); /* кэш сырого объекта плейлиста для PUT —
+                                       GET один раз за сессию, меньше запросов
+                                       (DataDome не любит частые) */
+  tracksRef.current = tracks;
+  const inList = useMemo(() => new Set(tracks.map(x => x.id)), [tracks]);
+
+  /* сброс + загрузка полного списка треков при открытии */
+  useEffect(() => {
+    if (!visible || !playlist || !scAuth) return;
+    let cancelled = false;
+    setLoaded(false); setStatus('idle'); dirtyRef.current = false;
+    setConfirmDel(false); setDeleting(false);
+    setExitGuard(false); setGuardSaving(false);
+    plObjRef.current = null;
+    setQuery(''); queryRef.current = ''; setResults([]);
+    setRecs(null); setTab('recs');
+    (async () => {
+      let list = playlist.tracks || [];
+      if (list.length < (playlist.trackCount || 0)) {
+        const full = await fetchPlaylistTracks(playlist.id, scAuth, t('no_title'));
+        if (!cancelled && full.length) list = full;
+      }
+      if (cancelled) return;
+      setTracks(list);
+      setLoaded(true);
+    })();
+    return () => { cancelled = true; };
+  }, [visible, playlist?.id, scAuth]);
+
+  /* автосейв: debounce 1с после правки → PUT /playlists/{id}. формат — как у
+     сайта (HAR): ПОЛНЫЙ объект плейлиста с tracks = голые id. сырой объект
+     берём из кэша (GET один раз за сессию — беречь лимиты DataDome), запасной
+     формат — только tracks. после PUT одна сверка порядка, без ретраев */
+  const saveNow = useCallback(async () => {
+    if (!scAuth || !playlist) return;
+    const snapshot = tracksRef.current;
+    setStatus('saving');
+    const ids = snapshot.map(x => x.id);
+    if (!plObjRef.current) {
+      const cur = await window.electronAPI.scFetch(
+        `https://api-v2.soundcloud.com/playlists/${playlist.id}`, scAuth.token, scAuth.clientId);
+      if (!cur.error && cur.data?.id) plObjRef.current = cur.data;
+    }
+    const attempts = [];
+    if (plObjRef.current) {
+      attempts.push({ playlist: { ...plObjRef.current, tracks: ids, track_count: ids.length } });
+    }
+    attempts.push({ playlist: { tracks: ids } });
+    const verify = async () => {
+      const check = await window.electronAPI.scFetch(
+        `https://api-v2.soundcloud.com/playlists/${playlist.id}/tracks?limit=200`,
+        scAuth.token, scAuth.clientId);
+      if (check.error) return true; /* проверить не вышли — доверяем 200 */
+      const col = Array.isArray(check.data) ? check.data : check.data?.collection;
+      if (!col) return true;
+      return col.length === snapshot.length && snapshot.every((x, k) => col[k]?.id === x.id);
+    };
+    for (let i = 0; i < attempts.length; i++) {
+      const res = await window.electronAPI.scFetch(
+        `https://api-v2.soundcloud.com/playlists/${playlist.id}`,
+        scAuth.token, scAuth.clientId, 'PUT', attempts[i]
+      );
+      if (res.error) {
+        console.error(`[seWer] playlist PUT (формат ${i + 1})`, res.error, res.body ?? '');
+        continue;
+      }
+      if (!(await verify())) {
+        console.error(`[seWer] playlist PUT: 200, но порядок не применился (формат ${i + 1})`);
+        if (i < attempts.length - 1) continue;
+        setStatus('error');
+        return;
+      }
+      dirtyRef.current = false;
+      setStatus('saved');
+      onUpdated?.(playlist.id, snapshot);
+      return;
+    }
+    setStatus('error');
+  }, [playlist, scAuth, onUpdated]);
+
+  /* правка помечает несохранённость; сохранение — вручную (кнопка в шапке
+     или при выходе), никакого автосейва — беречь лимиты анти-бота */
+  const touch = () => {
+    dirtyRef.current = true;
+    setStatus('dirty');
+  };
+
+  /* рекомендации: station-эндпоинт по плейлисту → фолбэк station случайного
+     трека из плейлиста (⟳ крутит выборку) → фолбэк последние лайкнутые
+     (единственный вариант для пустого нового плейлиста) */
+  const loadRecs = useCallback(async () => {
+    if (!scAuth || !playlist || recsLoading) return;
+    setRecsLoading(true);
+    const noTitle = t('no_title');
+    const mapped = arr => (arr || []).map(x => mapScTrack(x, noTitle));
+    let items = [];
+    const plRes = await window.electronAPI.scFetch(plRecsUrl(playlist.id), scAuth.token, scAuth.clientId);
+    if (!plRes.error) items = mapped(plRes.data?.collection);
+    if (items.length === 0 && tracksRef.current.length > 0) {
+      const seed = tracksRef.current[Math.floor(Math.random() * tracksRef.current.length)];
+      const trRes = await window.electronAPI.scFetch(
+        `https://api-v2.soundcloud.com/stations/soundcloud:track-stations:${seed.id}/tracks?limit=50`,
+        scAuth.token, scAuth.clientId
+      );
+      if (!trRes.error) items = mapped(trRes.data?.collection);
+    }
+    if (items.length === 0 && fallbackTracks && fallbackTracks.length > 0) {
+      items = fallbackTracks.slice(0, 30); /* уже в mapScTrack-формате */
+    }
+    setRecs(items);
+    setRecsLoading(false);
+  }, [playlist, scAuth, recsLoading, fallbackTracks]);
+  useEffect(() => {
+    if (visible && tab === 'recs' && recs === null && !recsLoading && playlist && scAuth) loadRecs();
+  }, [visible, tab, recs, playlist, scAuth]);
+
+  /* поиск треков для добавления */
+  const doSearch = useCallback(async (q) => {
+    if (!q.trim() || !scAuth) { setResults([]); setSearching(false); return; }
+    setSearching(true);
+    const res = await window.electronAPI.scFetch(
+      `https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(q)}&limit=20`,
+      scAuth.token, scAuth.clientId
+    );
+    if (queryRef.current !== q) return;
+    setResults((res.data?.collection || []).map(x => mapScTrack(x, t('no_title'))));
+    setSearching(false);
+  }, [scAuth]);
+  const handleInput = e => {
+    const q = e.target.value;
+    setQuery(q); queryRef.current = q;
+    clearTimeout(debounceRef.current);
+    if (!q.trim()) { setResults([]); return; }
+    debounceRef.current = setTimeout(() => doSearch(q), 380);
+  };
+
+  const addTrack = tr => {
+    if (inList.has(tr.id)) return;
+    setTracks(prev => [...prev, tr]);
+    touch();
+  };
+  const removeTrack = id => {
+    setTracks(prev => prev.filter(x => x.id !== id));
+    touch();
+  };
+  const close = () => {
+    if (dirtyRef.current) { setExitGuard(true); return; } /* предупреждение */
+    onClose();
+  };
+  /* выход с несохранёнными изменениями: сохранить и выйти / не сохранять */
+  const [exitGuard, setExitGuard] = useState(false);
+  const [guardSaving, setGuardSaving] = useState(false);
+  const guardSaveExit = async () => {
+    if (guardSaving) return;
+    setGuardSaving(true);
+    await saveNow();
+    setGuardSaving(false);
+    if (!dirtyRef.current) { onClose(); return; } /* сохранилось — выходим */
+    setExitGuard(false); /* ошибка — остаёмся, статус-пилюля покажет retry */
+  };
+  React.useImperativeHandle(ref, () => ({
+    /* App зовёт это при выходе мышиной кнопкой «назад» / через вкладки */
+    requestClose: () => { if (dirtyRef.current) setExitGuard(true); else onClose(); },
+  }), []);
+  /* удаление плейлиста: подтверждение инлайном (🗑 → «удалить? ✓ ✕») */
+  const [confirmDel, setConfirmDel] = useState(false);
+  const [deleting, setDeleting]   = useState(false);
+  const doDelete = async () => {
+    if (!playlist || deleting) return;
+    setDeleting(true);
+    const ok = await onDelete?.(playlist);
+    setDeleting(false);
+    setConfirmDel(false); /* при неудаче App покажет тост, редактор остаётся */
+  };
+  /* плюрализация: 1 трек / 2 трека / 5 треков (en — track/tracks) */
+  const countLabel = n =>
+    (n % 10 === 1 && n % 100 !== 11) ? t('pl_count_1')
+    : ([2,3,4].includes(n % 10) && ![12,13,14].includes(n % 100)) ? t('pl_count_2')
+    : t('pl_count_5');
+
+  const STATUS = {
+    idle:   null,
+    dirty:  { text: t('ed_dirty'), color: 'rgba(255,185,90,0.8)' },
+    saving: { text: t('ed_saving'), color: 'rgba(255,255,255,0.4)' },
+    saved:  { text: t('ed_saved'),  color: 'rgba(255,255,255,0.5)' },
+    error:  { text: t('ed_save_err'), color: 'rgba(255,80,60,0.85)', retry: true },
+  }[status];
+
+  return (
+    <div style={{
+      position:'absolute', inset:0, zIndex:60,
+      background:'var(--bg)',
+      opacity: visible ? 1 : 0,
+      pointerEvents: visible ? 'auto' : 'none',
+      transition:'opacity 0.18s ease',
+    }}>
+      <div className="scroll-thin" style={{
+        width:'100%', height:'100%', overflowY:'auto',
+        padding:'28px 24px 48px',
+        display:'flex', justifyContent:'center',
+      }}>
+        <div style={{width:'100%', maxWidth:560}}>
+          {/* шапка: назад / название / статус */}
+          <div style={{display:'flex', alignItems:'center', gap:12, marginBottom:20}}>
+            <div onClick={close} title={t('back')} style={{
+              width:32, height:32, borderRadius:10, flexShrink:0,
+              display:'flex', alignItems:'center', justifyContent:'center',
+              background:'rgba(255,255,255,0.045)', color:'rgba(255,255,255,0.6)',
+              cursor:'pointer', transition:'background 0.15s, color 0.15s',
+            }}
+              onMouseEnter={e => { e.currentTarget.style.background='rgba(255,255,255,0.08)'; e.currentTarget.style.color='rgba(255,255,255,0.9)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background='rgba(255,255,255,0.045)'; e.currentTarget.style.color='rgba(255,255,255,0.6)'; }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            </div>
+            <div style={{flex:1, minWidth:0}}>
+              <div style={{fontSize:15.5, fontWeight:600, letterSpacing:'-0.015em', color:'rgba(255,255,255,0.88)',
+                overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                {playlist ? playlist.title : ''}
+              </div>
+              <div style={{fontSize:11, color:'rgba(255,255,255,0.3)', marginTop:1, fontVariantNumeric:'tabular-nums'}}>
+                {tracks.length} {countLabel(tracks.length)}
+                {!loaded && ' · …'}
+              </div>
+            </div>
+            {/* сохранить вручную — появляется только когда есть изменения */}
+            {status === 'dirty' && (
+              <div onClick={saveNow} style={{
+                display:'flex', alignItems:'center', gap:6, flexShrink:0,
+                padding:'6px 14px', borderRadius:9, cursor:'pointer', userSelect:'none',
+                border:'1px solid var(--accent)', color:'var(--accent)',
+                fontSize:11, fontWeight:600, transition:'background 0.15s',
+              }}
+                onMouseEnter={e => e.currentTarget.style.background='rgba(255,255,255,0.05)'}
+                onMouseLeave={e => e.currentTarget.style.background='transparent'}>
+                {t('ed_save_btn')}
+              </div>
+            )}
+            {STATUS && (
+              <div onClick={STATUS.retry ? saveNow : undefined} style={{
+                display:'flex', alignItems:'center', gap:6, flexShrink:0,
+                fontSize:10.5, fontWeight:500, color: STATUS.color,
+                cursor: STATUS.retry ? 'pointer' : 'default',
+                userSelect:'none',
+              }}>
+                {status === 'saving' && <div style={{width:9, height:9, border:'1.5px solid rgba(255,255,255,0.15)', borderTopColor:'rgba(255,255,255,0.6)', borderRadius:'50%', animation:'spin 0.75s linear infinite'}}/>}
+                {STATUS.text}
+              </div>
+            )}
+            {/* удалить плейлист: 🗑 → инлайн-подтверждение ✓/✕ */}
+            {confirmDel ? (
+              <div style={{display:'flex', alignItems:'center', gap:6, flexShrink:0}}>
+                <span style={{fontSize:11, color:'rgba(255,80,60,0.8)'}}>{t('pl_del_sure')}</span>
+                <div onClick={doDelete} title={t('pl_del')} style={{
+                  width:24, height:24, borderRadius:8,
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  background:'rgba(255,80,60,0.14)', color:'rgba(255,105,90,0.95)',
+                  cursor:deleting ? 'default' : 'pointer',
+                }}>
+                  {deleting
+                    ? <div style={{width:10, height:10, border:'1.5px solid rgba(255,105,90,0.3)', borderTopColor:'rgba(255,105,90,0.9)', borderRadius:'50%', animation:'spin 0.75s linear infinite'}}/>
+                    : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                </div>
+                <div onClick={() => setConfirmDel(false)} style={{
+                  width:24, height:24, borderRadius:8,
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  background:'rgba(255,255,255,0.05)', color:'rgba(255,255,255,0.5)', cursor:'pointer',
+                }}>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </div>
+              </div>
+            ) : (
+              <div onClick={() => setConfirmDel(true)} title={t('pl_del')} style={{
+                width:28, height:28, borderRadius:9, flexShrink:0,
+                display:'flex', alignItems:'center', justifyContent:'center',
+                color:'rgba(255,255,255,0.3)', cursor:'pointer',
+                background:'rgba(255,255,255,0.045)', transition:'background 0.15s, color 0.15s',
+              }}
+                onMouseEnter={e => { e.currentTarget.style.background='rgba(255,80,60,0.12)'; e.currentTarget.style.color='rgba(255,105,90,0.9)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background='rgba(255,255,255,0.045)'; e.currentTarget.style.color='rgba(255,255,255,0.3)'; }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3 6 5 6 21 6"/>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                </svg>
+              </div>
+            )}
+          </div>
+
+          {/* треки: Reorder-лист (drag за строку, ✕ удалить) */}
+          {loaded && tracks.length === 0 && (
+            <div style={{padding:'26px 0', fontSize:12.5, color:'rgba(255,255,255,0.3)', textAlign:'center'}}>
+              {t('ed_empty')}
+            </div>
+          )}
+          <Reorder.Group axis="y" values={tracks} onReorder={val => { setTracks(val); touch(); }}
+            style={{listStyle:'none', margin:0, padding:0}}>
+            {tracks.map(tr => (
+              <Reorder.Item key={tr.id} value={tr}
+                whileDrag={{ scale: 1.015, boxShadow: '0 8px 28px rgba(0,0,0,0.45)', background: 'rgba(255,255,255,0.045)', zIndex: 2, borderRadius: 10 }}
+                transition={{ type:'spring', stiffness: 500, damping: 40 }}
+                style={{
+                  display:'flex', alignItems:'center', gap:12, padding:'6px 8px',
+                  borderRadius:10, cursor:'grab', userSelect:'none', position:'relative',
+                  touchAction:'none',
+                }}>
+                {/* drag-хендл */}
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"
+                  style={{flexShrink:0, color:'rgba(255,255,255,0.22)'}}>
+                  <circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/>
+                  <circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/>
+                  <circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/>
+                </svg>
+                <div style={{width:36, height:36, borderRadius:8, flexShrink:0, background:'#111116',
+                  overflow:'hidden', position:'relative', pointerEvents:'none'}}>
+                  {tr.coverUrl
+                    ? <img src={tr.coverUrl} loading="lazy" style={{position:'absolute', inset:0, width:'100%', height:'100%', objectFit:'cover', clipPath:'inset(0 round 8px)', display:'block'}}
+                        onError={e => { e.currentTarget.style.display = 'none'; }}/>
+                    : <img src="../assets/note.png" style={{width:10, height:10, filter:'brightness(0) invert(1)', opacity:0.2, position:'absolute', inset:0, margin:'auto'}}/>}
+                </div>
+                <div style={{flex:1, minWidth:0}}>
+                  <div style={{fontSize:12.5, color:'rgba(255,255,255,0.85)', fontWeight:500,
+                    overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{tr.title}</div>
+                  <div style={{fontSize:11, color:'rgba(255,255,255,0.32)',
+                    overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{tr.artist}</div>
+                </div>
+                <div style={{fontSize:11, color:'rgba(255,255,255,0.28)', fontVariantNumeric:'tabular-nums', flexShrink:0}}>
+                  {fmt(tr.duration)}
+                </div>
+                <div onClick={() => removeTrack(tr.id)} title={t('ed_track_del')} style={{
+                  width:26, height:26, borderRadius:8, flexShrink:0,
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  color:'rgba(255,255,255,0.25)', cursor:'pointer',
+                  transition:'color 0.15s, background 0.15s',
+                }}
+                  onMouseEnter={e => { e.currentTarget.style.color='rgba(255,255,255,0.7)'; e.currentTarget.style.background='rgba(255,255,255,0.06)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.color='rgba(255,255,255,0.25)'; e.currentTarget.style.background='transparent'; }}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+                    <line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/>
+                  </svg>
+                </div>
+              </Reorder.Item>
+            ))}
+          </Reorder.Group>
+
+          {/* панель добавления */}
+          <div style={{
+            marginTop:26, borderRadius:14,
+            background:'rgba(255,255,255,0.025)', border:'1px solid rgba(255,255,255,0.04)',
+            padding:14,
+          }}>
+            <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12}}>
+              <div style={{fontSize:11.5, fontWeight:600, letterSpacing:'0.05em', textTransform:'uppercase',
+                color:'rgba(255,255,255,0.35)'}}>
+                {t('ed_add')}
+              </div>
+              <LayoutGroup>
+                <div style={{display:'flex', gap:3, padding:3, borderRadius:10, background:'rgba(255,255,255,0.035)'}}>
+                  {[['recs', t('ed_add_recs')], ['search', t('ed_add_search')]].map(([id, label]) => {
+                    const active = tab === id;
+                    return (
+                      <div key={id} onClick={() => setTab(id)} style={{
+                        position:'relative', padding:'5px 13px', borderRadius:8, cursor:'pointer', userSelect:'none',
+                        fontSize:11, fontWeight: active ? 600 : 500,
+                        color: active ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.38)',
+                        transition:'color 0.18s ease',
+                      }}>
+                        {active && <motion.div layoutId="plEdTabPill"
+                          transition={{ type:'spring', stiffness:420, damping:34, mass:0.7 }}
+                          style={{position:'absolute', inset:0, borderRadius:8, background:'rgba(255,255,255,0.07)'}}/>}
+                        <span style={{position:'relative'}}>{label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </LayoutGroup>
+            </div>
+
+            {tab === 'search' ? (
+              <>
+                <div style={{
+                  position:'relative',
+                  background:'rgba(255,255,255,0.04)', borderRadius:10,
+                }}>
+                  <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2"
+                    viewBox="0 0 24 24" style={{position:'absolute', left:12, top:'50%', translate:'0 -50%', pointerEvents:'none', color:'rgba(255,255,255,0.22)'}}>
+                    <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+                  </svg>
+                  <input value={query} onChange={handleInput}
+                    placeholder={t('search_short')}
+                    style={{width:'100%', background:'none', border:'none', outline:'none',
+                      padding:'8px 14px 8px 32px', color:'rgba(255,255,255,0.78)',
+                      fontSize:12.5, fontFamily:'inherit'}}/>
+                </div>
+                <div style={{minHeight:40, marginTop:6}}>
+                  {searching && results.length === 0 && (
+                    <div style={{display:'flex', justifyContent:'center', padding:'12px 0'}}>
+                      <div style={{width:14, height:14, border:'2px solid rgba(255,255,255,0.15)', borderTopColor:'rgba(255,255,255,0.6)', borderRadius:'50%', animation:'spin 0.75s linear infinite'}}/>
+                    </div>
+                  )}
+                  {!searching && query.trim() && results.length === 0 && (
+                    <div style={{padding:'12px 0', fontSize:12, color:'rgba(255,255,255,0.3)', textAlign:'center'}}>{t('not_found')}</div>
+                  )}
+                  {results.map(tr => (
+                    <PlaylistAddRow key={tr.id} tr={tr} added={inList.has(tr.id)} onAdd={addTrack}
+                      onPlay={onPlayTrack} isLoading={loadingTrackId === tr.id} isError={errorTrackId === tr.id}/>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div style={{minHeight:40}}>
+                {recsLoading && (
+                  <div style={{padding:'12px 0', fontSize:12, color:'rgba(255,255,255,0.32)', textAlign:'center', display:'flex', alignItems:'center', justifyContent:'center', gap:8}}>
+                    <div style={{width:12, height:12, border:'2px solid rgba(255,255,255,0.15)', borderTopColor:'rgba(255,255,255,0.6)', borderRadius:'50%', animation:'spin 0.75s linear infinite'}}/>
+                    {t('ed_rec_loading')}
+                  </div>
+                )}
+                {!recsLoading && recs !== null && recs.length === 0 && (
+                  <div style={{padding:'12px 0', fontSize:12, color:'rgba(255,255,255,0.3)', textAlign:'center'}}>{t('ed_recs_empty')}</div>
+                )}
+                {!recsLoading && recs !== null && recs.length > 0 && (
+                  <>
+                    <div style={{display:'flex', justifyContent:'flex-end', marginBottom:2}}>
+                      <div onClick={loadRecs} style={{
+                        fontSize:10.5, color:'rgba(255,255,255,0.3)', cursor:'pointer',
+                        padding:'3px 10px', borderRadius:999, userSelect:'none',
+                        border:'1px solid rgba(255,255,255,0.05)', transition:'color 0.15s, border-color 0.15s',
+                      }}
+                        onMouseEnter={e => { e.currentTarget.style.color='rgba(255,255,255,0.6)'; e.currentTarget.style.borderColor='rgba(255,255,255,0.12)'; }}
+                        onMouseLeave={e => { e.currentTarget.style.color='rgba(255,255,255,0.3)'; e.currentTarget.style.borderColor='rgba(255,255,255,0.05)'; }}>
+                        ⟳ {t('retry')}
+                      </div>
+                    </div>
+                    {recs.map(tr => (
+                      <PlaylistAddRow key={tr.id} tr={tr} added={inList.has(tr.id)} onAdd={addTrack}
+                        onPlay={onPlayTrack} isLoading={loadingTrackId === tr.id} isError={errorTrackId === tr.id}/>
+                    ))}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* запас снизу: панель добавления не должна упираться в край —
+              спейсер внутри колонки скроллится гарантированно */}
+          <div style={{height:130}}/>
+        </div>
+      </div>
+
+      {/* выход с несохранёнными изменениями: сохранить / не сохранять / отмена */}
+      <AnimatePresence>
+        {exitGuard && visible && (
+          <motion.div key="plExitGuard" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+            transition={{duration:0.14}}
+            style={{position:'absolute', inset:0, zIndex:10, background:'rgba(0,0,0,0.55)',
+              display:'flex', alignItems:'center', justifyContent:'center'}}>
+            <motion.div initial={{scale:0.94, opacity:0}} animate={{scale:1, opacity:1}} exit={{scale:0.96, opacity:0}}
+              transition={{type:'spring', stiffness:420, damping:32}}
+              style={{width:324, background:'#15151b', border:'1px solid rgba(255,255,255,0.07)',
+                borderRadius:16, padding:20, boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
+              <div style={{fontSize:14, fontWeight:600, color:'rgba(255,255,255,0.88)', marginBottom:4}}>
+                {t('ed_unsaved')}
+              </div>
+              <div style={{fontSize:12, color:'rgba(255,255,255,0.35)', marginBottom:18,
+                overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                {playlist ? playlist.title : ''}
+              </div>
+              <div style={{display:'flex', gap:8}}>
+                <div onClick={guardSaveExit} style={{
+                  flex:1, display:'flex', alignItems:'center', justifyContent:'center', gap:7,
+                  padding:'9px 0', borderRadius:10, cursor:guardSaving ? 'default' : 'pointer',
+                  border:'1px solid var(--accent)', color:'var(--accent)',
+                  fontSize:12, fontWeight:600, userSelect:'none', transition:'background 0.15s',
+                  opacity: guardSaving ? 0.6 : 1,
+                }}
+                  onMouseEnter={e => { if (!guardSaving) e.currentTarget.style.background='rgba(255,255,255,0.05)'; }}
+                  onMouseLeave={e => e.currentTarget.style.background='transparent'}>
+                  {guardSaving
+                    ? <div style={{width:11, height:11, border:'2px solid var(--accent)', borderTopColor:'transparent', borderRadius:'50%', animation:'spin 0.75s linear infinite'}}/>
+                    : null}
+                  {t('ed_save_exit')}
+                </div>
+                <div onClick={() => { setExitGuard(false); onClose(); }} style={{
+                  flex:1, textAlign:'center', padding:'9px 0', borderRadius:10, cursor:'pointer',
+                  background:'rgba(255,80,60,0.1)', color:'rgba(255,120,105,0.9)',
+                  fontSize:12, fontWeight:500, userSelect:'none', transition:'background 0.15s',
+                }}
+                  onMouseEnter={e => e.currentTarget.style.background='rgba(255,80,60,0.16)'}
+                  onMouseLeave={e => e.currentTarget.style.background='rgba(255,80,60,0.1)'}>
+                  {t('ed_discard')}
+                </div>
+                <div onClick={() => setExitGuard(false)} style={{
+                  padding:'9px 14px', borderRadius:10, cursor:'pointer',
+                  background:'rgba(255,255,255,0.045)', color:'rgba(255,255,255,0.5)',
+                  fontSize:12, fontWeight:500, userSelect:'none', transition:'background 0.15s',
+                }}
+                  onMouseEnter={e => e.currentTarget.style.background='rgba(255,255,255,0.08)'}
+                  onMouseLeave={e => e.currentTarget.style.background='rgba(255,255,255,0.045)'}>
+                  {t('cancel')}
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+});
+
 const SearchView = React.forwardRef(function SearchView({ visible, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, onResultsLoaded, onArtistClick, loadingTrackId, errorTrackId, hideDividers }, ref) {
   const T = useLang();
   const inputRef = useRef(null);
@@ -3042,7 +4017,7 @@ function App() {
     customTitles: {}, minDuration: 30, soundcloudAuth: null,
     sourceMode: 'local', discordRpc: true,
     discordTimestamp: 'progress', discordPause: 'show', discordCover: true,
-    accentMode: 'default',
+    accentMode: 'color', accentPreset: 'default',
   });
   const [sort,         setSort]         = useState('added');
   const [editingTitle, setEditingTitle] = useState(false);
@@ -3055,6 +4030,13 @@ function App() {
   const [toastExiting,  setToastExiting]  = useState(false);
   const [trackMenu,     setTrackMenu]     = useState(null);
   const [stationActive, setStationActive] = useState(null);
+  /* плейлисты: список во вкладке + активный (паттерн станции) + редактор */
+  const [playlistActive, setPlaylistActive] = useState(null);
+  const [playlists, setPlaylists]               = useState(null);
+  const [playlistsLoading, setPlaylistsLoading] = useState(false);
+  const [playlistsError,   setPlaylistsError]   = useState(null);
+  const [creatingPlaylist, setCreatingPlaylist] = useState(false);
+  const [editingPlaylist,  setEditingPlaylist]  = useState(null); /* { playlist, from } */
   const [accentRGB,     setAccentRGB]     = useState(null);
   const [loadingTrackId, setLoadingTrackId] = useState(null);
   const [errorTrackId,   setErrorTrackId]   = useState(null);
@@ -3119,6 +4101,8 @@ function App() {
   const searchRef         = useRef('');
   const searchQueueRef    = useRef(null);
   const stationQueueRef   = useRef(null);
+  const playlistQueueRef  = useRef(null);
+  const playlistsRef      = useRef(null);
   const scShuffleOrderRef = useRef([]);
   const scShuffleIdxRef   = useRef(-1);
   const scPlayingTrackRef = useRef(null);
@@ -3143,7 +4127,8 @@ function App() {
     return () => { cancelled = true; };
   }, [track?.id, track?.coverUrl]);
 
-  // computed app-wide accent: cover-derived when mode='cover', otherwise preset
+  // computed app-wide accent: cover-derived when mode='cover', preset when 'color',
+  // дефолтный серый когда 'off' (и пока у cover-режима нет извлечённого цвета)
   const appAccent = useMemo(() => {
     if (settings.accentMode === 'cover' && accentRGB) {
       // boost too-dark colors so var(--accent) text stays readable
@@ -3157,8 +4142,22 @@ function App() {
       }
       return { r, g, b };
     }
-    return ACCENT_PRESETS[settings.accentMode] || ACCENT_PRESETS.default;
-  }, [settings.accentMode, accentRGB]);
+    if (settings.accentMode === 'color') {
+      return ACCENT_PRESETS[settings.accentPreset] || ACCENT_PRESETS.default;
+    }
+    return ACCENT_PRESETS.default;
+  }, [settings.accentMode, settings.accentPreset, accentRGB]);
+
+  /* режим «Выкл»: глушим все свечения — body-класс для css-правил,
+     --glow-opacity для inline-глоу, LIVE_GLOW для canvas; подписчики
+     акцента дёргаются чтобы слайдер громкости перерисовался */
+  useEffect(() => {
+    const off = settings.accentMode === 'off';
+    document.body.classList.toggle('glow-off', off);
+    document.documentElement.style.setProperty('--glow-opacity', off ? '0' : '1');
+    LIVE_GLOW.on = !off;
+    _accentSubs.forEach(fn => fn());
+  }, [settings.accentMode]);
 
   // push accent to CSS var so var(--accent) works everywhere
   // animated lerp: акцент плавно перетекает от текущего цвета к целевому
@@ -3200,12 +4199,12 @@ function App() {
     document.body.classList.toggle('in-player', inPlayer);
     const tb = document.getElementById('titlebar');
     if (!tb) return;
-    if (inPlayer) {
+    if (inPlayer && settings.accentMode !== 'off') {
       tb.style.background = 'linear-gradient(90deg, var(--bg) 0%, rgba(var(--accent-rgb),0.09) 50%, var(--bg) 100%)';
     } else {
       tb.style.background = '';
     }
-  }, [view, playerVisible]);
+  }, [view, playerVisible, settings.accentMode]);
 
   /* загружаем настройки и треки при старте */
   useEffect(() => {
@@ -3213,7 +4212,17 @@ function App() {
       try {
         const saved = await window.electronAPI.loadSettings();
         if (saved && Object.keys(saved).length) {
-          setSettings(s => ({ ...s, ...saved }));
+          setSettings(s => {
+            const m = { ...s, ...saved };
+            /* миграция старого accentMode ('default'|'lavender'|...|'cover')
+               на новую пару accentMode ('off'|'color'|'cover') + accentPreset */
+            if (!['off','color','cover'].includes(m.accentMode)) {
+              if (m.accentMode !== 'cover' && ACCENT_PRESETS[m.accentMode]) m.accentPreset = m.accentMode;
+              m.accentMode = (saved.accentMode === 'cover') ? 'cover' : 'color';
+            }
+            if (!ACCENT_PRESETS[m.accentPreset]) m.accentPreset = 'default';
+            return m;
+          });
           if (saved.musicFolder) {
             const local = await window.electronAPI.scanMusicFolder(saved.musicFolder);
             if (local.length > 0) {
@@ -3414,7 +4423,7 @@ function App() {
     if (shuffle) {
       const cur = scPlayingTrackRef.current;
       if (cur) {
-        const list = stationQueueRef.current || searchQueueRef.current || (searchRef.current ? filteredScRef.current : scTracksRef.current);
+        const list = stationQueueRef.current || playlistQueueRef.current || searchQueueRef.current || (searchRef.current ? filteredScRef.current : scTracksRef.current);
         scShuffleOrderRef.current = buildScShuffle(list, cur.id);
         scShuffleIdxRef.current = 0;
       }
@@ -3431,7 +4440,7 @@ function App() {
       progressRef.current = 0; return;
     }
     if (scPlayingTrack) {
-      const list = stationQueueRef.current || searchQueueRef.current || (searchRef.current ? filteredScRef.current : scTracksRef.current);
+      const list = stationQueueRef.current || playlistQueueRef.current || searchQueueRef.current || (searchRef.current ? filteredScRef.current : scTracksRef.current);
       if (shuffle) {
         const remaining = scShuffleOrderRef.current.length - 1 - scShuffleIdxRef.current;
         if (searchQueueRef.current && remaining <= 3) searchViewRef.current?.loadMore();
@@ -3481,7 +4490,7 @@ function App() {
       return;
     }
     if (scPlayingTrack) {
-      const list = stationQueueRef.current || searchQueueRef.current || (searchRef.current ? filteredScRef.current : scTracksRef.current);
+      const list = stationQueueRef.current || playlistQueueRef.current || searchQueueRef.current || (searchRef.current ? filteredScRef.current : scTracksRef.current);
       if (shuffle && scShuffleOrderRef.current.length > 0) {
         const pi = scShuffleIdxRef.current - 1;
         if (pi >= 0) {
@@ -3781,6 +4790,199 @@ function App() {
   const handleToggleSource = useCallback(() => setSettings(s => ({ ...s, sourceMode: s.sourceMode === 'sc' ? 'local' : 'sc' })), []);
   const sourceMode = (settings.soundcloudAuth && settings.sourceMode === 'sc') ? 'sc' : 'local';
 
+  /* ── плейлисты ─────────────────────────────────────────────────────────── */
+
+  /* лайкнутые + свои плейлисты; свой перекрывает лайкнутый, свои сверху.
+     Свои: users/{id}/playlists (публичный, проверенный), фолбэк /me/playlists.
+     Лайкнутые: users/{id}/playlist_likes, фолбэк — смешанные users/{id}/likes
+     (там item.playlist — этот эндпоинт точно работает, лайки треков уже с него).
+     Ошибки не глотаем: при полном фейле показываем в интерфейсе + console для
+     девтулзов, playlistsRef не заполняем — «повторить» сработает */
+  const loadPlaylists = useCallback(async (auth, force = false) => {
+    if (!auth) return;
+    if (!force && playlistsRef.current) return;
+    setPlaylistsLoading(true);
+    setPlaylistsError(null);
+    try {
+      let userId = auth.userId;
+      if (!userId) {
+        const me = await window.electronAPI.scFetch('https://api-v2.soundcloud.com/me', auth.token, auth.clientId);
+        if (me.data?.id) userId = me.data.id;
+        else {
+          setPlaylistsError(`${STRINGS[langRef.current]?.userid_err ?? 'user id'}: ${me.error ?? '—'}`);
+          return;
+        }
+      }
+      const auth2 = { ...auth, userId };
+      const fetchAll = async (startUrl, extract, maxPages = 10) => {
+        const out = [];
+        let url = startUrl;
+        let pages = 0;
+        let lastErr = null;
+        while (url && pages < maxPages) {
+          const res = await window.electronAPI.scFetch(url, auth.token, auth.clientId);
+          if (res.error) { lastErr = res.error; break; }
+          const col = res.data?.collection;
+          if (!col) break;
+          for (const item of col) {
+            const p = extract(item);
+            if (p?.id) out.push(p);
+          }
+          url = res.data.next_href || null;
+          pages++;
+        }
+        return { items: out, error: lastErr };
+      };
+      /* свои плейлисты */
+      let own = await fetchAll(
+        `https://api-v2.soundcloud.com/users/${userId}/playlists?limit=50`, p => p);
+      if (own.error) {
+        console.error('[seWer] users/playlists →', own.error);
+        const viaMe = await fetchAll('https://api-v2.soundcloud.com/me/playlists?limit=50', p => p);
+        if (!viaMe.error) own = viaMe;
+      }
+      /* лайкнутые плейлисты (+ фолбэк через общий список лайков) */
+      let liked = await fetchAll(
+        `https://api-v2.soundcloud.com/users/${userId}/playlist_likes?limit=50`,
+        it => it?.playlist ?? it);
+      if (liked.error || liked.items.length === 0) {
+        const mixed = await fetchAll(
+          `https://api-v2.soundcloud.com/users/${userId}/likes?limit=200`,
+          it => it?.playlist ?? null, 20);
+        if (mixed.error || mixed.items.length === 0) {
+          if (liked.error) console.error('[seWer] playlist_likes →', liked.error, '| likes →', mixed.error);
+          if (liked.error && mixed.error) liked = { items: [], error: liked.error };
+        } else {
+          liked = mixed;
+        }
+      }
+      if (own.error && (liked.error || liked.items.length === 0)) {
+        setPlaylistsError(`${STRINGS[langRef.current]?.api_err ?? 'api error'}: ${own.error}`);
+        return;
+      }
+      const map = new Map();
+      for (const p of liked.items) map.set(p.id, mapScPlaylist(p, auth2));
+      for (const p of own.items) map.set(p.id, mapScPlaylist(p, auth2));
+      const list = [...map.values()].sort((a, b) => (b.isOwn ? 1 : 0) - (a.isOwn ? 1 : 0));
+      playlistsRef.current = list;
+      setPlaylists(list);
+    } catch (e) {
+      setPlaylistsError(String(e));
+      console.error('[seWer] loadPlaylists:', e);
+    } finally {
+      setPlaylistsLoading(false);
+    }
+  }, []);
+
+  /* вход в плейлист: догружаем треки при необходимости, очередь = плейлист,
+     станция/поиск выключаются, плеер + автоплей первого трека */
+  const handleOpenPlaylist = useCallback(async (pl) => {
+    const auth = scAuthRef.current;
+    if (!auth) return;
+    let tracks = pl.tracks || [];
+    if (tracks.length < (pl.trackCount || 0)) {
+      const full = await fetchPlaylistTracks(pl.id, auth, STRINGS[langRef.current]?.no_title ?? 'Без названия');
+      if (full.length) { /* пустой результат не затирает встроенные */
+        tracks = full;
+        const withTracks = { ...pl, tracks };
+        playlistsRef.current = (playlistsRef.current || []).map(p => p.id === pl.id ? withTracks : p);
+        setPlaylists(playlistsRef.current);
+      }
+    }
+    playlistQueueRef.current = tracks;
+    stationQueueRef.current = null;
+    searchQueueRef.current = null;
+    setStationActive(null);
+    setPlaylistActive({ playlist: pl, tracks });
+    setPlayerVisible(true);
+    setView('player');
+    setNavActive('library');
+    if (tracks.length) handleScTrackClick(tracks[0], -1);
+  }, []);
+
+  const handleExitPlaylist = useCallback(() => {
+    playlistQueueRef.current = null;
+    setPlaylistActive(null);
+  }, []);
+
+  /* создать пустой свой плейлист → сразу в редактор */
+  const handleCreatePlaylist = useCallback(async () => {
+    const auth = scAuthRef.current;
+    if (!auth || creatingPlaylist) return;
+    setCreatingPlaylist(true);
+    try {
+      const res = await window.electronAPI.scFetch(
+        'https://api-v2.soundcloud.com/playlists',
+        auth.token, auth.clientId, 'POST',
+        { playlist: { title: STRINGS[langRef.current]?.pl_new_title ?? 'Новый плейлист', tracks: [], sharing: 'private' } }
+      );
+      if (res.error || !res.data?.id) { showToast(t('pl_create_err')); return; }
+      const pl = { ...mapScPlaylist(res.data, auth), isOwn: true }; /* создали — значит наше */
+      playlistsRef.current = [pl, ...(playlistsRef.current || [])];
+      setPlaylists(playlistsRef.current);
+      setEditingPlaylist({ playlist: pl, from: 'playlists' });
+      setView('playlistEditor');
+    } catch {
+      showToast(t('pl_create_err'));
+    } finally {
+      setCreatingPlaylist(false);
+    }
+  }, [creatingPlaylist, t]);
+
+  const handleOpenPlEditor = useCallback((pl, from) => {
+    if (!pl.isOwn) return;
+    if (from === 'player') setPlayerVisible(false);
+    setEditingPlaylist({ playlist: pl, from });
+    setView('playlistEditor');
+  }, []);
+
+  const handleClosePlEditor = useCallback(() => {
+    const from = editingPlaylist?.from;
+    setEditingPlaylist(null);
+    if (from === 'player') {
+      setPlayerVisible(true);
+      setView('player');
+      setNavActive('library');
+    } else {
+      setView('playlists');
+    }
+  }, [editingPlaylist]);
+
+  /* колбэк автосейва редактора: обновляем список плейлистов и, если редактируем
+     активный плейлист, — живо обновляем его очередь и сайдбар */
+  const handlePlaylistUpdated = useCallback((id, newTracks) => {
+    playlistsRef.current = (playlistsRef.current || []).map(p =>
+      p.id === id ? { ...p, tracks: newTracks, trackCount: newTracks.length } : p);
+    setPlaylists(playlistsRef.current);
+    setPlaylistActive(pa => {
+      if (!pa || pa.playlist.id !== id) return pa;
+      playlistQueueRef.current = newTracks;
+      return { ...pa, tracks: newTracks };
+    });
+  }, []);
+
+  /* удаление плейлиста: DELETE /playlists/{id}, вычищаем из списка/режима
+     прослушивания, закрываем редактор; возвращает true/false для редактора */
+  const handleDeletePlaylist = useCallback(async (pl) => {
+    const auth = scAuthRef.current;
+    if (!auth || !pl?.id) return false;
+    const res = await window.electronAPI.scFetch(
+      `https://api-v2.soundcloud.com/playlists/${pl.id}`,
+      auth.token, auth.clientId, 'DELETE'
+    );
+    if (res.error) { showToast(t('pl_del_err')); return false; }
+    playlistsRef.current = (playlistsRef.current || []).filter(p => p.id !== pl.id);
+    setPlaylists(playlistsRef.current);
+    setPlaylistActive(pa => {
+      if (!pa || pa.playlist.id !== pl.id) return pa;
+      playlistQueueRef.current = null;
+      return null; /* удалили активный плейлист — выходим из его режима */
+    });
+    setEditingPlaylist(null);
+    setView('playlists');
+    return true;
+  }, [t]);
+
   const handleOpenArtist = useCallback((artist) => {
     prevViewRef.current = view;
     setArtistView(artist);
@@ -3804,11 +5006,14 @@ function App() {
       if (e.button === 3) {
         if (view === 'artist') {
           handleCloseArtist();
+        } else if (view === 'playlistEditor') {
+          if (plEditorRef.current) plEditorRef.current.requestClose();
+          else handleClosePlEditor();
         } else if (view === 'player') {
           setPlayerVisible(false);
           setHomeVisible(true);
           setView('home');
-        } else if (view === 'settings' || view === 'search') {
+        } else if (view === 'settings' || view === 'search' || view === 'playlists') {
           setHomeVisible(true);
           setView('home');
         }
@@ -3823,7 +5028,16 @@ function App() {
     }
     window.addEventListener('mouseup', onMouseUp);
     return () => window.removeEventListener('mouseup', onMouseUp);
-  }, [view, tracks, trackIdx, handleCloseArtist]);
+  }, [view, tracks, trackIdx, handleCloseArtist, handleClosePlEditor]);
+
+  /* грузим плейлисты при заходе во вкладку; при ошибке НЕ перезагружаем
+     автоматически (иначе петля запросов) — только по клику «повторить» */
+  useEffect(() => {
+    if (view === 'playlists' && settings.soundcloudAuth
+        && !playlists && !playlistsError && !playlistsLoading) {
+      loadPlaylists(settings.soundcloudAuth);
+    }
+  }, [view, settings.soundcloudAuth, playlists, playlistsError, playlistsLoading, loadPlaylists]);
 
   const toastTimerRef = useRef(null);
   function handleSearchResultsLoaded(newTracks) {
@@ -3876,7 +5090,7 @@ function App() {
     if (!auth) { setLoadingTrackId(null); return; }
 
     if (!autoSkip && shuffle) {
-      const list = stationQueueRef.current || searchQueueRef.current || (searchRef.current ? filteredScRef.current : scTracksRef.current);
+      const list = stationQueueRef.current || playlistQueueRef.current || searchQueueRef.current || (searchRef.current ? filteredScRef.current : scTracksRef.current);
       scShuffleOrderRef.current = buildScShuffle(list, scTrack.id);
       scShuffleIdxRef.current = 0;
     }
@@ -3888,7 +5102,7 @@ function App() {
     };
 
     const skipInDirection = () => {
-      const list = stationQueueRef.current || searchQueueRef.current || (searchRef.current ? filteredScRef.current : scTracksRef.current);
+      const list = stationQueueRef.current || playlistQueueRef.current || searchQueueRef.current || (searchRef.current ? filteredScRef.current : scTracksRef.current);
       if (shuffle) {
         const order = scShuffleOrderRef.current;
         const ni = scShuffleIdxRef.current + direction;
@@ -4057,26 +5271,29 @@ function App() {
     const auth = scAuthRef.current;
     if (!auth) return;
     const already = scTracksRef.current.some(t => t.id === track.id);
-    if (already) {
-      const res = await window.electronAPI.scFetch(
-        `https://api-v2.soundcloud.com/users/${auth.userId}/track_likes/${track.id}`,
-        auth.token, auth.clientId, 'DELETE'
-      );
-      if (res.error) { showToast(t('unlike_err')); return; }
-      setScTracks(prev => prev.filter(t => t.id !== track.id));
-      scCacheRef.current = scCacheRef.current.filter(t => t.id !== track.id);
-      scCacheMapRef.current.delete(track.id);
-    } else {
-      const res = await window.electronAPI.scFetch(
-        `https://api-v2.soundcloud.com/users/${auth.userId}/track_likes/${track.id}`,
-        auth.token, auth.clientId, 'PUT'
-      );
-      if (res.error) { showToast(t('like_err')); return; }
-      setScTracks(prev => [track, ...prev]);
-      scCacheRef.current = [track, ...scCacheRef.current];
-      scCacheMapRef.current.set(track.id, track);
+    /* оптимистично: сердце заливается сразу, при ошибке API откатываем */
+    const apply = (liked) => {
+      if (liked) {
+        setScTracks(prev => [track, ...prev]);
+        scCacheRef.current = [track, ...scCacheRef.current];
+        scCacheMapRef.current.set(track.id, track);
+      } else {
+        setScTracks(prev => prev.filter(t => t.id !== track.id));
+        scCacheRef.current = scCacheRef.current.filter(t => t.id !== track.id);
+        scCacheMapRef.current.delete(track.id);
+      }
+      window.electronAPI.scSaveLikesCache(scCacheRef.current);
+    };
+    apply(!already);
+    const res = await window.electronAPI.scFetch(
+      `https://api-v2.soundcloud.com/users/${auth.userId}/track_likes/${track.id}`,
+      auth.token, auth.clientId, already ? 'DELETE' : 'PUT'
+    );
+    if (res.error) {
+      apply(already);
+      showToast((res.error === 403 || res.error === 429) ? t('sc_blocked')
+        : already ? t('unlike_err') : t('like_err'));
     }
-    window.electronAPI.scSaveLikesCache(scCacheRef.current);
   }, []);
 
   const handleFollow = useCallback(async (userId, currentlyFollowing) => {
@@ -4086,7 +5303,8 @@ function App() {
     const method = currentlyFollowing ? 'DELETE' : 'POST';
     const res = await window.electronAPI.scFetch(url, auth.token, auth.clientId, method);
     if (res.error) {
-      showToast(currentlyFollowing ? t('unfollow_err') : t('follow_err'));
+      showToast((res.error === 403 || res.error === 429) ? t('sc_blocked')
+        : currentlyFollowing ? t('unfollow_err') : t('follow_err'));
       return null;
     }
     if (currentlyFollowing) followedIdsRef.current.delete(userId);
@@ -4106,7 +5324,9 @@ function App() {
       if (items.length === 0) { showToast(t('station_err')); return; }
       const mapped = items.map(it => mapScTrack(it, STRINGS[langRef.current]?.no_title ?? 'Без названия'));
       stationQueueRef.current = mapped;
+      playlistQueueRef.current = null;
       searchQueueRef.current = null;
+      setPlaylistActive(null);
       setStationActive({ origTrack: track, tracks: mapped });
       setPlayerVisible(true);
       setView('player');
@@ -4198,7 +5418,14 @@ function App() {
   };
 
   const [settingsSec, setSettingsSec] = useState('playback');
+  const plEditorRef = useRef(null);
   const handleNav = async (id) => {
+    /* из редактора плейлиста выходим только через его гарды — если есть
+       несохранённые изменения, редактор сам покажет предупреждение */
+    if (view === 'playlistEditor' && editingPlaylist) {
+      if (plEditorRef.current) plEditorRef.current.requestClose();
+      return;
+    }
     setNavActive(id);
     if (id === 'home') {
       if (view === 'player') {
@@ -4230,7 +5457,7 @@ function App() {
         setPlayerVisible(false);
         setHomeVisible(true);
         setView('home');
-      } else if (view === 'settings' || view === 'search' || view === 'artist') {
+      } else if (view === 'settings' || view === 'search' || view === 'artist' || view === 'playlists' || view === 'playlistEditor') {
         setHomeVisible(true);
         setView('home');
       } else if (view === 'home') {
@@ -4241,6 +5468,10 @@ function App() {
       if (view === 'home') setHomeVisible(false);
       if (view === 'player') setPlayerVisible(false);
       setView('search');
+    } else if (id === 'playlists') {
+      if (view === 'home') setHomeVisible(false);
+      if (view === 'player') setPlayerVisible(false);
+      setView('playlists');
     } else if (id === 'settings') {
       if (view === 'player') setPlayerVisible(false);
       if (view === 'home') setHomeVisible(false);
@@ -4277,6 +5508,13 @@ function App() {
     } else if (view === 'artist') {
       setPlayerVisible(true);
       setView('player');
+    } else if (view === 'playlists') {
+      setPlayerVisible(true);
+      setView('player');
+    } else if (view === 'playlistEditor') {
+      setPlayerVisible(true);
+      setView('player');
+      setNavActive('library');
     } else if (view === 'player') {
       setLibScrollTargetId(track.id);
       setLibScrollTrigger(v => v + 1);
@@ -4478,36 +5716,142 @@ function App() {
             : 'opacity 0.14s ease, transform 0.18s ease, width 0.44s cubic-bezier(0.4,0,0.2,1)',
         }}>
           <div style={{width: 260, flexShrink:0, height:'100%', display:'flex', flexDirection:'column'}}>
+          <AnimatePresence initial={false} mode="wait">
           {stationActive ? (
-            <div style={{padding:'12px 14px 10px', flexShrink:0, display:'flex', flexDirection:'column', alignItems:'center'}}>
+            <motion.div key="station-chip"
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
+              style={{padding:'10px 10px 8px', flexShrink:0}}>
+              {/* контекст-чип станции: обложка + мини-эквалайзер + выход */}
               <div style={{
-                fontSize:10, letterSpacing:'0.13em', textTransform:'uppercase',
-                color:'rgba(255,255,255,0.32)', fontWeight:600, marginBottom:4,
-                textAlign:'center',
-              }}>{t('station_for')}</div>
+                display:'flex', alignItems:'center', gap:9,
+                padding:'7px 8px', borderRadius:11,
+                background:'rgba(255,255,255,0.04)',
+                border:'1px solid rgba(255,255,255,0.045)',
+              }}>
+                {stationActive.origTrack.coverUrl ? (
+                  <img src={stationActive.origTrack.coverUrl} style={{
+                    width:26, height:26, borderRadius:7, objectFit:'cover',
+                    flexShrink:0, display:'block'}}/>
+                ) : (
+                  <div style={{
+                    width:26, height:26, borderRadius:7, background:'rgba(255,255,255,0.06)', flexShrink:0,
+                    display:'flex', alignItems:'center', justifyContent:'center'}}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.4)"
+                      strokeWidth="2" strokeLinecap="round">
+                      <circle cx="12" cy="12" r="2"/>
+                      <path d="M16.2 7.8a6 6 0 0 1 0 8.4M7.8 16.2a6 6 0 0 1 0-8.4M19.1 4.9a10 10 0 0 1 0 14.2M4.9 19.1a10 10 0 0 1 0-14.2"/>
+                    </svg>
+                  </div>
+                )}
+                <div style={{flex:1, minWidth:0}}>
+                  <div style={{display:'flex', alignItems:'center', gap:6, marginBottom:1}}>
+                    <span style={{fontSize:9.5, letterSpacing:'0.13em', textTransform:'uppercase',
+                      color:'rgba(255,255,255,0.34)', fontWeight:600}}>
+                      {t('station_label')}
+                    </span>
+                    <span className="st-eq" style={{display:'inline-flex', alignItems:'flex-end', gap:1.5, height:7}}>
+                      <i/><i/><i/>
+                    </span>
+                  </div>
+                  <div style={{
+                    fontSize:12, color:'rgba(255,255,255,0.78)', fontWeight:500,
+                    overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+                  }}>{stationActive.origTrack.title}</div>
+                </div>
+                <div onClick={handleExitStation} title={t('station_exit')} style={{
+                  width:26, height:26, borderRadius:8, flexShrink:0,
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  color:'rgba(255,255,255,0.32)', cursor:'pointer',
+                  transition:'background 0.15s, color 0.15s',
+                }}
+                  onMouseEnter={e => { e.currentTarget.style.background='rgba(255,255,255,0.07)'; e.currentTarget.style.color='rgba(255,255,255,0.75)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background='transparent'; e.currentTarget.style.color='rgba(255,255,255,0.32)'; }}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    strokeWidth="2.4" strokeLinecap="round">
+                    <line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/>
+                  </svg>
+                </div>
+              </div>
+            </motion.div>
+          ) : playlistActive ? (
+            <motion.div key="playlist-chip"
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
+              style={{padding:'10px 10px 8px', flexShrink:0}}>
+              {/* контекст-чип плейлиста: обложка + счётчик + выход/редактор */}
               <div style={{
-                fontSize:13, color:'rgba(255,255,255,0.88)', fontWeight:500,
-                overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
-                maxWidth:'100%', textAlign:'center',
-              }}>{stationActive.origTrack.title}</div>
-              <div onClick={handleExitStation} style={{
-                marginTop:9,
-                padding:'4px 14px',
-                fontSize:10.5, fontWeight:500, letterSpacing:'0.02em',
-                color:'rgba(255,255,255,0.55)',
-                background:'rgba(255,255,255,0.05)',
-                border:'1px solid rgba(255,255,255,0.06)',
-                borderRadius:999,
-                cursor:'pointer',
-                transition:'background 0.15s, color 0.15s, border-color 0.15s',
-                userSelect:'none',
-              }}
-                onMouseEnter={e => { e.currentTarget.style.background='rgba(255,255,255,0.09)'; e.currentTarget.style.color='rgba(255,255,255,0.82)'; e.currentTarget.style.borderColor='rgba(255,255,255,0.1)'; }}
-                onMouseLeave={e => { e.currentTarget.style.background='rgba(255,255,255,0.05)'; e.currentTarget.style.color='rgba(255,255,255,0.55)'; e.currentTarget.style.borderColor='rgba(255,255,255,0.06)'; }}
-              >{t('station_exit')}</div>
-            </div>
+                display:'flex', alignItems:'center', gap:9,
+                padding:'7px 8px', borderRadius:11,
+                background:'rgba(255,255,255,0.04)',
+                border:'1px solid rgba(255,255,255,0.045)',
+              }}>
+                {playlistActive.playlist.coverUrl ? (
+                  <img src={playlistActive.playlist.coverUrl} style={{
+                    width:26, height:26, borderRadius:7, objectFit:'cover',
+                    flexShrink:0, display:'block'}}/>
+                ) : (
+                  <div style={{
+                    width:26, height:26, borderRadius:7, background:'rgba(255,255,255,0.06)', flexShrink:0,
+                    display:'flex', alignItems:'center', justifyContent:'center'}}>
+                    <img src="../assets/note.png" style={{width:11, height:11, filter:'brightness(0) invert(1)', opacity:0.35}}/>
+                  </div>
+                )}
+                <div style={{flex:1, minWidth:0}}>
+                  <div style={{display:'flex', alignItems:'center', gap:5, marginBottom:1}}>
+                    <span style={{fontSize:9.5, letterSpacing:'0.13em', textTransform:'uppercase',
+                      color:'rgba(255,255,255,0.34)', fontWeight:600}}>
+                      {t('nav_playlists')}
+                    </span>
+                    <span style={{fontSize:9.5, color:'rgba(255,255,255,0.24)', fontVariantNumeric:'tabular-nums'}}>
+                      {playlistActive.tracks.length}
+                    </span>
+                  </div>
+                  <div style={{
+                    fontSize:12, color:'rgba(255,255,255,0.78)', fontWeight:500,
+                    overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+                  }}>{playlistActive.playlist.title}</div>
+                </div>
+                {playlistActive.playlist.isOwn && (
+                  <div onClick={() => handleOpenPlEditor(playlistActive.playlist, 'player')}
+                    title={t('pl_edit')} style={{
+                    width:26, height:26, borderRadius:8, flexShrink:0,
+                    display:'flex', alignItems:'center', justifyContent:'center',
+                    color:'rgba(255,255,255,0.32)', cursor:'pointer',
+                    transition:'background 0.15s, color 0.15s',
+                  }}
+                    onMouseEnter={e => { e.currentTarget.style.background='rgba(255,255,255,0.07)'; e.currentTarget.style.color='rgba(255,255,255,0.75)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background='transparent'; e.currentTarget.style.color='rgba(255,255,255,0.32)'; }}>
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/>
+                    </svg>
+                  </div>
+                )}
+                <div onClick={handleExitPlaylist} title={t('back')} style={{
+                  width:26, height:26, borderRadius:8, flexShrink:0,
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  color:'rgba(255,255,255,0.32)', cursor:'pointer',
+                  transition:'background 0.15s, color 0.15s',
+                }}
+                  onMouseEnter={e => { e.currentTarget.style.background='rgba(255,255,255,0.07)'; e.currentTarget.style.color='rgba(255,255,255,0.75)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background='transparent'; e.currentTarget.style.color='rgba(255,255,255,0.32)'; }}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    strokeWidth="2.4" strokeLinecap="round">
+                    <line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/>
+                  </svg>
+                </div>
+              </div>
+            </motion.div>
           ) : (
-            <div style={{padding:'12px 10px 8px', flexShrink:0}}>
+            <motion.div key="lib-search"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              transition={{ duration: 0.16 }}
+              style={{padding:'12px 10px 8px', flexShrink:0}}>
               <div style={{
                 position:'relative',
                 background: searchFocused ? 'rgba(255,255,255,0.065)' : 'rgba(255,255,255,0.04)',
@@ -4536,15 +5880,21 @@ function App() {
                   }}>×</div>
                 )}
               </div>
-            </div>
+            </motion.div>
           )}
+          </AnimatePresence>
           <VirtualTrackList
-            items={stationActive ? stationActive.tracks : activeList}
-            activeId={stationActive ? (scPlayingTrack ? scPlayingTrack.id : null) : activeListPlayingId}
+            items={stationActive ? stationActive.tracks : playlistActive ? playlistActive.tracks : activeList}
+            activeId={stationActive || playlistActive ? (scPlayingTrack ? scPlayingTrack.id : null) : activeListPlayingId}
             loadingId={loadingTrackId}
             errorId={errorTrackId}
             onClickItem={t => {
               if (stationActive) {
+                handleScTrackClick(t, -1);
+                return;
+              }
+              if (playlistActive) {
+                searchQueueRef.current = null;
                 handleScTrackClick(t, -1);
                 return;
               }
@@ -4666,7 +6016,7 @@ function App() {
                 position:'relative',
               }}>
                 {/* ambient glow blob — uses app accent (cover-derived or preset) */}
-                <AmbientGlow visible={!((hero && !heroExiting) || reverseHero)}/>
+                <AmbientGlow off={settings.accentMode==='off'} visible={!((hero && !heroExiting) || reverseHero)}/>
                 <div id="player-album-art" ref={playerArtRef}
                   style={{opacity: ((hero && !heroExiting) || reverseHero) ? 0 : 1, position:'relative', zIndex:1}}>
                   <div ref={artEntranceRef}>
@@ -4728,6 +6078,17 @@ function App() {
         )}
 
         <SettingsView settings={settings} onSettings={setSettings} visible={view==='settings'} onScanTracks={handleScanTracks} onClearFolder={handleClearFolder} onClearCoversCache={handleClearCoversCache} onClearLikesCache={handleClearLikesCache} appAccent={appAccent} scAuth={settings.soundcloudAuth||null} onScLogin={handleScLogin} onScLogout={handleScLogout} sec={settingsSec} setSec={setSettingsSec}/>
+        <PlaylistsView visible={view==='playlists'} scAuth={settings.soundcloudAuth||null}
+          playlists={playlists} loading={playlistsLoading} error={playlistsError} creating={creatingPlaylist}
+          onOpen={handleOpenPlaylist} onEdit={pl => handleOpenPlEditor(pl, 'playlists')}
+          onCreate={handleCreatePlaylist}
+          onRetry={() => loadPlaylists(settings.soundcloudAuth, true)}
+          onLogin={() => { setSettingsSec('account'); handleNav('settings'); }}/>
+        <PlaylistEditor ref={plEditorRef} visible={view==='playlistEditor' && !!editingPlaylist}
+          playlist={editingPlaylist?.playlist} scAuth={settings.soundcloudAuth||null}
+          onClose={handleClosePlEditor} onUpdated={handlePlaylistUpdated} onDelete={handleDeletePlaylist}
+          fallbackTracks={scTracks} onPlayTrack={tr => handleScTrackClick(tr, -1)}
+          loadingTrackId={loadingTrackId} errorTrackId={errorTrackId}/>
         <SearchView ref={searchViewRef} visible={view==='search'} scAuth={settings.soundcloudAuth||null}
           likedIds={likedIds} onLike={handleLike}
           onPlayTrack={(t, queue) => { searchQueueRef.current = queue || null; handleScTrackClick(t, -1); }}

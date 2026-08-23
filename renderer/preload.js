@@ -13,7 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onMediaNext:       (cb) => ipcRenderer.on('media-next',       () => cb()),
   onMediaPrev:       (cb) => ipcRenderer.on('media-prev',       () => cb()),
   scLogin:        () => ipcRenderer.invoke('sc-login'),
-  scFetch:        (url, token, clientId, method) => ipcRenderer.invoke('sc-fetch', url, token, clientId, method),
+  scFetch:        (url, token, clientId, method, body, contentType) => ipcRenderer.invoke('sc-fetch', url, token, clientId, method, body, contentType),
   scCheckCovers:  (ids) => ipcRenderer.invoke('sc-check-covers', ids),
   scCacheCover:   (id, url) => ipcRenderer.invoke('sc-cache-cover', id, url),
   scClearCoversCache: () => ipcRenderer.invoke('sc-clear-covers-cache'),
