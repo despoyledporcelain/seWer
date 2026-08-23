@@ -22,7 +22,7 @@
 
 **live accent store** (module-level): `LIVE_ACCENT {r,g,b}` + `onAccentChange(fn)` подписка. App обновляет `LIVE_ACCENT` и звенит подписчикам каждый кадр анимации. canvas-компоненты (`ThinVolumeSlider`) подписываются и перерисовываются в такт.
 
-**анимации:** `breathe`, `spin`, `fadeInUp`, `fadeOutDown`, `artEntrance` (легаси — частично заменены Motion-компонентами)
+**анимации:** `breathe`, `spin`, `fadeInUp`, `fadeOutDown`, `artEntrance` (легаси — частично заменены Motion-компонентами), `likePop`+`likeGlow` (пружинный pop + accent-glow при лайке, классы `.like-pop .like-glow`, перезапуск через remount по key), `shimmer` (скелетоны, класс `.skel`, псевдоэлемент-свип, стаггер через `--skel-delay`)
 
 **скроллбары:** `.scroll-thin` (8px зона, 2px визуально), `.scroll-home` (отступы под хедер сетки)
 
@@ -93,7 +93,10 @@ useLang()      — хук: возвращает t(key), читает LangContext
 `{text, style, onClick, maxWidth?}`. ellipsis + tooltip. `useLayoutEffect` проверяет overflow. tooltip → portal-like absolute div с `fadeInUp 0.15s`. центрирование через CSS `translate: -50% 0` (не transform — конфликтовал с keyframes).
 
 ### `PlayerLikeBtn`
-`{liked, onLike, style?}`. сердечко 19px в плеере (для SC треков). scale 1.18 при hover.
+`{liked, onLike, style?}`. сердечко 19px в плеере (для SC треков). scale 1.18 при hover. при лайке — `likePop`+`likeGlow` (remount по `popKey`).
+
+### `LikeHeart`
+`{liked, size, className?, style?}`. сердце-маска по `heart0/1.png`, заливка `currentColor` (лайкнутое — `var(--accent)`). используется в PlayerLikeBtn, HomeCard, SearchTrackRow — красится в живой акцент без CSS-фильтров.
 
 ### `ProgressBar` (бывш. WaveProgressBar)
 `{progressRef, total, onSeek, isPlaying, visible}`.
@@ -134,6 +137,8 @@ ROW_H=50. `content-visibility:auto`. абсолютный пилл с transition
 
 ### `HomeCard`
 `{track, onSelect, artRef, artHidden, isLiked, onLike}`. **motion.div** с entry/exit spring (380/32/0.6): `scale 0.92→1`, `opacity 0→1`, exit `scale 0.88`. **layout prop убран** — был perf-bottleneck на больших гридах.
+- hover-оверлей: затемнение + прозрачная play-иконка 26px (`.home-card-play`, spring-in scale 0.6→1 по cubic-bezier(0.34,1.56,0.64,1), без подложки)
+- лайк-круг: `LikeHeart` 13px, при лайке pop+glow
 
 ### `HeroClone` ⚡
 `{hero, exiting, reverse=false}`. portal → document.body. **GSAP timeline** `expo.inOut`, `force3D:true`.
@@ -156,7 +161,8 @@ ROW_H=50. `content-visibility:auto`. абсолютный пилл с transition
 `{value [0–12], onChange}`. drag через `setPointerCapture`. wheel (passive:false). 6px трек без thumb.
 
 ### `SettingsView`
-`{settings, onSettings, visible, onScanTracks, onClearFolder, onClearCoversCache, onClearLikesCache, appAccent}`.
+`{settings, onSettings, visible, onScanTracks, onClearFolder, onClearCoversCache, onClearLikesCache, appAccent, scAuth, onScLogin, onScLogout, sec, setSec}`.
+активная секция `sec` — **поднята в App** (`settingsSec`, дефолт `'playback'`). welcome-кнопка «войти» при `!soundcloudAuth` ставит `'account'` до навигации → настройки открываются сразу на аккаунте.
 секции: `account`→SoundCloudIcon, `playback`→`vosproizvedenie.png`, `appearance`→`theme.png`, `system`→`system.png`, `about`→`about.png`.
 **account**: карточка аккаунта SoundCloud. залогинен — аватар 46px + username + «log out»; нет — SC-иконка, `sc_hint` и оранжевая кнопка логина (`scLogin` IPC → `/me` → `onScLogin`). логин/логаут переехали сюда из удалённого SoundCloudView, welcome-кнопка «войти» ведёт в настройки.
 
@@ -179,9 +185,15 @@ ROW_H=50. `content-visibility:auto`. абсолютный пилл с transition
 - обложка 44px с play-оверлеем (hover) или спиннером
 - title + artist (flex:1)
 - stats: плей-иконка `vosproizvedenie.png` + count, длительность, `tabular-nums`
-- **лайк в pill-обёртке справа** (отдельный блок): фон/бордер при active, min-width фиксирован (62px/32px) чтобы не дёргался
+- **лайк в pill-обёртке справа** (отдельный блок): фон/бордер при active, min-width фиксирован (62px/32px) чтобы не дёргался; сердце — `LikeHeart` 11px (лайкнутое в accent), pop+glow при лайке
 - `hideDividers` — `borderBottom` исчезает
 - `isError` — opacity 0.55
+
+### skeletons
+`TrackRowSkeleton {i}`, `ArtistCardsSkeleton`, `SearchSkeleton`, `HomeGridSkeleton` — shimmer-заглушки (`.skel`). ширины блоков псевдослучайны по индексу (`skelW`), стаггер `--skel-delay` (`skelDelay`). где используются:
+- `SearchView`: первая загрузка (до результатов) — `SearchSkeleton` под стрипой на 36%
+- `ArtistView`: загрузка треков таба — 6× `TrackRowSkeleton`
+- home: `scLoading && activeList пуст` — `HomeGridSkeleton` (сетка как у HomeCard, 15 блоков)
 
 ### `SearchView`
 `{visible, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, onResultsLoaded, onArtistClick, loadingTrackId, errorTrackId, hideDividers}`.
@@ -189,6 +201,8 @@ ROW_H=50. `content-visibility:auto`. абсолютный пилл с transition
 - **inputs**: иконка `position:absolute left`, input `width:100% padding`, `text-align:center`. placeholder = `t('search_ph')` = "поиск"/"search".
 - **artist cards**: 42px avatar, 13.5px name, gap 14, padding 12/16, ellipsis на длинных именах. при hover тонкий бордер.
 - результаты завёрнуты в `<AnimatePresence initial={false}>`.
+- **первая загрузка** (loading, результатов ещё нет): `SearchSkeleton` под стрипой
+- **пустой результат** (loading кончился, запрос есть, результатов 0): приглушённая иконка поиска + `t('not_found')`
 
 ### `ArtistView`
 `{artist, visible, onClose, scAuth, likedIds, onLike, onPlayTrack, onSelectTrack, loadingTrackId, errorTrackId, artistCacheRef, onFollow, onCheckFollow, hideDividers}`.
@@ -207,7 +221,7 @@ ROW_H=50. `content-visibility:auto`. абсолютный пилл с transition
 
 **подписка**:
 - эффект на `[visible, profileId]` → `onCheckFollow(profileId)` (GET /me/followings/{id})
-- клик кнопки → `onFollow(profileId, isFollowing)` (PUT/DELETE через scFetch)
+- клик кнопки → `onFollow(profileId, isFollowing)` (POST/DELETE через scFetch)
 - состояние `isFollowing`/`followBusy` локально, кеш `followedIdsRef` глобально
 
 **табы (LayoutGroup + layoutId)**:

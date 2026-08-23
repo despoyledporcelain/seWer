@@ -119,6 +119,37 @@
   .home-card:hover .home-card-overlay { opacity:1; }
   .home-card-like { opacity:0; transition:opacity 0.18s ease; }
   .home-card:hover .home-card-like { opacity:1; }
+  .home-card-play {
+    transform:scale(0.6); opacity:0;
+    transition:transform 0.3s cubic-bezier(0.34,1.56,0.64,1), opacity 0.16s ease;
+  }
+  .home-card:hover .home-card-play { transform:scale(1); opacity:1; }
+  /* like: spring pop + accent glow (var(--accent-rgb) перетекает с глобальным акцентом) */
+  @keyframes likePop {
+    0%   { transform:scale(1); }
+    35%  { transform:scale(1.45); }
+    65%  { transform:scale(0.88); }
+    82%  { transform:scale(1.07); }
+    100% { transform:scale(1); }
+  }
+  @keyframes likeGlow {
+    0%   { filter:drop-shadow(0 0 0   rgba(var(--accent-rgb),0)); }
+    30%  { filter:drop-shadow(0 0 9px rgba(var(--accent-rgb),0.55)); }
+    100% { filter:drop-shadow(0 0 1px rgba(var(--accent-rgb),0)); }
+  }
+  .like-pop  { animation:likePop 0.48s cubic-bezier(0.34,1.56,0.64,1); }
+  .like-glow { animation:likeGlow 0.6s ease-out; }
+  /* skeleton shimmer */
+  .skel { position:relative; overflow:hidden; background:rgba(255,255,255,0.045); }
+  .skel::before {
+    content:''; position:absolute; inset:0;
+    transform:translateX(-100%);
+    background:linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.05) 50%, transparent 100%);
+    animation:shimmer 1.7s ease-in-out infinite;
+    animation-delay:var(--skel-delay,0s);
+    will-change:transform;
+  }
+  @keyframes shimmer { to { transform:translateX(100%); } }
   .track-row { background:none; transition:background 0.15s ease; }
   .track-row:not(.active):hover { background:rgba(255,255,255,0.03); }
 </style>
@@ -545,11 +576,26 @@ function MarqueeText({ text, style, onClick, maxWidth }) {
 }
 
 /* ── PlayerLikeBtn ───────────────────────────────────────────────────────── */
+/* сердце-лайк: маска по PNG, заливка currentColor → красится в accent без фильтров */
+function LikeHeart({ liked, size, className, style }) {
+  return (
+    <span className={className} style={{
+      display:'block', width:size, height:size,
+      background: liked ? 'var(--accent)' : 'currentColor',
+      WebkitMaskImage:`url('${liked ? '../assets/heart1.png' : '../assets/heart0.png'}')`,
+      WebkitMaskSize:'contain', WebkitMaskRepeat:'no-repeat', WebkitMaskPosition:'center',
+      ...style,
+    }}/>
+  );
+}
+
 function PlayerLikeBtn({ liked, onLike, style: extraStyle }) {
   const [hov, setHov] = useState(false);
+  const [popKey, setPopKey] = useState(0);
+  const click = () => { if (!liked) setPopKey(k => k + 1); onLike(); };
   return (
     <div
-      onClick={onLike}
+      onClick={click}
       onMouseEnter={() => setHov(true)}
       onMouseLeave={() => setHov(false)}
       style={{
@@ -560,7 +606,8 @@ function PlayerLikeBtn({ liked, onLike, style: extraStyle }) {
         ...extraStyle,
       }}
     >
-      <span style={{display:'block',width:19,height:19,background:'var(--accent)',WebkitMaskImage:`url('${liked ? '../assets/heart1.png' : '../assets/heart0.png'}')`,WebkitMaskSize:'contain',WebkitMaskRepeat:'no-repeat',WebkitMaskPosition:'center'}}/>
+      <LikeHeart key={popKey} liked={liked} size={19}
+        className={popKey ? 'like-pop like-glow' : undefined}/>
     </div>
   );
 }
@@ -1367,6 +1414,7 @@ function VirtualTrackList({ items, activeId, loadingId, errorId, onClickItem, on
 /* ── HomeCard ────────────────────────────────────────────────────────────── */
 const HomeCard = React.memo(function HomeCard({ track, onSelect, artRef, artHidden, isLiked, onLike }) {
   const handleClick = useCallback(() => onSelect(track), [onSelect, track]);
+  const [popKey, setPopKey] = useState(0);
   return (
     <motion.div className="home-card" onClick={handleClick}
       initial={{ opacity: 0, scale: 0.92 }}
@@ -1404,17 +1452,23 @@ const HomeCard = React.memo(function HomeCard({ track, onSelect, artRef, artHidd
           position:'absolute', inset:0, background:'rgba(0,0,0,0.32)',
           display:'flex', alignItems:'center', justifyContent:'center',
         }}>
-          <img src="../assets/vosproizvedenie.png" style={{width:26,height:26,filter:'brightness(0) invert(1)',marginLeft:3}}/>
+          <div className="home-card-play" style={{
+            width:46, height:46, borderRadius:'50%',
+            display:'flex', alignItems:'center', justifyContent:'center',
+          }}>
+            <svg width="26" height="26" fill="#fff" viewBox="0 0 24 24" style={{marginLeft:3}}><polygon points="6,4 20,12 6,20"/></svg>
+          </div>
         </div>
         {onLike && (
-          <div className="home-card-like" onClick={e=>{ e.stopPropagation(); onLike(track); }} style={{
+          <div className="home-card-like" onClick={e=>{ e.stopPropagation(); if (!isLiked) setPopKey(k=>k+1); onLike(track); }} style={{
             position:'absolute', right:7, bottom:7, zIndex:2,
             background:'rgba(0,0,0,0.45)', borderRadius:'50%',
             width:26, height:26, display:'flex', alignItems:'center', justifyContent:'center',
             color: isLiked ? 'var(--accent)' : 'rgba(255,255,255,0.75)',
             backdropFilter:'blur(4px)',
           }}>
-            <img src={isLiked ? '../assets/heart1.png' : '../assets/heart0.png'} width="13" height="13" style={{display:'block', filter:'brightness(0) invert(1)'}}/>
+            <LikeHeart key={popKey} liked={isLiked} size={13}
+              className={popKey ? 'like-pop like-glow' : undefined}/>
           </div>
         )}
       </div>
@@ -1715,7 +1769,7 @@ function ClearCacheCard({ Card, Row, onClearCoversCache, onClearLikesCache }) {
 }
 
 /* ── SettingsView ─────────────────────────────────────────────────────────── */
-function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFolder, onClearCoversCache, onClearLikesCache, appAccent, scAuth, onScLogin, onScLogout }) {
+function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFolder, onClearCoversCache, onClearLikesCache, appAccent, scAuth, onScLogin, onScLogout, sec, setSec }) {
   const t = useLang();
   const [scLoading, setScLoading] = useState(false);
   const [scError, setScError] = useState(null);
@@ -1731,7 +1785,6 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
     setScLoading(false);
   };
   const set = (k, v) => onSettings({ ...settings, [k]: v });
-  const [sec, setSec] = useState('playback');
   const secRefs  = useRef({});
   const [pill, setPill] = useState({ top:0, height:0 });
 
@@ -2230,9 +2283,75 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
 }
 
 /* ── SearchTrackRow ──────────────────────────────────────────────────────── */
+/* ── skeletons (shimmer) ──────────────────────────────────────────────────── */
+/* детерминированный «случайный» размер, чтобы блоки не выглядели копипастой */
+const skelW = (i, base, spread) => `${base + (i * 13) % spread}%`;
+const skelDelay = i => `${((i * 0.13) % 1.1).toFixed(2)}s`;
+
+function TrackRowSkeleton({ i }) {
+  return (
+    <div style={{display:'flex', alignItems:'center', gap:12, padding:'7px 0',
+      borderBottom:'1px solid rgba(255,255,255,0.032)'}}>
+      <div className="skel" style={{width:44, height:44, borderRadius:8, flexShrink:0, '--skel-delay':skelDelay(i)}}/>
+      <div style={{flex:1, minWidth:0, display:'flex', flexDirection:'column', gap:6}}>
+        <div className="skel" style={{height:11, borderRadius:4, width:skelW(i, 46, 30), '--skel-delay':skelDelay(i + 3)}}/>
+        <div className="skel" style={{height:9,  borderRadius:4, width:skelW(i, 24, 22), '--skel-delay':skelDelay(i + 7)}}/>
+      </div>
+      <div className="skel" style={{width:30, height:9, borderRadius:4}}/>
+      <div className="skel" style={{width:62, height:26, borderRadius:999, flexShrink:0, '--skel-delay':skelDelay(i + 5)}}/>
+    </div>
+  );
+}
+
+function ArtistCardsSkeleton() {
+  return (
+    <div style={{display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:10}}>
+      {[0,1,2,3].map(i => (
+        <div key={i} style={{display:'flex', alignItems:'center', gap:14,
+          background:'rgba(255,255,255,0.02)', border:'1px solid rgba(255,255,255,0.02)',
+          borderRadius:14, padding:'12px 16px', minWidth:0}}>
+          <div className="skel" style={{width:42, height:42, borderRadius:'50%', flexShrink:0, '--skel-delay':skelDelay(i + 2)}}/>
+          <div style={{flex:1, minWidth:0, display:'flex', flexDirection:'column', gap:6}}>
+            <div className="skel" style={{height:10, borderRadius:4, width:skelW(i, 52, 26)}}/>
+            <div className="skel" style={{height:8,  borderRadius:4, width:'38%', '--skel-delay':skelDelay(i + 6)}}/>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SearchSkeleton() {
+  return (
+    <div>
+      <div className="skel" style={{height:10, width:58, borderRadius:4, marginBottom:10}}/>
+      <div style={{marginBottom:22}}><ArtistCardsSkeleton/></div>
+      <div className="skel" style={{height:10, width:52, borderRadius:4, marginBottom:8}}/>
+      {[0,1,2,3,4].map(i => <TrackRowSkeleton key={i} i={i}/>)}
+    </div>
+  );
+}
+
+function HomeGridSkeleton() {
+  return (
+    <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(128px, 1fr))', gap:18}}>
+      {Array.from({length: 15}, (_, i) => (
+        <div key={i} style={{borderRadius:16, overflow:'hidden'}}>
+          <div style={{padding:'8px 8px 7px'}}>
+            <div className="skel" style={{height:8, borderRadius:4, width:'45%', margin:'0 auto 6px', '--skel-delay':skelDelay(i)}}/>
+            <div className="skel" style={{height:9, borderRadius:4, width:'70%', margin:'0 auto', '--skel-delay':skelDelay(i + 4)}}/>
+          </div>
+          <div className="skel" style={{width:'100%', aspectRatio:'1', borderRadius:'0 0 16px 16px', '--skel-delay':skelDelay(i + 2)}}/>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function SearchTrackRow({ track, isLiked, onLike, onClick, onCoverClick, isLoading, isError, hideDividers }) {
   const t = useLang();
   const [hov, setHov] = useState(false);
+  const [popKey, setPopKey] = useState(0);
   const lc = fmtCount(track.likesCount);
   const pc = fmtCount(track.playCount);
   return (
@@ -2287,7 +2406,7 @@ function SearchTrackRow({ track, isLiked, onLike, onClick, onCoverClick, isLoadi
         }
       </div>
       {/* like — pill at the very end */}
-      {onLike && <div onClick={e=>{e.stopPropagation();onLike();}}
+      {onLike && <div onClick={e=>{e.stopPropagation(); if (!isLiked) setPopKey(k=>k+1); onLike();}}
         style={{
           marginLeft:12, flexShrink:0,
           display:'flex', alignItems:'center', justifyContent:'center', gap:5,
@@ -2309,7 +2428,8 @@ function SearchTrackRow({ track, isLiked, onLike, onClick, onCoverClick, isLoadi
           e.currentTarget.style.color = isLiked ? 'rgba(255,255,255,0.92)' : 'rgba(255,255,255,0.42)';
         }}
       >
-        <img src={isLiked ? '../assets/heart1.png' : '../assets/heart0.png'} width="11" height="11" style={{display:'block', filter:'brightness(0) invert(1)'}}/>
+        <LikeHeart key={popKey} liked={isLiked} size={11}
+          className={popKey ? 'like-pop like-glow' : undefined}/>
         {lc && <span style={{fontSize:11, fontVariantNumeric:'tabular-nums'}}>{lc}</span>}
       </div>}
     </motion.div>
@@ -2430,6 +2550,23 @@ const SearchView = React.forwardRef(function SearchView({ visible, scAuth, liked
           {loading && <div style={{position:'absolute', right:22, top:'50%', translate:'0 -50%', width:16, height:16, borderRadius:'50%', border:'2px solid rgba(255,255,255,0.15)', borderTopColor:'rgba(255,255,255,0.5)', animation:'spin 0.7s linear infinite'}}/>}
         </div>
       </div>
+
+      {/* skeleton первой загрузки — до первых результатов */}
+      {!hasResults && loading && (
+        <div style={{position:'absolute', left:52, right:52, top:'calc(36% + 84px)'}}>
+          <SearchSkeleton/>
+        </div>
+      )}
+
+      {/* пустой результат */}
+      {!hasResults && !loading && query.trim() && (
+        <div style={{position:'absolute', left:0, right:0, top:'calc(36% + 96px)', textAlign:'center'}}>
+          <svg width="26" height="26" fill="none" stroke="rgba(255,255,255,0.13)" strokeWidth="1.7" viewBox="0 0 24 24" style={{marginBottom:12}}>
+            <circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35" strokeLinecap="round"/>
+          </svg>
+          <div style={{fontSize:13, color:'rgba(255,255,255,0.3)'}}>{T('not_found')}</div>
+        </div>
+      )}
 
       {/* results */}
       {hasResults && (
@@ -2843,9 +2980,7 @@ function ArtistView({ artist, visible, onClose, scAuth, likedIds, onLike, onPlay
           if (el.scrollTop + el.clientHeight >= el.scrollHeight - 180) loadMore();
         }}>
         {tracksLoading ? (
-          <div style={{ display:'flex', justifyContent:'center', padding:'48px 0' }}>
-            <div style={{ width:26, height:26, border:'2px solid rgba(255,255,255,0.07)', borderTopColor:'rgba(255,255,255,0.22)', borderRadius:'50%', animation:'spin 1s linear infinite' }}/>
-          </div>
+          <div>{[0,1,2,3,4,5].map(i => <TrackRowSkeleton key={i} i={i}/>)}</div>
         ) : tracksError ? (
           <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:12, padding:'48px 0' }}>
             <div style={{ fontSize:12, color:'rgba(255,255,255,0.3)' }}>{tracksError}</div>
@@ -4062,6 +4197,7 @@ function App() {
     }
   };
 
+  const [settingsSec, setSettingsSec] = useState('playback');
   const handleNav = async (id) => {
     setNavActive(id);
     if (id === 'home') {
@@ -4097,6 +4233,9 @@ function App() {
       } else if (view === 'settings' || view === 'search' || view === 'artist') {
         setHomeVisible(true);
         setView('home');
+      } else if (view === 'home') {
+        const el = homeScrollRef.current;
+        if (el) smoothScroll(el, 0, 420);
       }
     } else if (id === 'search') {
       if (view === 'home') setHomeVisible(false);
@@ -4138,6 +4277,9 @@ function App() {
     } else if (view === 'artist') {
       setPlayerVisible(true);
       setView('player');
+    } else if (view === 'player') {
+      setLibScrollTargetId(track.id);
+      setLibScrollTrigger(v => v + 1);
     }
   };
 
@@ -4273,7 +4415,7 @@ function App() {
                     </svg>
                     {t('pick_folder')}
                   </button>
-                  <button onClick={() => handleNav('settings')} style={{
+                  <button onClick={() => { if (!settings.soundcloudAuth) setSettingsSec('account'); handleNav('settings'); }} style={{
                     display:'flex', alignItems:'center', gap:8,
                     background:'rgba(255,85,0,0.1)',
                     border:'none', borderRadius:10, padding:'9px 18px',
@@ -4289,18 +4431,16 @@ function App() {
                   </button>
                 </div>
               </div>
-            ) : sourceMode === 'sc' && activeList.length === 0 ? (
-              <div style={{
-                display:'flex', alignItems:'center', justifyContent:'center',
-                padding:'80px 20px', fontSize:13, color:'rgba(255,255,255,0.32)',
-                textAlign:'center',
-              }}>
-                {scLoading
-                  ? t('loading_likes')
-                  : scError
-                    ? t('load_failed')
-                    : (search ? t('not_found') : t('no_likes'))}
-              </div>
+            ) : activeList.length === 0 && (sourceMode === 'sc' || search) ? (
+              scLoading ? <HomeGridSkeleton/> : (
+                <div style={{
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  padding:'80px 20px', fontSize:13, color:'rgba(255,255,255,0.32)',
+                  textAlign:'center',
+                }}>
+                  {scError ? t('load_failed') : (search ? t('not_found') : t('no_likes'))}
+                </div>
+              )
             ) : (
               <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(128px, 1fr))', gap:18}}>
                 <AnimatePresence initial={false}>
@@ -4587,7 +4727,7 @@ function App() {
           </div>
         )}
 
-        <SettingsView settings={settings} onSettings={setSettings} visible={view==='settings'} onScanTracks={handleScanTracks} onClearFolder={handleClearFolder} onClearCoversCache={handleClearCoversCache} onClearLikesCache={handleClearLikesCache} appAccent={appAccent} scAuth={settings.soundcloudAuth||null} onScLogin={handleScLogin} onScLogout={handleScLogout}/>
+        <SettingsView settings={settings} onSettings={setSettings} visible={view==='settings'} onScanTracks={handleScanTracks} onClearFolder={handleClearFolder} onClearCoversCache={handleClearCoversCache} onClearLikesCache={handleClearLikesCache} appAccent={appAccent} scAuth={settings.soundcloudAuth||null} onScLogin={handleScLogin} onScLogout={handleScLogout} sec={settingsSec} setSec={setSettingsSec}/>
         <SearchView ref={searchViewRef} visible={view==='search'} scAuth={settings.soundcloudAuth||null}
           likedIds={likedIds} onLike={handleLike}
           onPlayTrack={(t, queue) => { searchQueueRef.current = queue || null; handleScTrackClick(t, -1); }}
