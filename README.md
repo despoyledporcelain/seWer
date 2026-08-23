@@ -6,7 +6,7 @@
 
 <br/>
 
-*music player.*<br/>*soundcloud. local.  yours.*
+*music player.*<br/>*full soundcloud parsing, local music*
 
 <br/>
 
