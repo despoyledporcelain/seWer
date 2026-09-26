@@ -406,15 +406,19 @@ function mapScPlaylist(p, auth) {
   };
 }
 
-/* SC в /users/{id}/playlists отдаёт вперемешку плейлисты и альбомы артистов.
-   оставляем только плейлисты: у альбомов playlist_kind === 'artist-albums'
-   (поле type — запасной признак). неизвестное значение НЕ режем, чтобы не
-   потерять реальные плейлисты, если SC поменяет разметку */
-const PLAYLIST_KINDS = new Set(['playlist']);
+/* SC в /users/{id}/playlists отдаёт вперемешку плейлисты и альбомы.
+   признаки albums, найденные в реальном ответе (проба в консоли):
+     playlist_kind — ОТСУТСТВУЕТ, type — ОТСУТСТВУЕТ, kind у всех "playlist"
+     → различают is_album (bool) и set_type ("playlist"|"album")
+   плюс альбомы видно по album-only полям: purchase_title, label_name,
+   release_date, published_at, display_date.
+   неизвестное значение НЕ режем, чтобы не потерять реальные плейлисты,
+   если SC поменяет разметку */
 function isScPlaylist(p) {
-  const kind = p?.playlist_kind ?? p?.type;
-  if (kind == null) return true;
-  return PLAYLIST_KINDS.has(kind);
+  if (!p) return true;
+  if (p.is_album === true) return false;
+  if (typeof p.set_type === 'string') return p.set_type !== 'album';
+  return true;
 }
 
 /* полный список треков плейлиста. /playlists/{id}/tracks отдаёт голый массив
@@ -1004,6 +1008,81 @@ function ProgressBar({ progressRef, total, onSeek, isPlaying, visible }) {
    амплитуде, а слух — нет, поэтому на тихой громкости линейный ползунок
    отдавал весь полезный диапазон в самый низ и приходилось тянуть едва ли
    не в ноль. gain = pos^VOL_GAMMA — верх ползунка по-прежнему 100% */
+/* варианты меню — В МОДУЛЬНОЙ ОБЛАСТИ, не внутри компонента.
+   пересоздание объекта variants на каждом рендере заставляло Motion
+   пере-резолвить варианты, и пункты заново проигрывали hidden→show:
+   меню дёргалось всеми тремя кнопками при ЛЮБОМ обновлении state
+   (setPlMembers сыплет по записи на каждый плейлист, пока едут чекбоксы) */
+const MENU_VARIANTS = {
+  hidden: { opacity: 0, scale: 0.92, y: -7 },
+  show:   { opacity: 1, scale: 1, y: 0,
+            transition: { duration: 0.18, ease: [0.22, 1, 0.36, 1],
+                          staggerChildren: 0.03, delayChildren: 0.06 } },
+};
+const itemVars = {
+  hidden: { opacity: 0, y: -5 },
+  show:   { opacity: 1, y: 0, transition: { duration: 0.24, ease: [0.22, 1, 0.36, 1] } },
+};
+const itemStyle = {
+  display:'flex', alignItems:'center', gap:10,
+  padding:'7px 11px', borderRadius:7,
+  fontSize:12.5, color:'rgba(255,255,255,0.86)',
+  cursor:'pointer', transition:'background 0.12s', userSelect:'none',
+};
+const itemHover = {
+  onMouseEnter: e => e.currentTarget.style.background='rgba(255,255,255,0.07)',
+  onMouseLeave: e => e.currentTarget.style.background='transparent',
+};
+
+/* Item и PlCheck — ТОЖЕ в модульной области. объявленные внутри
+   TrackContextMenu они получали новый тип на каждом рендере, и React
+   пересоздавал их поддеревья: Motion проигрывал hidden→show заново, и при
+   любом обновлении state (setPlMembers едет по плейлистам) первые две
+   кнопки меню дёргались. третья кнопка инлайном — не дёргалась, по этому
+   и вычислили причину */
+function Item({ label, icon, disabled, onClick, onClose }) {
+  return (
+    <motion.div variants={itemVars} onClick={disabled ? null : () => { onClick?.(); onClose(); }}
+      style={{ ...itemStyle, color: disabled ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.86)', cursor: disabled ? 'default' : 'pointer' }}
+      {...(disabled ? {} : itemHover)}>
+      <span style={{display:'flex', alignItems:'center', justifyContent:'center', width:14, opacity:0.7}}>{icon}</span>
+      <span>{label}</span>
+    </motion.div>
+  );
+}
+
+/* чекбокс строки пикера: state = true | false | 'loading' (спиннер, пока едет
+   состав), busy = по этой строке идёт запись */
+function PlCheck({ state, busy }) {
+  if (busy)
+    return <div style={{width:13, height:13, flexShrink:0, border:'1.5px solid rgba(255,255,255,0.2)',
+      borderTopColor:'rgba(255,255,255,0.65)', borderRadius:'50%', animation:'spin 0.75s linear infinite'}}/>;
+  if (state === 'loading')
+    return <div style={{width:14, height:14, flexShrink:0, border:'1.5px solid rgba(255,255,255,0.12)',
+      borderTopColor:'rgba(255,255,255,0.34)', borderRadius:'50%', animation:'spin 0.9s linear infinite'}}/>;
+  const on = state === true;
+  return (
+    <motion.span
+      animate={{
+        backgroundColor: on ? 'rgba(var(--accent-rgb), 0.9)' : 'rgba(255,255,255,0)',
+        borderColor:     on ? 'rgba(var(--accent-rgb), 0.9)' : 'rgba(255,255,255,0.22)',
+      }}
+      transition={{ duration: 0.16, ease: 'easeOut' }}
+      style={{
+        width:14, height:14, flexShrink:0, borderRadius:4, border:'1.5px solid',
+        display:'flex', alignItems:'center', justifyContent:'center',
+      }}>
+      <motion.svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#0a0a0c"
+        strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round"
+        initial={false}
+        animate={{ scale: on ? 1 : 0.4, opacity: on ? 1 : 0 }}
+        transition={{ type:'spring', stiffness: 620, damping: 26, mass: 0.5 }}>
+        <polyline points="20 6 9 17 4 12"/>
+      </motion.svg>
+    </motion.span>
+  );
+}
+
 const VOL_GAMMA = 2.2;
 const volPosToGain = p => Math.pow(Math.max(0, Math.min(1, p)), VOL_GAMMA);
 const volGainToPos = g => Math.pow(Math.max(0, Math.min(1, g)), 1 / VOL_GAMMA);
@@ -1439,7 +1518,7 @@ function TrackContextMenu({ menu, onClose, onCopyLink, onStartStation, canAddPl,
 
   const ref = useRef(null);
   const subRef = useRef(null);
-  const [pos, setPos] = useState({ x: menu.x, y: menu.y, ready: false });
+  const [pos, setPos] = useState({ x: menu.x, y: menu.y });
   const [plOpen, setPlOpen]   = useState(false);
   const [subPos, setSubPos]   = useState(null); /* {x, y, dir} — dir: 1 справа / -1 слева */
   const [busyId, setBusyId]   = useState(null); /* id плейлиста | 'new' */
@@ -1457,7 +1536,7 @@ function TrackContextMenu({ menu, onClose, onCopyLink, onStartStation, canAddPl,
     if (y + h > window.innerHeight - PAD) y = window.innerHeight - h - PAD;
     if (x < PAD) x = PAD;
     if (y < PAD) y = PAD;
-    setPos({ x, y, ready: true });
+    setPos({ x, y });
     setPlOpen(false); setSubPos(null); setBusyId(null); setDoneNew(false);
   }, [menu.x, menu.y]);
 
@@ -1531,17 +1610,23 @@ function TrackContextMenu({ menu, onClose, onCopyLink, onStartStation, canAddPl,
   const canCopy = !!menu.track.permalinkUrl;
   const own = (playlists || []).filter(p => p.isOwn);
 
-  /* tri-state чекбокса: 'loading' (состав едет) / true (трек внутри) / false (нет) */
+  /* tri-state чекбокса: 'loading' — состав РЕАЛЬНО в полёте; true/false —
+     известно. всё остальное (нет записи, запрос упал) = false: раньше такие
+     случаи тоже отдавали 'loading' и строка залипала со спиннером навсегда,
+     а клик по loading был заблокирован — добавление становилось невозможно */
   const inState = pl => {
-    const m = plMembers?.[pl.id];
-    if (m instanceof Set) return m.has(menu.track.id);
-    return 'loading';
+    const e = plMembers?.[pl.id];
+    if (!e) return false;
+    if (e.pending) return 'loading';
+    if (e.ids instanceof Set) return e.ids.has(menu.track.id);
+    return false;
   };
 
   const toggleTrack = async pl => {
     if (busyId) return;
-    const isIn = inState(pl);
-    if (isIn === 'loading') return; /* не тыкаем вслепую в неизвестное состояние */
+    /* 'loading' НЕ блокирует клик: handleAddToPlaylist и так делает свежий GET
+       и вернёт 'exists' без PUT, так что дубль невозможен даже по незнанию */
+    const isIn = inState(pl) === true;
     setBusyId(pl.id);
     await onToggleInPlaylist?.(menu.track, pl, isIn);
     setBusyId(null);
@@ -1559,88 +1644,38 @@ function TrackContextMenu({ menu, onClose, onCopyLink, onStartStation, canAddPl,
     }
   };
 
-  const itemVars = {
-    hidden: { opacity: 0, y: -5 },
-    show:   { opacity: 1, y: 0, transition: { duration: 0.24, ease: [0.22, 1, 0.36, 1] } },
-  };
-  const itemStyle = {
-    display:'flex', alignItems:'center', gap:10,
-    padding:'7px 11px', borderRadius:7,
-    fontSize:12.5, color:'rgba(255,255,255,0.86)',
-    cursor:'pointer', transition:'background 0.12s', userSelect:'none',
-  };
-  const itemHover = {
-    onMouseEnter: e => e.currentTarget.style.background='rgba(255,255,255,0.07)',
-    onMouseLeave: e => e.currentTarget.style.background='transparent',
-  };
-  const Item = ({ label, icon, disabled, onClick }) => (
-    <motion.div variants={itemVars} onClick={disabled ? null : () => { onClick?.(); onClose(); }}
-      style={{ ...itemStyle, color: disabled ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.86)', cursor: disabled ? 'default' : 'pointer' }}
-      {...(disabled ? {} : itemHover)}>
-      <span style={{display:'flex', alignItems:'center', justifyContent:'center', width:14, opacity:0.7}}>{icon}</span>
-      <span>{label}</span>
-    </motion.div>
-  );
-
-  /* чекбокс строки: галочка = трек уже в плейлисте (клик его снимет).
-     tri-state — спиннер, пока едет состав, чтобы не показывать ложное «нет» */
-  const PlCheck = ({ pl }) => {
-    const on = inState(pl) === true;
-    if (busyId === pl.id)
-      return <div style={{width:13, height:13, flexShrink:0, border:'1.5px solid rgba(255,255,255,0.2)',
-        borderTopColor:'rgba(255,255,255,0.65)', borderRadius:'50%', animation:'spin 0.75s linear infinite'}}/>;
-    if (inState(pl) === 'loading')
-      return <div style={{width:14, height:14, flexShrink:0, border:'1.5px solid rgba(255,255,255,0.12)',
-        borderTopColor:'rgba(255,255,255,0.34)', borderRadius:'50%', animation:'spin 0.9s linear infinite'}}/>;
-    return (
-      <motion.span
-        animate={{
-          backgroundColor: on ? 'rgba(var(--accent-rgb), 0.9)' : 'rgba(255,255,255,0)',
-          borderColor:     on ? 'rgba(var(--accent-rgb), 0.9)' : 'rgba(255,255,255,0.22)',
-        }}
-        transition={{ duration: 0.16, ease: 'easeOut' }}
-        style={{
-          width:14, height:14, flexShrink:0, borderRadius:4, border:'1.5px solid',
-          display:'flex', alignItems:'center', justifyContent:'center',
-        }}>
-        <motion.svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#0a0a0c"
-          strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round"
-          initial={false}
-          animate={{ scale: on ? 1 : 0.4, opacity: on ? 1 : 0 }}
-          transition={{ type:'spring', stiffness: 620, damping: 26, mass: 0.5 }}>
-          <polyline points="20 6 9 17 4 12"/>
-        </motion.svg>
-      </motion.span>
-    );
-  };
-
   return ReactDOM.createPortal(
     <>
     <motion.div ref={ref}
-      variants={{ hidden:{}, show:{ transition:{ staggerChildren: 0.03, delayChildren: 0.02 } } }}
+      /* вход и каскад пунктов — на ОДНОМ элементе, на корне, и варианты
+         вынесены в MENU_VARIANTS (модуль): инлайновый объект пересоздавался
+         каждый рендер и пункты переанимировались на любое обновление state.
+         раньше вход был размазан ещё и по двум элементам: у корня
+         opacity: pos.ready?1:0 в style (обычный CSS, не Motion — переключался
+         мгновенно), а scale/y жили на вложенном контейнере, который ещё и
+         масштабировался от центра, а не от курсора */
+      variants={MENU_VARIANTS}
       initial="hidden" animate="show"
-      /* exit живёт на КОРНЕ: иначе AnimatePresence держит поддерево, пока
-         доигрывает пружина вложенного контейнера — панель висит полсекунды */
+      /* exit только на корне: у вложенного он заставлял AnimatePresence ждать
+         его пружину и держать панель на экране после закрытия ~0.4с */
       exit={{ opacity: 0, scale: 0.96, y: -2, transition: { duration: 0.14, ease: [0.4, 0, 1, 1] } }}
       style={{
         position:'fixed', left: pos.x, top: pos.y,
         transformOrigin: 'top left',
         minWidth: 208,
-        opacity: pos.ready ? 1 : 0,
         background:'rgba(24,24,24,0.97)',
-        backdropFilter:'blur(14px)', WebkitBackdropFilter:'blur(14px)',
+        /* backdrop-filter убран: при альфе 0.97 блюр визуально ничего не даёт
+           (просвечивает 3%), но создаёт backdrop-root — из-за него Chromium
+           пересчитывает блюр у всех элементов в нём, когда рядом появляется
+           анимированный контент. Он же раньше ломал position:fixed потомков.
+           Возврат блюра = шаг назад: 465мс висения панели и наезд сабменю. */
         border:'1px solid rgba(255,255,255,0.055)',
         borderRadius:11, padding:4,
         boxShadow:'0 16px 44px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.32)',
         zIndex: 9998,
       }}>
-      <motion.div
-        initial={{ opacity: 0, scale: 0.85, y: -6 }}
-        animate={{ opacity: pos.ready ? 1 : 0, scale: 1, y: 0 }}
-        /* exit здесь НЕ задаём: AnimatePresence ждал бы пружину этого контейнера
-           и держал панель на экране после закрытия ~0.4с. Гасит корень. */
-        style={{ display:'flex', flexDirection:'column' }}>
-      <Item label={t('copy_link')} disabled={!canCopy}
+      <div style={{ display:'flex', flexDirection:'column' }}>
+      <Item label={t('copy_link')} disabled={!canCopy} onClose={onClose}
         onClick={() => onCopyLink(menu.track)}
         icon={
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1648,7 +1683,7 @@ function TrackContextMenu({ menu, onClose, onCopyLink, onStartStation, canAddPl,
             <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
           </svg>
         }/>
-      <Item label={t('start_station')} disabled={!menu.track.id || !onStartStation}
+      <Item label={t('start_station')} disabled={!menu.track.id || !onStartStation} onClose={onClose}
         onClick={() => onStartStation(menu.track)}
         icon={
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1673,8 +1708,8 @@ function TrackContextMenu({ menu, onClose, onCopyLink, onStartStation, canAddPl,
           </motion.span>
         </motion.div>
       )}
-      </motion.div>
-      </motion.div>
+      </div>
+    </motion.div>
 
       {/* сабменю: пикер своих плейлистов. сосед меню в том же портале — не
           потомок (backdrop-filter меню иначе сделал бы containing block для
@@ -1741,7 +1776,7 @@ function TrackContextMenu({ menu, onClose, onCopyLink, onStartStation, canAddPl,
                 {own.map(pl => {
                   const on = inState(pl) === true;
                   const busy = busyId === pl.id;
-                  const dis = !!busyId || inState(pl) === 'loading';
+                  const dis = !!busyId;   /* loading не блокирует — см. toggleTrack */
                   return (
                     <div key={pl.id} onClick={dis ? undefined : () => toggleTrack(pl)}
                       title={on ? t('pl_in') : t('pl_out')}
@@ -1749,7 +1784,7 @@ function TrackContextMenu({ menu, onClose, onCopyLink, onStartStation, canAddPl,
                         background: on ? 'rgba(var(--accent-rgb),0.08)' : 'transparent',
                         cursor: dis ? 'default' : 'pointer'}}
                       {...(dis ? {} : itemHover)}>
-                      <PlCheck pl={pl}/>
+                      <PlCheck state={inState(pl)} busy={busy}/>
                       <div style={{width:26, height:26, borderRadius:6, flexShrink:0, background:'#111116', overflow:'hidden', position:'relative'}}>
                         {pl.coverUrl
                           ? <img src={pl.coverUrl} loading="lazy" style={{position:'absolute', inset:0, width:'100%', height:'100%', objectFit:'cover', clipPath:'inset(0 round 6px)'}}/>
@@ -2441,7 +2476,11 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
                     {SEGS.map(([id, label, icon]) => {
                       const active = mode === id;
                       return (
-                        <div key={id} onClick={() => onSettings(s => ({ ...s, accentMode: id }))}
+                        <div key={id}
+                          /* клик по УЖЕ активной вкладке — полный no-op. раньше
+                             onSettings звал с новым объектом, палитра и
+                             сохранение перезапускались впустую */
+                          onClick={() => { if (active) return; onSettings(s => ({ ...s, accentMode: id })); }}
                           style={{position:'relative', flex:1, display:'flex', alignItems:'center', justifyContent:'center',
                             padding:'8px 0', borderRadius:9, cursor:'pointer', userSelect:'none',
                             color: active ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.38)',
@@ -2472,7 +2511,10 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
                         const c = ACCENT_PRESETS[key];
                         const active = preset === key;
                         return (
-                          <div key={key} onClick={() => onSettings(s => ({ ...s, accentMode:'color', accentPreset:key }))}
+                          <div key={key}
+                            /* тот же принцип: повторный клик по выбранному
+                               образцу не перезапускает палитру и запись */
+                            onClick={() => { if (active) return; onSettings(s => ({ ...s, accentMode:'color', accentPreset:key })); }}
                             style={{
                               display:'flex', flexDirection:'column', alignItems:'center', gap:6,
                               cursor:'pointer', padding:'8px 6px', borderRadius:10,
@@ -3018,15 +3060,17 @@ function PlaylistCard({ playlist, onOpen, onEdit }) {
         </div>
       </div>
       {playlist.isOwn && (
-        <div className="home-card-like" style={{position:'absolute', right:7, bottom:7, color:'rgba(255,255,255,0.75)'}}
+        <div className="home-card-like" style={{position:'absolute', right:6, bottom:6,
+          width:26, height:26, display:'flex', alignItems:'center', justifyContent:'center'}}
           title={pl_edit_title}
-          onClick={e => { e.stopPropagation(); onEdit(playlist); }}
-          onMouseEnter={e => e.currentTarget.style.color = 'rgba(255,255,255,0.95)'}
-          onMouseLeave={e => e.currentTarget.style.color = 'rgba(255,255,255,0.75)'}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/>
-          </svg>
+          onClick={e => { e.stopPropagation(); onEdit(playlist); }}>
+          {/* ассет чёрный на прозрачном → инвертим в белый, как note.png.
+              100x100 → 14px, object-fit:contain чтобы не обрезало наконечник */}
+          <img src="../assets/edit.png" alt="" draggable="false"
+            style={{width:14, height:14, objectFit:'contain', opacity:0.75,
+              filter:'brightness(0) invert(1)', transition:'opacity 0.15s'}}
+            onMouseEnter={e => e.currentTarget.style.opacity = '0.95'}
+            onMouseLeave={e => e.currentTarget.style.opacity = '0.75'}/>
         </div>
       )}
     </>
@@ -3514,20 +3558,29 @@ const PlaylistEditor = React.forwardRef(function PlaylistEditor({ visible, playl
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
             </div>
             <div style={{flex:1}}/>
-            {/* сохранить вручную — появляется только когда есть изменения */}
+            {/* сохранить вручную — появляется только когда есть изменения.
+                заливка акцентом, а не рамка: рамка + серая заливка на ховере
+                давали грязь, и при accentMode='cover' рамка вообще кричала */}
             {status === 'dirty' && (
-              <div onClick={saveNow} style={{
-                display:'flex', alignItems:'center', gap:6, flexShrink:0,
-                padding:'6px 14px', borderRadius:9, cursor:'pointer', userSelect:'none',
-                border:'1px solid var(--accent)', color:'var(--accent)',
-                fontSize:11, fontWeight:600, transition:'background 0.15s',
-              }}
-                onMouseEnter={e => e.currentTarget.style.background='rgba(255,255,255,0.05)'}
-                onMouseLeave={e => e.currentTarget.style.background='transparent'}>
+              <motion.div onClick={saveNow}
+                initial={{ opacity: 0, scale: 0.94 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
+                style={{
+                  display:'flex', alignItems:'center', gap:6, flexShrink:0,
+                  height:28, padding:'0 13px', borderRadius:8,
+                  cursor:'pointer', userSelect:'none',
+                  background:'rgba(var(--accent-rgb),0.9)', color:'#0a0a0c',
+                  fontSize:11.5, fontWeight:600, letterSpacing:'0.01em',
+                  transition:'background 0.15s',
+                }}
+                onMouseEnter={e => e.currentTarget.style.background='var(--accent)'}
+                onMouseLeave={e => e.currentTarget.style.background='rgba(var(--accent-rgb),0.9)'}>
                 {t('ed_save_btn')}
-              </div>
+              </motion.div>
             )}
-            {STATUS && (
+            {/* при dirty плашку не показываем — состояние уже читается по кнопке */}
+            {STATUS && status !== 'dirty' && (
               <div onClick={STATUS.retry ? saveNow : undefined} style={{
                 display:'flex', alignItems:'center', gap:6, flexShrink:0,
                 fontSize:10.5, fontWeight:500, color: STATUS.color,
@@ -4316,14 +4369,20 @@ function ArtistView({ artist, visible, onClose, scAuth, likedIds, onLike, onPlay
           color: 'rgba(255,255,255,0.72)',
           transition: 'background 0.15s, color 0.15s, transform 0.15s',
         }}
-          onMouseEnter={e => { e.currentTarget.style.background='rgba(0,0,0,0.62)'; e.currentTarget.style.color='rgba(255,255,255,0.95)'; }}
-          onMouseLeave={e => { e.currentTarget.style.background='rgba(0,0,0,0.42)'; e.currentTarget.style.color='rgba(255,255,255,0.72)'; }}
+          onMouseEnter={e => { e.currentTarget.style.background='rgba(0,0,0,0.62)'; }}
+          onMouseLeave={e => { e.currentTarget.style.background='rgba(0,0,0,0.42)'; }}
           onMouseDown={e => e.currentTarget.style.transform='scale(0.92)'}
           onMouseUp={e => e.currentTarget.style.transform='scale(1)'}
         >
-          <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" viewBox="0 0 24 24">
-            <path d="M15 18l-6-6 6-6"/>
-          </svg>
+          {/* ассет чёрный на прозрачном 100x100 → инвертим в белый, как
+              note.png/edit.png. у <img> нет currentColor, поэтому ховер-яркость
+              делаем через opacity на самой картинке. objectFit:contain —
+              иначе наконечник срежет по краям */}
+          <img src="../assets/back.png" alt="" draggable="false"
+            style={{width:14, height:14, objectFit:'contain', opacity:0.72,
+              filter:'brightness(0) invert(1)', transition:'opacity 0.15s'}}
+            onMouseEnter={e => e.currentTarget.style.opacity='0.95'}
+            onMouseLeave={e => e.currentTarget.style.opacity='0.72'}/>
         </div>
 
         {/* avatar — left */}
@@ -5386,12 +5445,21 @@ function App() {
       const list = [...map.values()].sort((a, b) => (b.isOwn ? 1 : 0) - (a.isOwn ? 1 : 0));
       playlistsRef.current = list;
       setPlaylists(list);
-      /* один раз показываем, чем SC реально помечает альбомы — чтобы фильтр
-         можно было проверить, а не угадывать */
+      /* один раз показываем, чем SC реально помечает альбомы: и значения
+         предполагаемых полей, и все ключи ответа — чтобы выбрать верный
+         признак, а не гадать (всё это их собственные данные, только в их
+         же консоли) */
       if (!albumKindLogged.current) {
         albumKindLogged.current = true;
-        const kinds = [...new Set([...liked.items, ...own.items].map(p => p?.playlist_kind ?? p?.type ?? '(нет поля)'))];
-        console.log('[seWer] playlist_kind в ответе SC:', JSON.stringify(kinds));
+        const all = [...own.items, ...liked.items];
+        const uniqOf = key => [...new Set(all.map(p => String(p?.[key])))];
+        console.log('[seWer] album probe · playlist_kind:', JSON.stringify(uniqOf('playlist_kind')));
+        console.log('[seWer] album probe · type:          ', JSON.stringify(uniqOf('type')));
+        console.log('[seWer] album probe · kind:          ', JSON.stringify(uniqOf('kind')));
+        console.log('[seWer] album probe · set_type:      ', JSON.stringify(uniqOf('set_type')));
+        console.log('[seWer] album probe · is_album:      ', JSON.stringify(uniqOf('is_album')));
+        console.log('[seWer] album probe · sharing:       ', JSON.stringify(uniqOf('sharing')));
+        console.log('[seWer] album probe · titles:         ', JSON.stringify(all.map(p => `${p?.title}|${p?.set_type}|${p?.is_album}`)));
       }
     } catch (e) {
       setPlaylistsError(String(e));
@@ -5406,7 +5474,7 @@ function App() {
   /* записать известный состав плейлиста в кеш чекбоксов (один вход для всех).
      объявлено до хендлеров: они берут его в deps */
   const rememberMember = useCallback((plId, ids) => {
-    plMembersRef.current = { ...plMembersRef.current, [plId]: new Set(ids) };
+    plMembersRef.current = { ...plMembersRef.current, [plId]: { ids: new Set(ids) } };
     setPlMembers(plMembersRef.current);
   }, []);
 
@@ -5593,26 +5661,35 @@ function App() {
   }, [loadPlaylists]);
 
   /* состав для чекбоксов: догружаем недостающие плейлисты пачками по 4,
-     каждый запрос помечаем busy, чтобы не плодить дубли на ре-рендерах */
+     каждый запрос помечаем busy, чтобы не плодить дубли на ре-рендерах.
+     запись в plMembers: { pending:true } в полёте → { ids:Set } успех →
+     { ids:null } провал. БЫЛО: голый Set/null, где null читался как «грузятся»
+     вечно, и без .catch() — отклонённый промис навсегда оставлял busy=true */
   const ensurePlaylistMembers = useCallback((list) => {
     const auth = scAuthRef.current;
     if (!auth) return;
     const pending = [];
     for (const p of (list || [])) {
       if (!p?.isOwn || p.id == null) continue;
-      const cached = plMembersRef.current[p.id];
-      if (cached instanceof Set || cached === null) continue; /* уже знаем или уже упали */
+      const e = plMembersRef.current[p.id];
+      if (e && 'ids' in e) continue;      /* уже знаем (Set) или уже упали (null) */
       if (membersBusyRef.current[p.id]) continue;
       pending.push(p);
     }
     for (let i = 0; i < pending.length; i += 4) {
       for (const p of pending.slice(i, i + 4)) {
         membersBusyRef.current[p.id] = true;
-        fetchPlaylistTrackIds(p.id, auth, p.trackCount).then(ids => {
+        plMembersRef.current = { ...plMembersRef.current, [p.id]: { pending: true } };
+        setPlMembers(plMembersRef.current);
+        const settle = entry => {
           delete membersBusyRef.current[p.id];
-          plMembersRef.current[p.id] = ids; /* null = не смогли, не будем спрашивать снова */
-          setPlMembers({ ...plMembersRef.current });
-        });
+          plMembersRef.current = { ...plMembersRef.current, [p.id]: entry };
+          setPlMembers(plMembersRef.current);
+        };
+        fetchPlaylistTrackIds(p.id, auth, p.trackCount).then(
+          ids => settle({ ids }),
+          () => settle({ ids: null })   /* провал: чекбокс станет «нет» и останется кликабельным */
+        );
       }
     }
   }, []);
@@ -5638,8 +5715,16 @@ function App() {
         ...(meta?.title ? { title: meta.title } : {}),
         ...(meta?.coverUrl ? { coverUrl: meta.coverUrl } : {}) } : p);
     setPlaylists(playlistsRef.current);
-    setEditingPlaylist(ep => (ep && ep.playlist.id === id)
-      ? { ...ep, playlist: { ...ep.playlist, ...(meta || {}) } } : ep);
+    setEditingPlaylist(ep => {
+      if (!ep || ep.playlist.id !== id) return ep;
+      /* НЕ спредим meta как есть: там coverUrl === undefined, когда обложку не
+         меняли, а спред копирует такой ключ и затирает coverUrl в undefined —
+         обложка в редакторе исчезала на заглушку до переоткрытия */
+      const patch = {};
+      if (meta?.title) patch.title = meta.title;
+      if (meta?.coverUrl) patch.coverUrl = meta.coverUrl;
+      return { ...ep, playlist: { ...ep.playlist, ...patch } };
+    });
     setPlaylistActive(pa => {
       if (!pa || pa.playlist.id !== id) return pa;
       playlistQueueRef.current = newTracks;
@@ -6795,18 +6880,37 @@ function App() {
           {toast && !toastExiting && (
             <motion.div
               key="toast"
-              initial={{ opacity: 0, y: 12, scale: 0.96 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 8, scale: 0.96 }}
-              transition={{ type:'spring', stiffness: 380, damping: 30, mass: 0.6 }}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 5 }}
+              transition={{ type:'spring', stiffness: 420, damping: 32, mass: 0.7 }}
               style={{
-                position:'absolute', bottom:28, left:'50%',
+                /* сверху, вплотную под тайтлбар: раньше висел снизу и накрывал
+                   низ плеера. центральный блок плеера центрирован по вертикали,
+                   поэтому под тайтлбаром пусто — оттуда и держим. координата от
+                   --titlebar-h, не хардкод */
+                position:'absolute', bottom:26, left:'50%',
                 translate:'-50% 0',
-                background:'rgba(30,30,36,0.97)',
-                borderRadius:8, padding:'7px 13px', fontSize:12,
-                color:'rgba(255,255,255,0.45)', pointerEvents:'none',
-                zIndex:9999, whiteSpace:'nowrap',
-              }}>{toast}</motion.div>
+                display:'flex', alignItems:'center', gap:8,
+                background:'rgba(24,24,24,0.97)',
+                backdropFilter:'blur(20px)', WebkitBackdropFilter:'blur(20px)',
+                border:'1px solid rgba(255,255,255,0.055)',
+                borderRadius:11, padding:'7px 13px',
+                boxShadow:'0 16px 44px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.32)',
+                fontSize:12, color:'rgba(255,255,255,0.72)',
+                pointerEvents:'none', zIndex:9999,
+                maxWidth:'min(440px, calc(100vw - 48px))', lineHeight:1.4,
+              }}>
+              {/* единственное пятно цвета — точка акцента: идентичность тоста
+                  без заливки/рамки цветом. следовал за --accent, поэтому
+                  переключается вместе с темой */}
+              <span style={{
+                width:5, height:5, borderRadius:'50%', flexShrink:0,
+                background:'var(--accent)',
+                boxShadow:'0 0 8px rgba(var(--accent-rgb),0.6)',
+              }}/>
+              <span style={{minWidth:0}}>{toast}</span>
+            </motion.div>
           )}
         </AnimatePresence>
 
