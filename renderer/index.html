@@ -169,6 +169,9 @@
   @keyframes stEq { 0%, 100% { transform:scaleY(0.35); } 50% { transform:scaleY(1); } }
   .track-row { background:none; transition:background 0.15s ease; }
   .track-row:not(.active):hover { background:rgba(255,255,255,0.03); }
+  /* редактор плейлиста: hover обложки и карандаш у названия */
+  div:hover > .pl-art-hover { opacity:1; }
+  .pl-title-edit:hover .pl-title-pencil { opacity:1; }
 </style>
 </head>
 <body>
@@ -403,6 +406,17 @@ function mapScPlaylist(p, auth) {
   };
 }
 
+/* SC в /users/{id}/playlists отдаёт вперемешку плейлисты и альбомы артистов.
+   оставляем только плейлисты: у альбомов playlist_kind === 'artist-albums'
+   (поле type — запасной признак). неизвестное значение НЕ режем, чтобы не
+   потерять реальные плейлисты, если SC поменяет разметку */
+const PLAYLIST_KINDS = new Set(['playlist']);
+function isScPlaylist(p) {
+  const kind = p?.playlist_kind ?? p?.type;
+  if (kind == null) return true;
+  return PLAYLIST_KINDS.has(kind);
+}
+
 /* полный список треков плейлиста. /playlists/{id}/tracks отдаёт голый массив
    ИЛИ {collection, next_href}, и там бывают заглушки {id} без title/media —
    гидратируем их пачками /tracks?ids= (порядок сохраняем как в плейлисте).
@@ -444,10 +458,56 @@ async function fetchPlaylistTracks(id, auth, noTitle) {
   return out;
 }
 
+/* состав плейлиста для чекбокса в контекст-меню: только id, без гидратации
+   и маппинга (fetchPlaylistTracks тут слишком тяжёлый). отдаёт null при ошибке,
+   чтобы вызывающий мог отличить «пусто» от «не знаю» */
+async function fetchPlaylistTrackIds(id, auth, expected) {
+  const ids = new Set();
+  let url = `https://api-v2.soundcloud.com/playlists/${id}/tracks?limit=200`;
+  let pages = 0;
+  while (url && pages < 10) {
+    const res = await window.electronAPI.scFetch(url, auth.token, auth.clientId);
+    if (res.error) return null;
+    const col = Array.isArray(res.data) ? res.data : res.data?.collection;
+    if (!col) break;
+    for (const x of col) if (x?.id != null) ids.add(x.id);
+    pages++;
+    if (expected != null && ids.size >= expected) break; /* всё нашли — пагинация не нужна */
+    url = Array.isArray(res.data) ? null : (res.data?.next_href || null);
+  }
+  return ids;
+}
+
 /* рекомендации для плейлиста — station-эндпоинт SC (как radio плейлиста).
    URL изолирован тут: если SC поменяет — правится одно место */
 const plRecsUrl = id =>
   `https://api-v2.soundcloud.com/stations/soundcloud:playlist-stations:${id}/tracks?limit=50`;
+
+/* картинка → обложка плейлиста: центр-кроп в квадрат, сторона ≤1600,
+   jpeg 0.9 (многовато байтов SC не любит, а альфа не нужна). возвращает
+   { dataUrl — превью, b64 — голый base64 без data:-префикса, ровно то,
+   что SC ждёт в image_data } */
+function prepareArtwork({ dataUrl, name }) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const crop = Math.min(img.width, img.height);
+        const side = Math.min(1600, crop);
+        const cv = document.createElement('canvas');
+        cv.width = cv.height = side;
+        const ctx = cv.getContext('2d');
+        ctx.fillStyle = '#101014';
+        ctx.fillRect(0, 0, side, side);
+        ctx.drawImage(img, (img.width - crop) / 2, (img.height - crop) / 2, crop, crop, 0, 0, side, side);
+        const out = cv.toDataURL('image/jpeg', 0.9);
+        resolve({ dataUrl: out, b64: out.split(',')[1], mime: 'image/jpeg', filename: 'cover.jpg' });
+      } catch { resolve(null); }
+    };
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
+}
 
 function splitArtists(str) {
   if (!str) return [{ name: '', sep: null }];
@@ -541,6 +601,11 @@ const STRINGS = {
     follow_err:'не удалось подписаться', unfollow_err:'не удалось отписаться',
     copy_link:'Скопировать ссылку', link_copied:'Ссылка скопирована', copy_link_err:'не удалось скопировать ссылку',
     start_station:'Запустить станцию', station_for:'Станция по треку', station_label:'Станция', station_exit:'выйти', station_err:'не удалось запустить станцию',
+    add_to_pl:'Добавить в плейлист', add_pl_new:'новый плейлист', added_to:'добавлено в',
+    removed_from:'удалено из', pl_rm_err:'не удалось удалить трек',
+    pl_in:'убрать из плейлиста', pl_out:'добавить в плейлист', pl_in_loading:'проверяем…',
+    pl_add_err:'не удалось добавить трек', pl_list_err:'не удалось загрузить плейлисты',
+    ed_title_ph:'Название плейлиста', ed_art_pick:'Выбрать обложку', ed_art_err:'не удалось загрузить обложку',
     accent_title:'Акцент и свечение', accent_sub:'Свечения и цвет активных элементов интерфейса',
     accent_default:'По умолчанию', accent_lavender:'Лавандовый', accent_mint:'Мятный', accent_rose:'Розовый', accent_amber:'Янтарный', accent_cover:'От обложки',
     accent_cover_sub:'Динамически меняется под обложку трека',
@@ -623,6 +688,11 @@ const STRINGS = {
     follow_err:'could not follow', unfollow_err:'could not unfollow',
     copy_link:'Copy link', link_copied:'Link copied', copy_link_err:'could not copy link',
     start_station:'Start station', station_for:'Station for', station_label:'Station', station_exit:'exit', station_err:'could not start station',
+    add_to_pl:'Add to playlist', add_pl_new:'new playlist', added_to:'added to',
+    removed_from:'removed from', pl_rm_err:'could not remove the track',
+    pl_in:'remove from playlist', pl_out:'add to playlist', pl_in_loading:'checking…',
+    pl_add_err:'could not add the track', pl_list_err:'could not load playlists',
+    ed_title_ph:'Playlist name', ed_art_pick:'Choose cover', ed_art_err:'cover upload failed',
     accent_title:'Accent & glow', accent_sub:'Glow effects and the color of active interface elements',
     accent_default:'Default', accent_lavender:'Lavender', accent_mint:'Mint', accent_rose:'Rose', accent_amber:'Amber', accent_cover:'From cover',
     accent_cover_sub:'Dynamically follows the current track artwork',
@@ -929,12 +999,21 @@ function ProgressBar({ progressRef, total, onSeek, isPlaying, visible }) {
 }
 
 /* ── Thin Volume Slider ───────────────────────────────────────────────────── */
+/* шкала громкости. ползунок линеен по ПОЗИЦИИ (0..1), а gain, который идёт
+   в audio.volume, проходит перцептивную степень: audio.volume линейна по
+   амплитуде, а слух — нет, поэтому на тихой громкости линейный ползунок
+   отдавал весь полезный диапазон в самый низ и приходилось тянуть едва ли
+   не в ноль. gain = pos^VOL_GAMMA — верх ползунка по-прежнему 100% */
+const VOL_GAMMA = 2.2;
+const volPosToGain = p => Math.pow(Math.max(0, Math.min(1, p)), VOL_GAMMA);
+const volGainToPos = g => Math.pow(Math.max(0, Math.min(1, g)), 1 / VOL_GAMMA);
+
 function ThinVolumeSlider({ volume, onChange, onLiveChange }) {
   const wrapRef    = useRef(null);
   const canvasRef  = useRef(null);
   const rafRef     = useRef(null);
-  const volActual  = useRef(volume); /* follows props when idle, follows cursor during drag */
-  const volDisp    = useRef(volume); /* smoothly chases volActual */
+  const volActual  = useRef(volGainToPos(volume)); /* позиция 0..1; следует пропу когда idle, курсору при драге */
+  const volDisp    = useRef(volGainToPos(volume)); /* плавно догоняет volActual */
   const dragging   = useRef(false);
   const onChangeCb = useRef(onChange);     /* commit to React state (mouseup only) */
   const onLiveCb   = useRef(onLiveChange); /* live apply during drag (no re-render) */
@@ -950,7 +1029,7 @@ function ThinVolumeSlider({ volume, onChange, onLiveChange }) {
   useEffect(() => { onChangeCb.current = onChange; }, [onChange]);
   useEffect(() => { onLiveCb.current = onLiveChange; }, [onLiveChange]);
   useEffect(() => {
-    if (!dragging.current) volActual.current = volume;
+    if (!dragging.current) volActual.current = volGainToPos(volume);
     kick();
   }, [volume]);
   /* перерисовка в такт анимации акцента */
@@ -1037,12 +1116,13 @@ function ThinVolumeSlider({ volume, onChange, onLiveChange }) {
     const onMove = (e) => {
       if (!dragging.current) return;
       volActual.current = getVal(e);
-      onLiveCb.current?.(volActual.current); /* apply to audio without re-rendering App */
+      /* позиция → gain на границе наружу: App и audio знают только gain */
+      onLiveCb.current?.(volPosToGain(volActual.current));
     };
     const onUp = () => {
       if (!dragging.current) return;
       dragging.current = false;
-      onChangeCb.current(volActual.current); /* commit final value to React state once */
+      onChangeCb.current(volPosToGain(volActual.current)); /* commit final gain to React state once */
       kick();
     };
     document.addEventListener('mousemove', onMove);
@@ -1052,7 +1132,7 @@ function ThinVolumeSlider({ volume, onChange, onLiveChange }) {
 
   return (
     <div ref={wrapRef} style={{flex:1, minHeight:0, cursor:'ns-resize', display:'flex', alignItems:'stretch'}}
-      onMouseDown={e => { dragging.current = true; volActual.current = getVal(e); onLiveCb.current?.(volActual.current); kick(); }}>
+      onMouseDown={e => { dragging.current = true; volActual.current = getVal(e); onLiveCb.current?.(volPosToGain(volActual.current)); kick(); }}>
       <canvas ref={canvasRef} style={{display:'block'}}/>
     </div>
   );
@@ -1348,9 +1428,22 @@ const TrackRow = React.memo(function TrackRow({ track, isActive, isLoading, isEr
 
 /* ── TrackList ───────────────────────────────────────────────────────────── */
 /* ── TrackContextMenu ────────────────────────────────────────────────────── */
-function TrackContextMenu({ menu, onClose, onCopyLink, onStartStation }) {
+/* меню ПКМ по треку: копировать ссылку / станция / добавить в плейлист.
+   вход — spring + каскад пунктов (лёгкий mac-стиль), «добавить» раскрывает
+   сабменю-пикер со своими плейлистами, где чекбокс = трек внутри плейлиста
+   (клик снимает/кладёт, повторно добавить нельзя) */
+function TrackContextMenu({ menu, onClose, onCopyLink, onStartStation, canAddPl,
+  playlists, playlistsLoading, onEnsurePlaylists, plMembers, onEnsureMembers,
+  onToggleInPlaylist, onCreateWithTrack }) {
+  const SUB_W = 262; /* ширины хватает чекбоксу + обложке + названию + счётчику */
+
   const ref = useRef(null);
+  const subRef = useRef(null);
   const [pos, setPos] = useState({ x: menu.x, y: menu.y, ready: false });
+  const [plOpen, setPlOpen]   = useState(false);
+  const [subPos, setSubPos]   = useState(null); /* {x, y, dir} — dir: 1 справа / -1 слева */
+  const [busyId, setBusyId]   = useState(null); /* id плейлиста | 'new' */
+  const [doneNew, setDoneNew] = useState(false);
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -1365,15 +1458,63 @@ function TrackContextMenu({ menu, onClose, onCopyLink, onStartStation }) {
     if (x < PAD) x = PAD;
     if (y < PAD) y = PAD;
     setPos({ x, y, ready: true });
+    setPlOpen(false); setSubPos(null); setBusyId(null); setDoneNew(false);
   }, [menu.x, menu.y]);
 
+  /* позиция сабменю: у правого края меню, при нехватке места — слева.
+     сабменю — сосед меню в портале (не потомок): backdrop-filter меню иначе
+     сделал бы его containing block для position:fixed */
+  const placeSub = useCallback(() => {
+    const mEl = ref.current, sEl = subRef.current;
+    if (!mEl || !sEl) return;
+    const m = mEl.getBoundingClientRect();
+    const sH = sEl.offsetHeight; /* без transform — сабменю входит со scale */
+    const PAD = 8;
+    let dir = 1, x = m.right + 8;
+    if (x + SUB_W > window.innerWidth - PAD) { dir = -1; x = m.left - SUB_W - 8; }
+    if (x < PAD) { dir = 1; x = Math.min(m.right + 8, window.innerWidth - SUB_W - PAD); }
+    let y = Math.min(m.top, window.innerHeight - sH - PAD);
+    if (y < PAD) y = PAD;
+    setSubPos(prev => (prev && prev.x === x && prev.y === y && prev.dir === dir) ? prev : { x, y, dir });
+  }, []);
+
+  useLayoutEffect(() => { if (plOpen) placeSub(); }, [plOpen, playlists, playlistsLoading, placeSub]);
+
+  /* ресайз окна — пересчитать, пока сабменю открыто */
   useEffect(() => {
+    if (!plOpen) return;
+    window.addEventListener('resize', placeSub);
+    return () => window.removeEventListener('resize', placeSub);
+  }, [plOpen, placeSub]);
+
+  /* пикер открыт → тянем список плейлистов и состав каждого (для чекбоксов).
+     оба запроса ленивые и кешируются в App, повторно не летят */
+  useEffect(() => {
+    if (!plOpen) return;
+    onEnsurePlaylists?.();
+    onEnsureMembers?.(playlists);
+  }, [plOpen, playlists]);
+
+  useEffect(() => {
+    /* сабменю — сосед меню в портале, клик/скролл внутри него тоже «свои» */
+    const inside = e => {
+      if (ref.current && ref.current.contains(e.target)) return true;
+      if (subRef.current && subRef.current.contains(e.target)) return true;
+      return false;
+    };
     const onDown = (e) => {
-      if (!ref.current || ref.current.contains(e.target)) return;
+      if (inside(e)) return;
       onClose();
     };
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
-    const onScroll = () => onClose();
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      if (plOpen) { setPlOpen(false); setSubPos(null); } else onClose();
+    };
+    const onScroll = (e) => {
+      /* скролл внутри самого пикера плейлистов не закрывает меню */
+      if (inside(e)) return;
+      onClose();
+    };
     document.addEventListener('mousedown', onDown, true);
     document.addEventListener('keydown', onKey);
     window.addEventListener('wheel', onScroll, { passive: true });
@@ -1384,45 +1525,121 @@ function TrackContextMenu({ menu, onClose, onCopyLink, onStartStation }) {
       window.removeEventListener('wheel', onScroll);
       window.removeEventListener('blur', onClose);
     };
-  }, [onClose]);
+  }, [onClose, plOpen]);
 
   const t = useLang();
   const canCopy = !!menu.track.permalinkUrl;
+  const own = (playlists || []).filter(p => p.isOwn);
 
+  /* tri-state чекбокса: 'loading' (состав едет) / true (трек внутри) / false (нет) */
+  const inState = pl => {
+    const m = plMembers?.[pl.id];
+    if (m instanceof Set) return m.has(menu.track.id);
+    return 'loading';
+  };
+
+  const toggleTrack = async pl => {
+    if (busyId) return;
+    const isIn = inState(pl);
+    if (isIn === 'loading') return; /* не тыкаем вслепую в неизвестное состояние */
+    setBusyId(pl.id);
+    await onToggleInPlaylist?.(menu.track, pl, isIn);
+    setBusyId(null);
+    /* меню НЕ закрываем: чекбокс снимается/ставится, можно править сразу
+       несколько плейлистов подряд — это и есть смысл чекбоксов */
+  };
+  const createWith = async () => {
+    if (busyId || doneNew) return;
+    setBusyId('new');
+    const r = await onCreateWithTrack?.(menu.track);
+    setBusyId(null);
+    if (r === 'created' || r === true) {
+      setDoneNew(true);
+      setTimeout(onClose, 640);
+    }
+  };
+
+  const itemVars = {
+    hidden: { opacity: 0, y: -5 },
+    show:   { opacity: 1, y: 0, transition: { duration: 0.24, ease: [0.22, 1, 0.36, 1] } },
+  };
+  const itemStyle = {
+    display:'flex', alignItems:'center', gap:10,
+    padding:'7px 11px', borderRadius:7,
+    fontSize:12.5, color:'rgba(255,255,255,0.86)',
+    cursor:'pointer', transition:'background 0.12s', userSelect:'none',
+  };
+  const itemHover = {
+    onMouseEnter: e => e.currentTarget.style.background='rgba(255,255,255,0.07)',
+    onMouseLeave: e => e.currentTarget.style.background='transparent',
+  };
   const Item = ({ label, icon, disabled, onClick }) => (
-    <div onClick={disabled ? null : () => { onClick?.(); onClose(); }}
-      style={{
-        display:'flex', alignItems:'center', gap:10,
-        padding:'7px 11px', borderRadius:7,
-        fontSize:12.5, color: disabled ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.86)',
-        cursor: disabled ? 'default' : 'pointer',
-        transition:'background 0.12s',
-        userSelect:'none',
-      }}
-      onMouseEnter={e => { if (!disabled) e.currentTarget.style.background='rgba(255,255,255,0.07)'; }}
-      onMouseLeave={e => { e.currentTarget.style.background='transparent'; }}>
+    <motion.div variants={itemVars} onClick={disabled ? null : () => { onClick?.(); onClose(); }}
+      style={{ ...itemStyle, color: disabled ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.86)', cursor: disabled ? 'default' : 'pointer' }}
+      {...(disabled ? {} : itemHover)}>
       <span style={{display:'flex', alignItems:'center', justifyContent:'center', width:14, opacity:0.7}}>{icon}</span>
       <span>{label}</span>
-    </div>
+    </motion.div>
   );
 
+  /* чекбокс строки: галочка = трек уже в плейлисте (клик его снимет).
+     tri-state — спиннер, пока едет состав, чтобы не показывать ложное «нет» */
+  const PlCheck = ({ pl }) => {
+    const on = inState(pl) === true;
+    if (busyId === pl.id)
+      return <div style={{width:13, height:13, flexShrink:0, border:'1.5px solid rgba(255,255,255,0.2)',
+        borderTopColor:'rgba(255,255,255,0.65)', borderRadius:'50%', animation:'spin 0.75s linear infinite'}}/>;
+    if (inState(pl) === 'loading')
+      return <div style={{width:14, height:14, flexShrink:0, border:'1.5px solid rgba(255,255,255,0.12)',
+        borderTopColor:'rgba(255,255,255,0.34)', borderRadius:'50%', animation:'spin 0.9s linear infinite'}}/>;
+    return (
+      <motion.span
+        animate={{
+          backgroundColor: on ? 'rgba(var(--accent-rgb), 0.9)' : 'rgba(255,255,255,0)',
+          borderColor:     on ? 'rgba(var(--accent-rgb), 0.9)' : 'rgba(255,255,255,0.22)',
+        }}
+        transition={{ duration: 0.16, ease: 'easeOut' }}
+        style={{
+          width:14, height:14, flexShrink:0, borderRadius:4, border:'1.5px solid',
+          display:'flex', alignItems:'center', justifyContent:'center',
+        }}>
+        <motion.svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#0a0a0c"
+          strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round"
+          initial={false}
+          animate={{ scale: on ? 1 : 0.4, opacity: on ? 1 : 0 }}
+          transition={{ type:'spring', stiffness: 620, damping: 26, mass: 0.5 }}>
+          <polyline points="20 6 9 17 4 12"/>
+        </motion.svg>
+      </motion.span>
+    );
+  };
+
   return ReactDOM.createPortal(
+    <>
     <motion.div ref={ref}
-      initial={{ opacity: 0, scale: 0.92 }}
-      animate={{ opacity: pos.ready ? 1 : 0, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.95 }}
-      transition={{ type:'spring', stiffness: 520, damping: 36, mass: 0.5 }}
+      variants={{ hidden:{}, show:{ transition:{ staggerChildren: 0.03, delayChildren: 0.02 } } }}
+      initial="hidden" animate="show"
+      /* exit живёт на КОРНЕ: иначе AnimatePresence держит поддерево, пока
+         доигрывает пружина вложенного контейнера — панель висит полсекунды */
+      exit={{ opacity: 0, scale: 0.96, y: -2, transition: { duration: 0.14, ease: [0.4, 0, 1, 1] } }}
       style={{
         position:'fixed', left: pos.x, top: pos.y,
         transformOrigin: 'top left',
-        minWidth: 200,
+        minWidth: 208,
+        opacity: pos.ready ? 1 : 0,
         background:'rgba(24,24,24,0.97)',
         backdropFilter:'blur(14px)', WebkitBackdropFilter:'blur(14px)',
         border:'1px solid rgba(255,255,255,0.055)',
-        borderRadius:10, padding:4,
-        boxShadow:'0 12px 36px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.3)',
+        borderRadius:11, padding:4,
+        boxShadow:'0 16px 44px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.32)',
         zIndex: 9998,
       }}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.85, y: -6 }}
+        animate={{ opacity: pos.ready ? 1 : 0, scale: 1, y: 0 }}
+        /* exit здесь НЕ задаём: AnimatePresence ждал бы пружину этого контейнера
+           и держал панель на экране после закрытия ~0.4с. Гасит корень. */
+        style={{ display:'flex', flexDirection:'column' }}>
       <Item label={t('copy_link')} disabled={!canCopy}
         onClick={() => onCopyLink(menu.track)}
         icon={
@@ -1439,7 +1656,122 @@ function TrackContextMenu({ menu, onClose, onCopyLink, onStartStation }) {
             <path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.49M20.49 4a10 10 0 0 1 0 16M3.51 20a10 10 0 0 1 0-16"/>
           </svg>
         }/>
-    </motion.div>,
+      {canAddPl && (
+        <motion.div variants={itemVars}
+          onClick={() => setPlOpen(v => !v)}
+          style={itemStyle} {...itemHover}>
+          <span style={{display:'flex', alignItems:'center', justifyContent:'center', width:14, opacity:0.7}}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 18V5l12-2v13"/>
+              <circle cx="6" cy="18.5" r="3"/><circle cx="18" cy="16.5" r="3"/>
+            </svg>
+          </span>
+          <span>{t('add_to_pl')}</span>
+          <motion.span animate={{ rotate: plOpen ? 90 : 0 }} transition={{ duration: 0.18, ease:'easeOut' }}
+            style={{marginLeft:'auto', display:'flex', color:'rgba(255,255,255,0.3)'}}>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </motion.span>
+        </motion.div>
+      )}
+      </motion.div>
+      </motion.div>
+
+      {/* сабменю: пикер своих плейлистов. сосед меню в том же портале — не
+          потомок (backdrop-filter меню иначе сделал бы containing block для
+          position:fixed) и не наследует его variants (иначе каскад пунктов
+          перезапускается и соседние строки мигают).
+          backdrop-filter здесь убран намеренно: при 0.97 альфы блюр не виден,
+          но он заставляет Chromium пересчитывать блюр у МЕНЮ, а под ним
+          анимированный ambient glow плеера — отсюда рябь на панели.
+          Вход — короткий сдвиг без scale: scale с origin у края наезжал на
+          меню на 2px и тоже дёргал его край. */}
+      <AnimatePresence>
+        {plOpen && (
+          <motion.div key="plPicker" ref={subRef}
+            initial={{ opacity: 0, x: subPos ? (subPos.dir > 0 ? -6 : 6) : -6 }}
+            animate={{ opacity: subPos ? 1 : 0, x: 0 }}
+            exit={{ opacity: 0, x: subPos ? (subPos.dir > 0 ? -4 : 4) : -4, transition: { duration: 0.12, ease: 'easeIn' } }}
+            transition={{ type:'spring', stiffness: 560, damping: 36, mass: 0.5 }}
+            style={{
+              position:'fixed', left: subPos?.x ?? -9999, top: subPos?.y ?? -9999,
+              width: SUB_W,
+              background:'rgba(24,24,24,0.97)',
+              border:'1px solid rgba(255,255,255,0.055)',
+              borderRadius:11, padding:4,
+              boxShadow:'0 16px 44px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.32)',
+              zIndex: 9998,
+            }}>
+            <div style={{padding:'5px 9px 6px', fontSize:9.5, letterSpacing:'0.13em',
+              textTransform:'uppercase', color:'rgba(255,255,255,0.34)', fontWeight:600,
+              overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+              {t('add_to_pl')}
+            </div>
+            {/* создать новый с этим треком */}
+            <div onClick={doneNew ? undefined : createWith}
+              style={{...itemStyle, padding:'7px 9px', color:'rgba(255,255,255,0.72)',
+                cursor: (busyId || doneNew) ? 'default' : 'pointer'}} {...((busyId || doneNew) ? {} : itemHover)}>
+              <span style={{display:'flex', alignItems:'center', justifyContent:'center', width:14}}>
+                {busyId === 'new'
+                  ? <div style={{width:11, height:11, border:'1.5px solid rgba(255,255,255,0.2)', borderTopColor:'rgba(255,255,255,0.65)', borderRadius:'50%', animation:'spin 0.75s linear infinite'}}/>
+                  : doneNew
+                    ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>}
+              </span>
+              <span>{t('add_pl_new')}</span>
+            </div>
+            <div style={{height:1, background:'rgba(255,255,255,0.055)', margin:'3px 6px 4px'}}/>
+            {/* список / скелетоны / ошибка */}
+            {playlistsLoading && !playlists ? (
+              <div style={{padding:'2px 5px 6px'}}>
+                {[0,1,2].map(i => (
+                  <div key={i} className="skel" style={{height:30, borderRadius:8, marginBottom:5, ['--skel-delay']: `${i * 0.12}s`}}/>
+                ))}
+              </div>
+            ) : playlists === null ? (
+              <div style={{padding:'8px 9px 10px', fontSize:11.5, color:'rgba(255,80,60,0.75)', display:'flex', alignItems:'center', justifyContent:'space-between', gap:8}}>
+                {t('pl_list_err')}
+                <div onClick={() => onEnsurePlaylists?.(true)} style={{
+                  fontSize:10.5, color:'rgba(255,255,255,0.55)', cursor:'pointer', padding:'2px 9px',
+                  borderRadius:999, border:'1px solid rgba(255,255,255,0.08)', userSelect:'none'}}>
+                  ⟳ {t('retry')}
+                </div>
+              </div>
+            ) : own.length === 0 ? null : (
+              <div className="scroll-thin" style={{maxHeight:246, overflowY:'auto', padding:'1px 1px 3px'}}>
+                {own.map(pl => {
+                  const on = inState(pl) === true;
+                  const busy = busyId === pl.id;
+                  const dis = !!busyId || inState(pl) === 'loading';
+                  return (
+                    <div key={pl.id} onClick={dis ? undefined : () => toggleTrack(pl)}
+                      title={on ? t('pl_in') : t('pl_out')}
+                      style={{...itemStyle, padding:'6px 8px', gap:8,
+                        background: on ? 'rgba(var(--accent-rgb),0.08)' : 'transparent',
+                        cursor: dis ? 'default' : 'pointer'}}
+                      {...(dis ? {} : itemHover)}>
+                      <PlCheck pl={pl}/>
+                      <div style={{width:26, height:26, borderRadius:6, flexShrink:0, background:'#111116', overflow:'hidden', position:'relative'}}>
+                        {pl.coverUrl
+                          ? <img src={pl.coverUrl} loading="lazy" style={{position:'absolute', inset:0, width:'100%', height:'100%', objectFit:'cover', clipPath:'inset(0 round 6px)'}}/>
+                          : <img src="../assets/note.png" style={{width:9, height:9, filter:'brightness(0) invert(1)', opacity:0.2, position:'absolute', inset:0, margin:'auto'}}/>}
+                      </div>
+                      <div style={{flex:1, minWidth:0, fontSize:12.5, fontWeight:500,
+                        color: on ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.82)',
+                        overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                        {pl.title}
+                      </div>
+                      <span style={{fontSize:10.5, color:'rgba(255,255,255,0.28)', fontVariantNumeric:'tabular-nums', flexShrink:0}}>
+                        {pl.trackCount ?? '—'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>,
     document.body
   );
 }
@@ -2910,6 +3242,31 @@ const PlaylistEditor = React.forwardRef(function PlaylistEditor({ visible, playl
                                        (DataDome не любит частые) */
   tracksRef.current = tracks;
   const inList = useMemo(() => new Set(tracks.map(x => x.id)), [tracks]);
+  /* название: инлайн-правка в шапке; коммит по Enter/blur → dirty */
+  const [titleVal, setTitleVal]       = useState('');
+  const [titleEditing, setTitleEditing] = useState(false);
+  const titleRef = useRef('');
+  titleRef.current = titleVal;
+  const commitTitle = () => {
+    setTitleEditing(false);
+    const v = titleVal.trim().slice(0, 100);
+    if (!v || v === (playlist?.title ?? '')) { setTitleVal(playlist?.title ?? ''); return; }
+    setTitleVal(v); touch();
+  };
+  /* выбранная обложка: превью сразу, отправка — при «Сохранить».
+     dataUrl — для превью, b64/mime/filename — для multipart PUT */
+  const [pendingArt, setPendingArt] = useState(null);
+  const [artErr, setArtErr]         = useState(false);
+  const pendingArtRef = useRef(null);
+  pendingArtRef.current = pendingArt;
+  const pickArtwork = async () => {
+    const picked = await window.electronAPI.selectImage?.();
+    if (!picked?.dataUrl) return;
+    const art = await prepareArtwork(picked); /* квадратный jpeg ≤1600px */
+    if (!art) return;
+    setPendingArt(art);
+    touch();
+  };
 
   /* сброс + загрузка полного списка треков при открытии */
   useEffect(() => {
@@ -2919,6 +3276,8 @@ const PlaylistEditor = React.forwardRef(function PlaylistEditor({ visible, playl
     setConfirmDel(false); setDeleting(false);
     setExitGuard(false); setGuardSaving(false);
     plObjRef.current = null;
+    setTitleVal(playlist?.title ?? ''); setTitleEditing(false);
+    setPendingArt(null); setArtErr(false);
     setQuery(''); queryRef.current = ''; setResults([]);
     setRecs(null); setTab('recs');
     (async () => {
@@ -2938,21 +3297,54 @@ const PlaylistEditor = React.forwardRef(function PlaylistEditor({ visible, playl
      сайта (HAR): ПОЛНЫЙ объект плейлиста с tracks = голые id. сырой объект
      берём из кэша (GET один раз за сессию — беречь лимиты DataDome), запасной
      формат — только tracks. после PUT одна сверка порядка, без ретраев */
+  /* сохранение вручную (автосейва НЕТ — беречь лимиты DataDome). порядок:
+     1) если выбрана обложка — multipart PUT (фолбэк POST) с artwork_data;
+        в тело дублируем title+tracks, чтобы ничего не потерялось
+     2) JSON PUT как у веб-клиента (HAR): полный объект с tracks = голые id,
+        + обновлённый title. после — одна сверка порядка, без ретраев */
   const saveNow = useCallback(async () => {
     if (!scAuth || !playlist) return;
     const snapshot = tracksRef.current;
-    setStatus('saving');
+    setStatus('saving'); setArtErr(false);
     const ids = snapshot.map(x => x.id);
+    let newCover;
+    let artFailed = false;
+    const art = pendingArtRef.current;
+    if (art) {
+      /* обложка — ОТДЕЛЬНЫЙ json-PUT на .../artwork с base64-строкой
+         (формат взят из HAR веб-клиента). не multipart: SC на этом пути
+         всегда пытается json.parse и на multipart отвечает 400
+         «Unable to parse JSON». urn плейлиста — soundcloud:playlists:{id},
+         а не голый id. POST на /playlists/{id} не существует (404) */
+      const res = await window.electronAPI.scFetch(
+        `https://api-v2.soundcloud.com/playlists/soundcloud:playlists:${playlist.id}/artwork`,
+        scAuth.token, scAuth.clientId, 'PUT',
+        { image_data: art.b64 }
+      );
+      if (res.error) {
+        console.error('[seWer] playlist artwork (PUT)', res);
+        artFailed = true;
+        setArtErr(true);          /* обложка не залилась — но треки/название ещё уйдут */
+      } else {
+        if (res.data?.id) plObjRef.current = res.data;
+        const au = res.data?.artwork_url || res.data?.playlist?.artwork_url;
+        if (au) newCover = au.replace('-large', '-t500x500');
+        setPendingArt(null);
+      }
+    }
     if (!plObjRef.current) {
       const cur = await window.electronAPI.scFetch(
         `https://api-v2.soundcloud.com/playlists/${playlist.id}`, scAuth.token, scAuth.clientId);
       if (!cur.error && cur.data?.id) plObjRef.current = cur.data;
     }
+    const newTitle = (titleRef.current && titleRef.current !== playlist.title) ? titleRef.current : null;
     const attempts = [];
     if (plObjRef.current) {
-      attempts.push({ playlist: { ...plObjRef.current, tracks: ids, track_count: ids.length } });
+      attempts.push({ playlist: { ...plObjRef.current,
+        ...(newTitle ? { title: newTitle } : {}),
+        tracks: ids, track_count: ids.length } });
     }
-    attempts.push({ playlist: { tracks: ids } });
+    attempts.push({ playlist: { ...(newTitle ? { title: newTitle } : {}), tracks: ids } });
     const verify = async () => {
       const check = await window.electronAPI.scFetch(
         `https://api-v2.soundcloud.com/playlists/${playlist.id}/tracks?limit=200`,
@@ -2968,7 +3360,7 @@ const PlaylistEditor = React.forwardRef(function PlaylistEditor({ visible, playl
         scAuth.token, scAuth.clientId, 'PUT', attempts[i]
       );
       if (res.error) {
-        console.error(`[seWer] playlist PUT (формат ${i + 1})`, res.error, res.body ?? '');
+        console.error(`[seWer] playlist PUT (формат ${i + 1})`, res);
         continue;
       }
       if (!(await verify())) {
@@ -2978,8 +3370,10 @@ const PlaylistEditor = React.forwardRef(function PlaylistEditor({ visible, playl
         return;
       }
       dirtyRef.current = false;
-      setStatus('saved');
-      onUpdated?.(playlist.id, snapshot);
+      /* треки/название сохранены даже если обложка не залилась: показываем
+         ошибку обложки с retry, но из редактора выпускаем (dirty снят) */
+      setStatus(artFailed ? 'error' : 'saved');
+      onUpdated?.(playlist.id, snapshot, { title: newTitle || undefined, coverUrl: newCover });
       return;
     }
     setStatus('error');
@@ -3090,7 +3484,7 @@ const PlaylistEditor = React.forwardRef(function PlaylistEditor({ visible, playl
     dirty:  { text: t('ed_dirty'), color: 'rgba(255,185,90,0.8)' },
     saving: { text: t('ed_saving'), color: 'rgba(255,255,255,0.4)' },
     saved:  { text: t('ed_saved'),  color: 'rgba(255,255,255,0.5)' },
-    error:  { text: t('ed_save_err'), color: 'rgba(255,80,60,0.85)', retry: true },
+    error:  { text: artErr ? t('ed_art_err') : t('ed_save_err'), color: 'rgba(255,80,60,0.85)', retry: true },
   }[status];
 
   return (
@@ -3107,8 +3501,8 @@ const PlaylistEditor = React.forwardRef(function PlaylistEditor({ visible, playl
         display:'flex', justifyContent:'center',
       }}>
         <div style={{width:'100%', maxWidth:560}}>
-          {/* шапка: назад / название / статус */}
-          <div style={{display:'flex', alignItems:'center', gap:12, marginBottom:20}}>
+          {/* шапка, строка 1: назад / статус / сохранить / удалить */}
+          <div style={{display:'flex', alignItems:'center', gap:12, marginBottom:18}}>
             <div onClick={close} title={t('back')} style={{
               width:32, height:32, borderRadius:10, flexShrink:0,
               display:'flex', alignItems:'center', justifyContent:'center',
@@ -3119,16 +3513,7 @@ const PlaylistEditor = React.forwardRef(function PlaylistEditor({ visible, playl
               onMouseLeave={e => { e.currentTarget.style.background='rgba(255,255,255,0.045)'; e.currentTarget.style.color='rgba(255,255,255,0.6)'; }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
             </div>
-            <div style={{flex:1, minWidth:0}}>
-              <div style={{fontSize:15.5, fontWeight:600, letterSpacing:'-0.015em', color:'rgba(255,255,255,0.88)',
-                overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
-                {playlist ? playlist.title : ''}
-              </div>
-              <div style={{fontSize:11, color:'rgba(255,255,255,0.3)', marginTop:1, fontVariantNumeric:'tabular-nums'}}>
-                {tracks.length} {countLabel(tracks.length)}
-                {!loaded && ' · …'}
-              </div>
-            </div>
+            <div style={{flex:1}}/>
             {/* сохранить вручную — появляется только когда есть изменения */}
             {status === 'dirty' && (
               <div onClick={saveNow} style={{
@@ -3190,6 +3575,79 @@ const PlaylistEditor = React.forwardRef(function PlaylistEditor({ visible, playl
                 </svg>
               </div>
             )}
+          </div>
+
+          {/* шапка, строка 2: обложка (клик → выбор файла) + редактируемое название */}
+          <div style={{display:'flex', gap:18, alignItems:'center', marginBottom:26}}>
+            <div onClick={pickArtwork} title={t('ed_art_pick')} style={{
+              width:112, height:112, borderRadius:14, flexShrink:0, position:'relative',
+              overflow:'hidden', cursor:'pointer', background:'#111116',
+              boxShadow:'0 0 0 1px rgba(255,255,255,0.055)',
+            }}>
+              {pendingArt ? (
+                <img src={pendingArt.dataUrl} style={{position:'absolute', inset:0, width:'100%', height:'100%', objectFit:'cover', display:'block'}}/>
+              ) : playlist?.coverUrl ? (
+                <img src={playlist.coverUrl} style={{position:'absolute', inset:0, width:'100%', height:'100%', objectFit:'cover', display:'block'}}/>
+              ) : (
+                <img src="../assets/note.png" style={{position:'absolute', inset:0, margin:'auto', width:26, height:26, filter:'brightness(0) invert(1)', opacity:0.16}}/>
+              )}
+              {/* hover-оверлей: камера + подсказка */}
+              <div className="pl-art-hover" style={{
+                position:'absolute', inset:0, display:'flex', flexDirection:'column',
+                alignItems:'center', justifyContent:'center', gap:6,
+                background:'rgba(8,8,12,0.55)', backdropFilter:'blur(2px)',
+                opacity:0, transition:'opacity 0.16s ease',
+              }}>
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.9)"
+                  strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                  <circle cx="12" cy="13" r="4"/>
+                </svg>
+                <span style={{fontSize:9.5, letterSpacing:'0.12em', textTransform:'uppercase',
+                  color:'rgba(255,255,255,0.75)', fontWeight:600}}>{t('ed_art_pick')}</span>
+              </div>
+            </div>
+            <div style={{flex:1, minWidth:0}}>
+              {titleEditing ? (
+                <input
+                  autoFocus
+                  onFocus={e => e.target.select()}
+                  value={titleVal}
+                  onChange={e => setTitleVal(e.target.value)}
+                  onBlur={commitTitle}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') commitTitle();
+                    if (e.key === 'Escape') { setTitleVal(playlist?.title ?? ''); setTitleEditing(false); }
+                  }}
+                  maxLength={100}
+                  placeholder={t('ed_title_ph')}
+                  style={{
+                    width:'100%', background:'none', outline:'none',
+                    border:'none', borderBottom:'1.5px solid var(--accent)',
+                    padding:'2px 0 7px', color:'rgba(255,255,255,0.92)',
+                    fontSize:22, fontWeight:700, letterSpacing:'-0.02em',
+                    fontFamily:'inherit',
+                  }}/>
+              ) : (
+                <div className="pl-title-edit" onClick={() => { setTitleVal(playlist?.title ?? ''); setTitleEditing(true); }}
+                  style={{display:'flex', alignItems:'center', gap:10, cursor:'text', padding:'2px 0 8px'}}>
+                  <span style={{
+                    fontSize:22, fontWeight:700, letterSpacing:'-0.02em', color:'rgba(255,255,255,0.92)',
+                    overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', minWidth:0}}>
+                    {titleVal || playlist?.title || ''}
+                  </span>
+                  <svg className="pl-title-pencil" width="13" height="13" viewBox="0 0 24 24" fill="none"
+                    stroke="rgba(255,255,255,0.35)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                    style={{flexShrink:0, opacity:0, transition:'opacity 0.15s'}}>
+                    <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
+                  </svg>
+                </div>
+              )}
+              <div style={{fontSize:11.5, color:'rgba(255,255,255,0.32)', marginTop:2, fontVariantNumeric:'tabular-nums'}}>
+                {tracks.length} {countLabel(tracks.length)}
+                {!loaded && ' · …'}
+              </div>
+            </div>
           </div>
 
           {/* треки: Reorder-лист (drag за строку, ✕ удалить) */}
@@ -3352,55 +3810,94 @@ const PlaylistEditor = React.forwardRef(function PlaylistEditor({ visible, playl
         </div>
       </div>
 
-      {/* выход с несохранёнными изменениями: сохранить / не сохранять / отмена */}
+      {/* выход с несохранёнными изменениями: карточка с вертикальными
+          полноразмерными кнопками — русские подписи влезают всегда */}
       <AnimatePresence>
         {exitGuard && visible && (
           <motion.div key="plExitGuard" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
-            transition={{duration:0.14}}
-            style={{position:'absolute', inset:0, zIndex:10, background:'rgba(0,0,0,0.55)',
+            transition={{duration:0.16}}
+            style={{position:'absolute', inset:0, zIndex:10, background:'rgba(4,4,8,0.55)',
+              backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)',
               display:'flex', alignItems:'center', justifyContent:'center'}}>
-            <motion.div initial={{scale:0.94, opacity:0}} animate={{scale:1, opacity:1}} exit={{scale:0.96, opacity:0}}
-              transition={{type:'spring', stiffness:420, damping:32}}
-              style={{width:324, background:'#15151b', border:'1px solid rgba(255,255,255,0.07)',
-                borderRadius:16, padding:20, boxShadow:'0 24px 64px rgba(0,0,0,0.5)'}}>
-              <div style={{fontSize:14, fontWeight:600, color:'rgba(255,255,255,0.88)', marginBottom:4}}>
-                {t('ed_unsaved')}
+            <motion.div
+              initial={{scale:0.97, y:10, opacity:0}}
+              animate={{scale:1, y:0, opacity:1}}
+              exit={{scale:0.98, y:6, opacity:0, transition:{duration:0.13, ease:'easeIn'}}}
+              transition={{type:'spring', stiffness:420, damping:32, mass:0.7}}
+              style={{width:272,
+                background:'rgba(24,24,24,0.97)',
+                backdropFilter:'blur(14px)', WebkitBackdropFilter:'blur(14px)',
+                border:'1px solid rgba(255,255,255,0.055)', borderRadius:11,
+                padding:'16px 12px 12px', transformOrigin:'center',
+                boxShadow:'0 16px 44px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.32)'}}>
+              <div style={{padding:'0 4px'}}>
+                <div style={{fontSize:9.5, letterSpacing:'0.13em', textTransform:'uppercase',
+                  fontWeight:600, color:'rgba(255,255,255,0.26)', marginBottom:7}}>
+                  {t('ed_dirty')}
+                </div>
+                <div style={{fontSize:13.5, fontWeight:500, letterSpacing:'-0.01em',
+                  lineHeight:1.36, color:'rgba(255,255,255,0.84)'}}>
+                  {t('ed_unsaved')}
+                </div>
+                {playlist?.title && (
+                  <div title={playlist.title} style={{fontSize:11.5, color:'rgba(255,255,255,0.25)',
+                    marginTop:4, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                    {playlist.title}
+                  </div>
+                )}
               </div>
-              <div style={{fontSize:12, color:'rgba(255,255,255,0.35)', marginBottom:18,
-                overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
-                {playlist ? playlist.title : ''}
-              </div>
-              <div style={{display:'flex', gap:8}}>
+              {/* три ОДИНАКОВЫЕ кнопки: без акцента, без заливок, только хайрлайн.
+                  единственный цвет — красный на hover у деструктивного */}
+              <div style={{display:'flex', flexDirection:'column', gap:6, marginTop:14}}>
                 <div onClick={guardSaveExit} style={{
-                  flex:1, display:'flex', alignItems:'center', justifyContent:'center', gap:7,
-                  padding:'9px 0', borderRadius:10, cursor:guardSaving ? 'default' : 'pointer',
-                  border:'1px solid var(--accent)', color:'var(--accent)',
-                  fontSize:12, fontWeight:600, userSelect:'none', transition:'background 0.15s',
-                  opacity: guardSaving ? 0.6 : 1,
+                  display:'flex', alignItems:'center', justifyContent:'center', gap:7,
+                  height:32, borderRadius:9, cursor:guardSaving ? 'default' : 'pointer',
+                  background:'transparent', border:'1px solid rgba(255,255,255,0.075)',
+                  color:'rgba(255,255,255,0.62)', fontSize:12.5, fontWeight:500,
+                  userSelect:'none', transition:'background 0.14s, color 0.14s, border-color 0.14s',
+                  opacity: guardSaving ? 0.55 : 1,
                 }}
-                  onMouseEnter={e => { if (!guardSaving) e.currentTarget.style.background='rgba(255,255,255,0.05)'; }}
-                  onMouseLeave={e => e.currentTarget.style.background='transparent'}>
+                  onMouseEnter={e => { if (!guardSaving) {
+                    e.currentTarget.style.background='rgba(255,255,255,0.045)';
+                    e.currentTarget.style.borderColor='rgba(255,255,255,0.13)';
+                    e.currentTarget.style.color='rgba(255,255,255,0.92)'; } }}
+                  onMouseLeave={e => { if (!guardSaving) {
+                    e.currentTarget.style.background='transparent';
+                    e.currentTarget.style.borderColor='rgba(255,255,255,0.075)';
+                    e.currentTarget.style.color='rgba(255,255,255,0.62)'; } }}>
                   {guardSaving
-                    ? <div style={{width:11, height:11, border:'2px solid var(--accent)', borderTopColor:'transparent', borderRadius:'50%', animation:'spin 0.75s linear infinite'}}/>
+                    ? <div style={{width:11, height:11, border:'1.5px solid rgba(255,255,255,0.6)', borderTopColor:'transparent', borderRadius:'50%', animation:'spin 0.75s linear infinite'}}/>
                     : null}
                   {t('ed_save_exit')}
                 </div>
                 <div onClick={() => { setExitGuard(false); onClose(); }} style={{
-                  flex:1, textAlign:'center', padding:'9px 0', borderRadius:10, cursor:'pointer',
-                  background:'rgba(255,80,60,0.1)', color:'rgba(255,120,105,0.9)',
-                  fontSize:12, fontWeight:500, userSelect:'none', transition:'background 0.15s',
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  height:32, borderRadius:9, cursor:'pointer',
+                  background:'transparent', border:'1px solid rgba(255,255,255,0.075)',
+                  color:'rgba(255,255,255,0.45)', fontSize:12.5, fontWeight:500,
+                  userSelect:'none', transition:'background 0.14s, color 0.14s, border-color 0.14s',
                 }}
-                  onMouseEnter={e => e.currentTarget.style.background='rgba(255,80,60,0.16)'}
-                  onMouseLeave={e => e.currentTarget.style.background='rgba(255,80,60,0.1)'}>
+                  onMouseEnter={e => { e.currentTarget.style.background='rgba(255,80,60,0.07)';
+                                       e.currentTarget.style.borderColor='rgba(255,80,60,0.2)';
+                                       e.currentTarget.style.color='rgba(255,130,115,0.95)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background='transparent';
+                                       e.currentTarget.style.borderColor='rgba(255,255,255,0.075)';
+                                       e.currentTarget.style.color='rgba(255,255,255,0.45)'; }}>
                   {t('ed_discard')}
                 </div>
                 <div onClick={() => setExitGuard(false)} style={{
-                  padding:'9px 14px', borderRadius:10, cursor:'pointer',
-                  background:'rgba(255,255,255,0.045)', color:'rgba(255,255,255,0.5)',
-                  fontSize:12, fontWeight:500, userSelect:'none', transition:'background 0.15s',
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  height:32, borderRadius:9, cursor:'pointer',
+                  background:'transparent', border:'1px solid rgba(255,255,255,0.075)',
+                  color:'rgba(255,255,255,0.32)', fontSize:12.5, fontWeight:500,
+                  userSelect:'none', transition:'background 0.14s, color 0.14s, border-color 0.14s',
                 }}
-                  onMouseEnter={e => e.currentTarget.style.background='rgba(255,255,255,0.08)'}
-                  onMouseLeave={e => e.currentTarget.style.background='rgba(255,255,255,0.045)'}>
+                  onMouseEnter={e => { e.currentTarget.style.background='rgba(255,255,255,0.045)';
+                                       e.currentTarget.style.borderColor='rgba(255,255,255,0.13)';
+                                       e.currentTarget.style.color='rgba(255,255,255,0.8)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background='transparent';
+                                       e.currentTarget.style.borderColor='rgba(255,255,255,0.075)';
+                                       e.currentTarget.style.color='rgba(255,255,255,0.32)'; }}>
                   {t('cancel')}
                 </div>
               </div>
@@ -4018,6 +4515,7 @@ function App() {
     sourceMode: 'local', discordRpc: true,
     discordTimestamp: 'progress', discordPause: 'show', discordCover: true,
     accentMode: 'color', accentPreset: 'default',
+    volume: 0.7,   /* gain 0..1 (не позиция ползунка) — переживает перезапуск */
   });
   const [sort,         setSort]         = useState('added');
   const [editingTitle, setEditingTitle] = useState(false);
@@ -4037,6 +4535,10 @@ function App() {
   const [playlistsError,   setPlaylistsError]   = useState(null);
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
   const [editingPlaylist,  setEditingPlaylist]  = useState(null); /* { playlist, from } */
+  /* состав плейлистов для чекбоксов в контекст-меню: { [plId]: Set<trackId> }.
+     ref-версия не даёт плодить одинаковые запросы на каждый ре-рендер */
+  const [plMembers, setPlMembers] = useState({});
+  const plMembersRef = useRef({});
   const [accentRGB,     setAccentRGB]     = useState(null);
   const [loadingTrackId, setLoadingTrackId] = useState(null);
   const [errorTrackId,   setErrorTrackId]   = useState(null);
@@ -4103,6 +4605,9 @@ function App() {
   const stationQueueRef   = useRef(null);
   const playlistQueueRef  = useRef(null);
   const playlistsRef      = useRef(null);
+  const membersBusyRef    = useRef({});   /* plId -> true, пока едет состав для чекбоксов */
+  const albumKindLogged   = useRef(false); /* один лог playlist_kind за сессию */
+  const playlistActiveRef = useRef(null); /* зеркало playlistActive для хендлеров вне рендера */
   const scShuffleOrderRef = useRef([]);
   const scShuffleIdxRef   = useRef(-1);
   const scPlayingTrackRef = useRef(null);
@@ -4115,6 +4620,7 @@ function App() {
   isPlayingRef.current = isPlaying;
   volumeRef.current    = volume;
   scPlayingTrackRef.current = scPlayingTrack;
+  playlistActiveRef.current = playlistActive;
   settingsRef.current  = settings;
   const track = scPlayingTrack || tracks[trackIdx] || tracks[0] || { id:0, title:'', artist:'', duration:0, color:'#333' };
 
@@ -4223,6 +4729,13 @@ function App() {
             if (!ACCENT_PRESETS[m.accentPreset]) m.accentPreset = 'default';
             return m;
           });
+          if (typeof saved.volume === 'number') {
+            /* громкость живёт и отдельным state (её ест audio и кроссфейд), но
+               хранится в settings — иначе каждый запуск сбрасывалась на 0.7 */
+            const g = Math.max(0, Math.min(1, saved.volume));
+            setVolume(g);
+            volumeRef.current = g;  /* до первого кадра, иначе звук рванёт на дефолте */
+          }
           if (saved.musicFolder) {
             const local = await window.electronAPI.scanMusicFolder(saved.musicFolder);
             if (local.length > 0) {
@@ -4323,10 +4836,17 @@ function App() {
   }, [volume]);
 
   /* live-применение громкости при драге слайдера — без ререндера App.
-     state коммитится один раз на mouseup через setVolume */
+     state коммитится один раз на mouseup */
   const handleVolumeLive = useCallback((v) => {
     if (audioRef.current) audioRef.current.volume = v;
     volumeRef.current = v;
+  }, []);
+
+  /* коммит (mouseup): state + запись в settings, чтобы громкость помнилась
+     между запусками. файл переписывается раз за отпускание ползунка */
+  const handleVolumeCommit = useCallback((v) => {
+    setVolume(v);
+    setSettings(s => (s.volume === v ? s : { ...s, volume: v }));
   }, []);
 
   /* медиаклавиши */
@@ -4861,11 +5381,18 @@ function App() {
         return;
       }
       const map = new Map();
-      for (const p of liked.items) map.set(p.id, mapScPlaylist(p, auth2));
-      for (const p of own.items) map.set(p.id, mapScPlaylist(p, auth2));
+      for (const p of liked.items) if (isScPlaylist(p)) map.set(p.id, mapScPlaylist(p, auth2));
+      for (const p of own.items) if (isScPlaylist(p)) map.set(p.id, mapScPlaylist(p, auth2));
       const list = [...map.values()].sort((a, b) => (b.isOwn ? 1 : 0) - (a.isOwn ? 1 : 0));
       playlistsRef.current = list;
       setPlaylists(list);
+      /* один раз показываем, чем SC реально помечает альбомы — чтобы фильтр
+         можно было проверить, а не угадывать */
+      if (!albumKindLogged.current) {
+        albumKindLogged.current = true;
+        const kinds = [...new Set([...liked.items, ...own.items].map(p => p?.playlist_kind ?? p?.type ?? '(нет поля)'))];
+        console.log('[seWer] playlist_kind в ответе SC:', JSON.stringify(kinds));
+      }
     } catch (e) {
       setPlaylistsError(String(e));
       console.error('[seWer] loadPlaylists:', e);
@@ -4876,6 +5403,13 @@ function App() {
 
   /* вход в плейлист: догружаем треки при необходимости, очередь = плейлист,
      станция/поиск выключаются, плеер + автоплей первого трека */
+  /* записать известный состав плейлиста в кеш чекбоксов (один вход для всех).
+     объявлено до хендлеров: они берут его в deps */
+  const rememberMember = useCallback((plId, ids) => {
+    plMembersRef.current = { ...plMembersRef.current, [plId]: new Set(ids) };
+    setPlMembers(plMembersRef.current);
+  }, []);
+
   const handleOpenPlaylist = useCallback(async (pl) => {
     const auth = scAuthRef.current;
     if (!auth) return;
@@ -4887,6 +5421,8 @@ function App() {
         const withTracks = { ...pl, tracks };
         playlistsRef.current = (playlistsRef.current || []).map(p => p.id === pl.id ? withTracks : p);
         setPlaylists(playlistsRef.current);
+        /* полный состав известен — кладём в кеш чекбоксов, чтоб не перезапрашивать */
+        rememberMember(pl.id, full.map(x => x.id));
       }
     }
     playlistQueueRef.current = tracks;
@@ -4898,7 +5434,7 @@ function App() {
     setView('player');
     setNavActive('library');
     if (tracks.length) handleScTrackClick(tracks[0], -1);
-  }, []);
+  }, [rememberMember]);
 
   const handleExitPlaylist = useCallback(() => {
     playlistQueueRef.current = null;
@@ -4936,6 +5472,151 @@ function App() {
     setView('playlistEditor');
   }, []);
 
+  /* ПКМ по треку → «добавить в плейлист»: свежий GET объекта плейлиста
+     (встроенные tracks приходят неполными), id дописывается в конец, PUT.
+     живо обновляем кеш списка и активную очередь, если плейлист играет */
+  const handleAddToPlaylist = useCallback(async (track, pl) => {
+    const auth = scAuthRef.current;
+    if (!auth || !pl?.id || track?.id == null) return 'error';
+    const cur = await window.electronAPI.scFetch(
+      `https://api-v2.soundcloud.com/playlists/${pl.id}`, auth.token, auth.clientId);
+    if (cur.error || !cur.data?.id) {
+      showToast(cur.blocked ? t('sc_blocked') : t('pl_add_err'));
+      return 'error';
+    }
+    const raw = cur.data;
+    const ids = (raw.tracks || []).map(x => x?.id).filter(v => v != null);
+    /* трек уже внутри — запрос не шлём, но статус честно отдаём, чтобы чекбокс не мигал */
+    if (ids.includes(track.id)) {
+      rememberMember(pl.id, ids);
+      return 'exists';
+    }
+    ids.push(track.id);
+    const res = await window.electronAPI.scFetch(
+      `https://api-v2.soundcloud.com/playlists/${pl.id}`, auth.token, auth.clientId, 'PUT',
+      { playlist: { ...raw, tracks: ids, track_count: ids.length } });
+    if (res.error) {
+      showToast(res.blocked ? t('sc_blocked') : t('pl_add_err'));
+      return 'error';
+    }
+    rememberMember(pl.id, ids);
+    const count = ids.length;
+    playlistsRef.current = (playlistsRef.current || []).map(p => {
+      if (p.id !== pl.id) return p;
+      const tracks = (p.tracks?.length === p.trackCount) ? [...p.tracks, track] : p.tracks;
+      return { ...p, trackCount: count, tracks };
+    });
+    setPlaylists(playlistsRef.current);
+    setPlaylistActive(pa => {
+      if (!pa || pa.playlist.id !== pl.id) return pa;
+      const q = [...pa.tracks, track];
+      playlistQueueRef.current = q;
+      return { playlist: { ...pa.playlist, trackCount: count }, tracks: q };
+    });
+    showToast(`${t('added_to')} «${pl.title}»`);
+    return 'added';
+  }, [t, rememberMember]);
+
+  /* ПКМ → снять трек с плейлиста: у SoundCloud нет DELETE-трека из плейлиста,
+     поэтому тот же приём — свежий GET, фильтруем id, PUT обратно */
+  const handleRemoveFromPlaylist = useCallback(async (track, pl) => {
+    const auth = scAuthRef.current;
+    if (!auth || !pl?.id || track?.id == null) return 'error';
+    const cur = await window.electronAPI.scFetch(
+      `https://api-v2.soundcloud.com/playlists/${pl.id}`, auth.token, auth.clientId);
+    if (cur.error || !cur.data?.id) {
+      showToast(cur.blocked ? t('sc_blocked') : t('pl_rm_err'));
+      return 'error';
+    }
+    const raw = cur.data;
+    const ids = (raw.tracks || []).map(x => x?.id).filter(v => v != null);
+    const next = ids.filter(id => id !== track.id);
+    if (next.length === ids.length) { rememberMember(pl.id, ids); return 'absent'; }
+    const res = await window.electronAPI.scFetch(
+      `https://api-v2.soundcloud.com/playlists/${pl.id}`, auth.token, auth.clientId, 'PUT',
+      { playlist: { ...raw, tracks: next, track_count: next.length } });
+    if (res.error) {
+      showToast(res.blocked ? t('sc_blocked') : t('pl_rm_err'));
+      return 'error';
+    }
+    rememberMember(pl.id, next);
+    playlistsRef.current = (playlistsRef.current || []).map(p =>
+      p.id === pl.id ? { ...p, trackCount: next.length, tracks: (p.tracks || []).filter(x => x.id !== track.id) } : p);
+    setPlaylists(playlistsRef.current);
+    /* работа с активным плейлистом — ВНЕ апдейтера setState: там нельзя дёргать
+       другие setState (иначе React ругается на апдейты во время рендера) */
+    const pa = playlistActiveRef.current;
+    if (pa && pa.playlist.id === pl.id) {
+      const q = pa.tracks.filter(x => x.id !== track.id);
+      if (!q.length) {
+        handleExitPlaylist();               /* плейлист опустел — выходим из режима */
+      } else {
+        playlistQueueRef.current = q;
+        setPlaylistActive({ playlist: { ...pa.playlist, trackCount: q.length }, tracks: q });
+        /* сняли текущий трек — иначе плеер останется на воздухе */
+        if (scPlayingTrackRef.current?.id === track.id) {
+          const at = Math.min(pa.tracks.findIndex(x => x.id === track.id), q.length - 1);
+          handleScTrackClick(q[Math.max(at, 0)], Math.max(at, 0));
+        }
+      }
+    }
+    showToast(`${t('removed_from')} «${pl.title}»`);
+    return 'removed';
+  }, [t, rememberMember, handleExitPlaylist, handleScTrackClick]);
+
+  /* ПКМ → «новый плейлист»: создаём приватный сразу с этим треком */
+  const handleCreatePlaylistWithTrack = useCallback(async (track) => {
+    const auth = scAuthRef.current;
+    if (!auth || track?.id == null) return 'error';
+    const res = await window.electronAPI.scFetch(
+      'https://api-v2.soundcloud.com/playlists', auth.token, auth.clientId, 'POST',
+      { playlist: { title: STRINGS[langRef.current]?.pl_new_title ?? 'Новый плейлист', tracks: [track.id], sharing: 'private' } }
+    );
+    if (res.error || !res.data?.id) { showToast(res.blocked ? t('sc_blocked') : t('pl_create_err')); return 'error'; }
+    const pl = { ...mapScPlaylist(res.data, auth), isOwn: true };
+    playlistsRef.current = [pl, ...(playlistsRef.current || [])];
+    setPlaylists(playlistsRef.current);
+    rememberMember(pl.id, [track.id]); /* сразу известен состав — чекбокс не грузится */
+    showToast(`${t('added_to')} «${pl.title}»`);
+    return 'created';
+  }, [t, rememberMember]);
+
+  /* чекбокс в пикере: снимат трек если он внутри, кладёт если нет */
+  const handleToggleInPlaylist = useCallback((track, pl, isIn) =>
+    isIn ? handleRemoveFromPlaylist(track, pl) : handleAddToPlaylist(track, pl),
+    [handleAddToPlaylist, handleRemoveFromPlaylist]);
+
+  /* пикер плейлистов в контекст-меню: подтягиваем список по требованию */
+  const ensurePlaylists = useCallback((force = false) => {
+    const auth = scAuthRef.current;
+    if (auth) loadPlaylists(auth, force);
+  }, [loadPlaylists]);
+
+  /* состав для чекбоксов: догружаем недостающие плейлисты пачками по 4,
+     каждый запрос помечаем busy, чтобы не плодить дубли на ре-рендерах */
+  const ensurePlaylistMembers = useCallback((list) => {
+    const auth = scAuthRef.current;
+    if (!auth) return;
+    const pending = [];
+    for (const p of (list || [])) {
+      if (!p?.isOwn || p.id == null) continue;
+      const cached = plMembersRef.current[p.id];
+      if (cached instanceof Set || cached === null) continue; /* уже знаем или уже упали */
+      if (membersBusyRef.current[p.id]) continue;
+      pending.push(p);
+    }
+    for (let i = 0; i < pending.length; i += 4) {
+      for (const p of pending.slice(i, i + 4)) {
+        membersBusyRef.current[p.id] = true;
+        fetchPlaylistTrackIds(p.id, auth, p.trackCount).then(ids => {
+          delete membersBusyRef.current[p.id];
+          plMembersRef.current[p.id] = ids; /* null = не смогли, не будем спрашивать снова */
+          setPlMembers({ ...plMembersRef.current });
+        });
+      }
+    }
+  }, []);
+
   const handleClosePlEditor = useCallback(() => {
     const from = editingPlaylist?.from;
     setEditingPlaylist(null);
@@ -4948,16 +5629,21 @@ function App() {
     }
   }, [editingPlaylist]);
 
-  /* колбэк автосейва редактора: обновляем список плейлистов и, если редактируем
-     активный плейлист, — живо обновляем его очередь и сайдбар */
-  const handlePlaylistUpdated = useCallback((id, newTracks) => {
+  /* колбэк сохранения редактора: обновляем список плейлистов и, если редактируем
+     активный плейлист, — живо обновляем его очередь и сайдбар. meta может
+     принести новый title/coverUrl (правка шапки редактора) */
+  const handlePlaylistUpdated = useCallback((id, newTracks, meta) => {
     playlistsRef.current = (playlistsRef.current || []).map(p =>
-      p.id === id ? { ...p, tracks: newTracks, trackCount: newTracks.length } : p);
+      p.id === id ? { ...p, tracks: newTracks, trackCount: newTracks.length,
+        ...(meta?.title ? { title: meta.title } : {}),
+        ...(meta?.coverUrl ? { coverUrl: meta.coverUrl } : {}) } : p);
     setPlaylists(playlistsRef.current);
+    setEditingPlaylist(ep => (ep && ep.playlist.id === id)
+      ? { ...ep, playlist: { ...ep.playlist, ...(meta || {}) } } : ep);
     setPlaylistActive(pa => {
       if (!pa || pa.playlist.id !== id) return pa;
       playlistQueueRef.current = newTracks;
-      return { ...pa, tracks: newTracks };
+      return { playlist: { ...pa.playlist, ...(meta || {}) }, tracks: newTracks };
     });
   }, []);
 
@@ -5719,10 +6405,10 @@ function App() {
           <AnimatePresence initial={false} mode="wait">
           {stationActive ? (
             <motion.div key="station-chip"
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2, ease: 'easeOut' }}
+              initial={{ opacity: 0, y: -10, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -8, scale: 0.98, transition: { duration: 0.14, ease: 'easeIn' } }}
+              transition={{ type: 'spring', stiffness: 440, damping: 30, mass: 0.7 }}
               style={{padding:'10px 10px 8px', flexShrink:0}}>
               {/* контекст-чип станции: обложка + мини-эквалайзер + выход */}
               <div style={{
@@ -5778,10 +6464,10 @@ function App() {
             </motion.div>
           ) : playlistActive ? (
             <motion.div key="playlist-chip"
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2, ease: 'easeOut' }}
+              initial={{ opacity: 0, y: -10, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -8, scale: 0.98, transition: { duration: 0.14, ease: 'easeIn' } }}
+              transition={{ type: 'spring', stiffness: 440, damping: 30, mass: 0.7 }}
               style={{padding:'10px 10px 8px', flexShrink:0}}>
               {/* контекст-чип плейлиста: обложка + счётчик + выход/редактор */}
               <div style={{
@@ -6072,7 +6758,7 @@ function App() {
           transform: playerVisible ? 'translateX(0)' : 'translateX(8px)',
           transition: playerVisible ? 'opacity 0.36s ease 0.44s, transform 0.48s cubic-bezier(0.22,1,0.36,1) 0.44s' : 'opacity 0.1s ease, transform 0.1s ease',
         }}>
-          <ThinVolumeSlider volume={volume} onChange={setVolume} onLiveChange={handleVolumeLive}/>
+          <ThinVolumeSlider volume={volume} onChange={handleVolumeCommit} onLiveChange={handleVolumeLive}/>
         </div>
           </div>
         )}
@@ -6129,7 +6815,14 @@ function App() {
             <TrackContextMenu key="ctxmenu" menu={trackMenu}
               onClose={() => setTrackMenu(null)}
               onCopyLink={handleCopyTrackLink}
-              onStartStation={handleStartStation}/>
+              onStartStation={handleStartStation}
+              canAddPl={!!settings.soundcloudAuth && !trackMenu.track.path && trackMenu.track.id != null}
+              playlists={playlists} playlistsLoading={playlistsLoading}
+              onEnsurePlaylists={ensurePlaylists}
+              plMembers={plMembers}
+              onEnsureMembers={ensurePlaylistMembers}
+              onToggleInPlaylist={handleToggleInPlaylist}
+              onCreateWithTrack={handleCreatePlaylistWithTrack}/>
           )}
         </AnimatePresence>
 

@@ -171,6 +171,24 @@ ipcMain.handle('scan-music-folder', async (_, folderPath, minDuration = 30) => {
   return results.filter(Boolean)
 })
 
+/* выбор картинки для обложки плейлиста: сразу читаем в data URL,
+   renderer дальше сам уменьшает/кропает через canvas */
+ipcMain.handle('dialog-select-image', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    properties: ['openFile'],
+    title: 'Выбрать обложку',
+    filters: [{ name: 'Изображения', extensions: ['jpg', 'jpeg', 'png', 'webp', 'bmp'] }],
+  })
+  if (canceled || !filePaths[0]) return null
+  try {
+    const buf = fs.readFileSync(filePaths[0])
+    if (buf.length > 25 * 1024 * 1024) return null
+    const ext = path.extname(filePaths[0]).slice(1).toLowerCase()
+    const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : ext === 'bmp' ? 'image/bmp' : 'image/jpeg'
+    return { dataUrl: `data:${mime};base64,${buf.toString('base64')}`, name: path.basename(filePaths[0]) }
+  } catch { return null }
+})
+
 ipcMain.handle('get-cover-art', async (_, filePath) => {
   try {
     const meta = await mm.parseFile(filePath, { skipCovers: false })
@@ -272,11 +290,38 @@ let scWriteBlockedUntil = 0
 ipcMain.handle('sc-fetch', async (_, url, token, clientId, method = 'GET', body = null, contentType = null) => {
   /* PUT/DELETE/POST — через сессию с DataDome cookie (нужно для
      редактирования/создания плейлистов); остальное — обычный https GET.
-     body-строка шлётся как есть (form-encoded), объект — JSON.stringify */
+     body-строка шлётся как есть (form-encoded), объект — JSON.stringify.
+     {__multipart:{fields,file}} — multipart/form-data с файлом (обложка
+     плейлиста): тело собираем в Buffer вручную, boundary задаём сами —
+     ses.fetch не обязан уметь FormData */
   const isWrite = method === 'PUT' || method === 'DELETE' || method === 'POST'
   /* app_version/app_locale — как у веб-клиента SC (из HAR рабочего PUT) */
   const fullUrl = url.includes('client_id=') ? url
     : `${url}${url.includes('?') ? '&' : '?'}client_id=${encodeURIComponent(clientId)}${isWrite ? '&app_version=1787325861&app_locale=en' : ''}`
+
+  let bodyOut = null
+  let ctOut = contentType
+  if (body != null) {
+    if (body.__multipart) {
+      const boundary = '----seWer' + Date.now().toString(36) + Math.random().toString(36).slice(2)
+      const parts = []
+      for (const f of body.__multipart.fields || [])
+        parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${f.name}"\r\n\r\n${f.value}\r\n`))
+      const file = body.__multipart.file
+      parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${file.name}"; filename="${file.filename.replace(/["\\]/g, '')}"\r\nContent-Type: ${file.mime}\r\n\r\n`))
+      parts.push(Buffer.from(file.b64, 'base64'))
+      parts.push(Buffer.from(`\r\n--${boundary}--\r\n`))
+      /* Blob, а не Buffer.concat: для бинарного тела fetch берёт Content-Type
+         из blob.type, на голом Node-буфере полагаться не стоит.
+         ВНИМАНИЕ: обложка плейлиста multipart'ом НЕ грузится — SC ждёт
+         json {image_data: base64} на .../artwork (см. saveNow в index.html).
+         Эта ветка остаётся на будущее для других файловых загрузок */
+      ctOut = `multipart/form-data; boundary=${boundary}`
+      bodyOut = new Blob(parts, { type: ctOut })
+    } else {
+      bodyOut = typeof body === 'string' ? body : JSON.stringify(body)
+    }
+  }
 
   if (isWrite) {
     const now = Date.now()
@@ -296,21 +341,21 @@ ipcMain.handle('sc-fetch', async (_, url, token, clientId, method = 'GET', body 
           'Accept': 'application/json, text/javascript, */*; q=0.01',
           /* Content-Type только с телом: follow/unfollow идут без тела,
              а json-тип без тела SC пытается парсить → 400 (по HAR сайта) */
-          ...(body != null ? { 'Content-Type': contentType || 'application/json' } : {}),
+          ...(bodyOut != null ? { 'Content-Type': ctOut || 'application/json' } : {}),
           'Origin': 'https://soundcloud.com',
           'Referer': 'https://soundcloud.com/',
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64.64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36',
           ...(datadome ? { 'x-datadome-clientid': datadome.value } : {}),
         },
-        ...(body != null ? { body: typeof body === 'string' ? body : JSON.stringify(body) } : {}),
+        ...(bodyOut != null ? { body: bodyOut } : {}),
       })
       const text = await res.text()
       if (res.status === 403 || res.status === 429) {
         scWriteBlockedUntil = Date.now() + 60_000
-        return { error: res.status, body: text.slice(0, 600), blocked: true }
+        return { error: res.status, body: text.slice(0, 600), blocked: true, sentCT: ctOut || null, sentURL: fullUrl }
       }
       if (res.status !== 200 && res.status !== 201 && res.status !== 204)
-        return { error: res.status, body: text.slice(0, 600) }
+        return { error: res.status, body: text.slice(0, 600), sentCT: ctOut || null, sentURL: fullUrl }
       if (!text.trim()) return { data: null }
       try { return { data: JSON.parse(text) } } catch { return { error: 'parse_error' } }
     } catch (e) { return { error: String(e) } }

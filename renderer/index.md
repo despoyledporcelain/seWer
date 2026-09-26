@@ -95,11 +95,13 @@ useLang()      — хук: возвращает t(key), читает LangContext
 компоненты вызывают `const t = useLang()` внутри себя.
 **исключение**: `SearchView` использует `const T = useLang()` — буква `t` занята переменной трека в `.map(t => ...)`.
 
-ключи добавленные в сессиях: `back`, `subscribe`, `subscribed`, `artist_label`, `follow_err`, `unfollow_err`, `copy_link`, `link_copied`, `copy_link_err`, `start_station`, `station_for`, `station_exit`, `station_label`, `station_err`, `accent_title`, `accent_sub`, `accent_default/lavender/mint/rose/amber/cover`, `accent_cover_sub`, `nav_playlists`, `playlists_empty`, `playlists_empty_sub`, `accent_seg_off`, `accent_seg_color`, `accent_off_title`, `accent_off_sub`, `pl_new_title`, `pl_create_err`, `pl_edit`, `pl_login_hint`, `ed_saving`, `ed_saved`, `ed_save_err`, `ed_add`, `ed_add_search`, `ed_add_recs`, `ed_added`, `ed_empty`, `ed_recs_empty`, `ed_rec_loading`, `ed_track_del`, `pl_count_1/2/5`.
+ключи добавленные в сессиях: `back`, `subscribe`, `subscribed`, `artist_label`, `follow_err`, `unfollow_err`, `copy_link`, `link_copied`, `copy_link_err`, `start_station`, `station_for`, `station_exit`, `station_label`, `station_err`, `accent_title`, `accent_sub`, `accent_default/lavender/mint/rose/amber/cover`, `accent_cover_sub`, `nav_playlists`, `playlists_empty`, `playlists_empty_sub`, `accent_seg_off`, `accent_seg_color`, `accent_off_title`, `accent_off_sub`, `pl_new_title`, `pl_create_err`, `pl_edit`, `pl_login_hint`, `ed_saving`, `ed_saved`, `ed_save_err`, `ed_add`, `ed_add_search`, `ed_add_recs`, `ed_added`, `ed_empty`, `ed_recs_empty`, `ed_rec_loading`, `ed_track_del`, `pl_count_1/2/5`, `add_to_pl`, `add_pl_new`, `added_to`, `pl_add_err`, `pl_list_err`, `ed_title_ph`, `ed_art_pick`, `ed_art_err`, `removed_from`, `pl_rm_err`, `pl_in`, `pl_out`, `pl_in_loading`.
 
 ## ipc-мост (обновление)
 
-`scFetch(url, token, clientId, method, body?, contentType?)` — 5-й параметр body (объект → JSON.stringify, строка → как есть), 6-й — опциональный Content-Type (дефолт `application/json`). PUT/DELETE/**POST** идут через ses.fetch-ветку с DataDome cookie; URL-суффикс `client_id&app_version&app_locale` (как у веб-клиента, из HAR). **Content-Type ставится только при наличии body** — запросы без тела (follow/unfollow: `POST`/`DELETE /me/followings/{id}`) сайт шлёт без него, а json-тип с пустым телом SC пытается парсить → 400 «Unable to parse JSON». **анти-бот DataDome**: write-запросы троттлятся (минимум 1.5с между), при ответе 403/429 — минутный backoff на все write (`{error, blocked:true}`), renderer показывает тост `sc_blocked`. ошибки write-ветки возвращаются с `body` (первые 600 симв ответа SC). нужно для `PUT /playlists/{id}` (порядок треков), `POST /playlists` (создание), подписки на артистов.
+`scFetch(url, token, clientId, method, body?, contentType?)` — 5-й параметр body (объект → JSON.stringify, строка → как есть), 6-й — опциональный Content-Type (дефолт `application/json`). PUT/DELETE/**POST** идут через ses.fetch-ветку с DataDome cookie; URL-суффикс `client_id&app_version&app_locale` (как у веб-клиента, из HAR). **Content-Type ставится только при наличии body** — запросы без тела (follow/unfollow: `POST`/`DELETE /me/followings/{id}`) сайт шлёт без него, а json-тип с пустым телом SC пытается парсить → 400 «Unable to parse JSON». **multipart**: body `{__multipart:{fields:[{name,value}], file:{name,filename,mime,b64}}}` — main собирает тело в Buffer с явным boundary и шлёт `multipart/form-data` (обложка плейлиста, `playlist[artwork_data]`). **анти-бот DataDome**: write-запросы троттлятся (минимум 1.5с между), при ответе 403/429 — минутный backoff на все write (`{error, blocked:true}`), renderer показывает тост `sc_blocked`. ошибки write-ветки возвращаются с `body` (первые 600 симв ответа SC). нужно для `PUT /playlists/{id}` (порядок треков), `POST /playlists` (создание), подписки на артистов.
+
+`selectImage()` → `dialog-select-image`: нативный диалог выбора картинки (jpg/png/webp/bmp, ≤25МБ), возвращает `{dataUrl, name}` или null. обложка плейлиста: renderer кропает в квадрат ≤1600px jpeg 0.9 (`prepareArtwork`), отправка через multipart-режим scFetch.
 
 ## компоненты
 
@@ -121,7 +123,7 @@ div-based pill bar. высота **10px → 14px** при hover/drag (spring ove
 - **time tooltip** — при hover/drag над курсором показывается dark pill с `fmt(time)`
 
 ### `ThinVolumeSlider`
-canvas TW=28px, вертикальный. drag вверх = больше. fill рисуется из `LIVE_ACCENT` (подписка `onAccentChange` → перерисовка в такт акцент-анимации), glow, без thumb.
+`{volume, onChange, onLiveChange}`. `volume` — это **gain 0..1** (то, что ест `audio.volume`), а внутри слайдер работает в **позициях 0..1** и на границе наружу конвертит: `volPosToGain` / `volGainToPos`, `VOL_GAMMA = 2.2` (ползунок линеен по позиции, gain = pos^2.2 — `audio.volume` линейна по амплитуде, слух нет, и без степени полезный диапазон жался в самый низ ползунка; верх по-прежнему 100%). canvas TW=28px, вертикальный. drag вверх = больше. fill рисуется из `LIVE_ACCENT` (подписка `onAccentChange` → перерисовка в такт акцент-анимации), glow, без thumb. `onLiveChange` — каждый кадр драга в audio без ререндера App, `onChange` — один раз на mouseup.
 
 ### `AlbumArt`
 `{track}`. контейнер всегда с `#111116` фоном + `note.png` placeholder сзади (opacity 0.13).
@@ -230,11 +232,12 @@ ROW_H=50. `content-visibility:auto`. абсолютный пилл с transition
   - Рекомендации (`loadRecs`): `plRecsUrl(playlist.id)` (station плейлиста) → фолбэк station случайного трека из плейлиста (`soundcloud:track-stations:{id}`, ⟳ крутит выборку) → фолбэк `fallbackTracks` (последние лайкнутые из App, для пустого плейлиста);
   - Поиск: input + debounce 380ms → `/search/tracks?q=` (как SearchView, только треки);
   - строки-кандидаты — `PlaylistAddRow` (обложка 36 кликабельна: превью-прослушивание через основной плеер `onPlayTrack` → `handleScTrackClick(tr, -1)`, спиннер `loadingTrackId`/ошибка `errorTrackId` как у обложек в поиске; кнопка + / ✓-добавлено, дедуп по `inList` Set)
-- **сохранение вручную** (автосейва НЕТ — беречь лимиты DataDome): `touch()` только помечает dirty (статус-пилюля `ed_dirty` «не сохранено» янтарным); в шапке появляется кнопка «Сохранить» (`ed_save_btn`, акцентная рамка) → `saveNow`. формат PUT — как у веб-клиента SC (HAR): ПОЛНЫЙ объект плейлиста с tracks = голые id; сырой объект кэшируется в `plObjRef` (GET `/playlists/{id}` один раз за сессию редактора), запасной формат — `{playlist:{tracks:[ids]}}`. после PUT одна сверка порядка через `/playlists/{id}/tracks` без ретраев. статусы: `ed_dirty` / `ed_saving` / `ed_saved` / `ed_save_err` (клик = retry)
-- **выход с несохранённым**: `close()` (←) при dirty показывает модал-гард (`exitGuard`): «Сохранить и выйти» (спиннер, при ошибке остаёмся) / «Не сохранять» / «отмена». редактор — `React.forwardRef` + `useImperativeHandle({requestClose})`: мышкая кнопка «назад» и вкладки верхнего бара (handleNav перехватывает view==='playlistEditor' и зовёт requestClose, навигация блокируется до решения) проходят через тот же гард
+- **шапка (2 строки)**: строка 1 — назад / статус-пилюля / «Сохранить» (только при dirty) / 🗑; строка 2 — идентичность плейлиста: обложка 112px (клик → `selectImage` → `prepareArtwork` — центр-кроп в квадрат ≤1600px jpeg 0.9 → локальное превью + dirty; hover: камера + caps «выбрать обложку», css `.pl-art-hover`) + название-инлайн-редактор (клик → input c accent-подчёркиванием; Enter/blur коммит → dirty, Esc отмена; карандаш на hover — css `.pl-title-edit/.pl-title-pencil`) + счётчик треков
+- **сохранение вручную** (автосейва НЕТ — беречь лимиты DataDome): `touch()` помечает dirty; «Сохранить» → `saveNow`: 1) если выбрана обложка — multipart PUT (фолбэк POST) `playlist[artwork_data]` + `playlist[title]` + `playlist[tracks][]` в одном теле (нечему потеряться); 2) JSON PUT как у веб-клиента SC (HAR): полный объект (кэш `plObjRef`, GET раз за сессию) с tracks = голые id + новый title, запасной формат минимальный. после PUT одна сверка порядка через `/playlists/{id}/tracks` без ретраев. статусы: `ed_dirty` / `ed_saving` / `ed_saved` / `ed_save_err` + `ed_art_err` (клик = retry)
+- **выход с несохранённым**: `close()` (←) при dirty показывает модал-гард (`exitGuard`): затемнение `rgba(4,4,8,.55)` + blur 12px, карточка 272px. **поверхность = та же, что у всех меню приложения** (`rgba(24,24,24,.97)` + blur 14px + border `rgba(255,255,255,.055)` + radius 11 + тень `0 16px 44px rgba(0,0,0,.6)`) — гард не должен выбиваться из стиля. **разметка максимально плоская**: caps-эйбел `ed_dirty` серым `rgba(255,255,255,.26)` (никакого янтаря/акцента) → заголовок 13.5px/500 в 2 строки → название плейлиста 11.5px `rgba(255,255,255,.25)` с ellipsis → **три ОДИНАКОВЫЕ кнопки** в колонку (`gap:6`, h32, radius 9, `border:1px solid rgba(255,255,255,.075)`, прозрачный фон, текст 12.5px/500). Заливок и цветов нет вообще; единственный цвет — красный на hover у «Не сохранять» (`rgba(255,80,60,.07)` фон + `rgba(255,130,115,.95)` текст). У основной кнопки при сохранении спиннер и opacity .55. вход spring 420/32/0.7 `scale .97 y 10`. редактор — `React.forwardRef` + `useImperativeHandle({requestClose})`: мышкой кнопка «назад» и вкладки верхнего бара (handleNav перехватывает view==='playlistEditor' и зовёт requestClose, навигация блокируется до решения) проходят через тот же гард
 - **удаление**: 🗑 в шапке → инлайн-подтверждение «удалить? ✓/✕» → `onDelete(playlist)` = App `handleDeletePlaylist` (`DELETE /playlists/{id}`): чистит `playlists`/`playlistsRef`, выходит из режима прослушивания если плейлист активен, закрывает редактор; ошибка → тост `pl_del_err`, редактор остаётся
 - **низ**: спейсер 130px после панели добавления — список можно проскроллить ниже края
-- **onUpdated(id, newTracks)**: App обновляет `playlists` и живо синхронит `playlistActive`/`playlistQueueRef` если редактируется активный плейлист
+- **onUpdated(id, newTracks, meta?)**: App обновляет `playlists` и живо синхронит `playlistActive`/`playlistQueueRef` если редактируется активный плейлист; meta `{title, coverUrl}` применяется к списку/чипу/editingPlaylist
 - плюрализм счётчика: `countLabel(n)` — `pl_count_1/2/5`
 
 `fetchPlaylistTracks(id, auth, noTitle)` — `/playlists/{id}/tracks?limit=200` (голый массив ИЛИ `{collection, next_href}`, пагинация ≤10 стр.) → если пусто, фолбэк объект `/playlists/{id}` → `.tracks`. айтемы-заглушки без title/media гидратируются пачками `/tracks?ids=` (по 25), порядок — как в плейлисте; негидратируемые (удалённые с SC) выбрасываются. `handleOpenPlaylist` НЕ затирает встроенные треки пустым результатом догрузки.
@@ -279,14 +282,25 @@ ROW_H=50. `content-visibility:auto`. абсолютный пилл с transition
 треки в `<AnimatePresence initial={false}>` через `SearchTrackRow`.
 
 ### `TrackContextMenu`
-`{menu, onClose, onCopyLink, onStartStation}`. portal → document.body.
-- **motion.div** с pop-in (`scale 0.92→1`, opacity, transform-origin top-left), spring (520/36/0.5). exit `scale 0.95`.
+`{menu, onClose, onCopyLink, onStartStation, canAddPl, playlists, playlistsLoading, onEnsurePlaylists, plMembers, onEnsureMembers, onToggleInPlaylist, onCreateWithTrack}`. portal → document.body, внутри — fragment: корневая панель + соседний сабменю (см. пункт «Добавить в плейлист»).
+- **вход**: контейнер пружинный pop `scale 0.85→1, y -6→0` (spring), пункты — каскад (variants, staggerChildren 0.03, y -5→0, ease-out-quart)
+- **exit живёт на КОРНЕ** (`opacity 0, scale 0.96, y -2`, 0.14с easeIn) и **только на нём**: у вложенного контейнера пунктов `exit` быть не должно — AnimatePresence ждал бы его пружину и держал панель на экране ~0.4с при opacity 1 (замер до фикса: 465мс с opacity 1, после: 144мс монотонного затухания)
 - позиция у курсора через `useLayoutEffect` (clamp за края экрана с PAD=8)
-- закрывается: клик вне, Escape, scroll wheel, `blur` окна
-- pill-стиль: `rgba(24,24,24,0.97)` + backdrop-blur, padding 4px, borderRadius 10
+- закрывается: клик вне, Escape (если открыт сабменю — сначала он), scroll wheel **вне** меню (скролл внутри пикера не закрывает), `blur` окна
+- pill-стиль: `rgba(24,24,24,0.97)` + backdrop-blur, padding 4px, borderRadius 11
 - пункты:
   - **Скопировать ссылку** (disabled если нет `permalinkUrl`)
   - **Запустить станцию** (disabled если нет id)
+  - **Добавить в плейлист** (только при `canAddPl` = scAuth && SC-трек без `path`): раскрывает сабменю-пикер, где **чекбокс = трек уже в плейлисте**; клик по строке кладёт/снимает трек (повторно добавить нельзя — `handleAddToPlaylist` делает свежий GET и при `ids.includes(track.id)` отдаёт `'exists'` без PUT). Меню после переключения **не закрывается** — можно править несколько плейлистов подряд. Три состояния чекбокса: `'loading'` (состав едет, клик заблокирован) / `true` / `false`:
+    - **сабменю — СОСЕД корневого `motion.div` в том же портале, не потомок.** Две причины: (1) `backdrop-filter` меню создаёт containing block для `position:fixed` — внутри координаты от вьюпорта уезжали на позицию меню (замер: `left 809` вместо `526`); (2) как потомок он наследовал бы `variants` корня и перезапускал каскад пунктов. `placeSub()` меряет меню, ставит `x = m.right+8`, при нехватке места флипает влево (`dir:-1`), `y = min(m.top, …)`, высота — через `offsetHeight` (не `getBoundingClientRect`); пересчёт на `resize`. обработчики клика/колеса считают сабменю «своим» через `inside()`
+    - **у сабменю нет `backdrop-filter`** (при альфе 0.97 блюр не виден) и **нет scale** во входе: старые `x:-10 + scale 0.96` наезжали на меню на 2px на всё время входа — отсюда мигание соседних пунктов; `backdrop-filter` же заставлял Chromium пересчитывать блюр меню поверх анимированного ambient glow. вход — короткий сдвиг `x ∓6→0` (spring 560/36), exit 0.12с
+    - **строка**: `[✓] [обложка 26] [название] [счётчик]`, фон строки `rgba(var(--accent-rgb),0.08)` когда трек внутри; `title` = `pl_in`/`pl_out`
+    - **«новый плейлист»** — как раньше: создаёт с треком, `✓`, закрытие через 640мс
+    - список пикера грузится лениво (`onEnsurePlaylists()`), **состав — `onEnsureMembers(playlists)`**: `fetchPlaylistTrackIds` (только id, без гидратации, пачками по 4) кладёт `Set` в кеш App `plMembers`; повторно не летит, при ошибке кладёт `null` и больше не спрашивает
+    - строка «новый плейлист» → `onCreateWithTrack(track)` (POST сразу с треком)
+    - свои плейлисты (`isOwn`): обложка 28px + название + счётчик; клик → `onAddToPlaylist(track, pl)` (GET свежий объект → PUT с id в конце). состояния строки: счётчик → спиннер → ✓ accent + подсветка строки, меню закрывается через 640мс
+    - загрузка списка — 3 скелетона; ошибка — текст + «повторить» (`onEnsurePlaylists(true)`)
+    - список пикера грузится лениво (`onEnsurePlaylists()` при открытии; кеш playlistsRef в App)
 
 ---
 
@@ -335,8 +349,11 @@ accentRGB       — null | { r, g, b } extracted from track.coverUrl
   hideDividers,
   discordRpc, discordTimestamp, discordPause, discordCover,
   accentMode: 'color', accentPreset: 'default',  // accentMode: 'off'|'color'|'cover'
+  volume: 0.7,   // GAIN 0..1, не позиция ползунка (см. ThinVolumeSlider)
 }
 ```
+
+громкость дублируется в settings специально: своё state `volume` ест `audio.volume` и кроссфейд, но **не переживало перезапуск** — при старте читаем `saved.volume` в `setVolume` + `volumeRef` (иначе звук рванёт на дефолте до применения), при mouseup `handleVolumeCommit` пишет обратно. файл переписывается раз за отпускание ползунка, не чаще.
 
 ### `App` — refs
 
@@ -403,7 +420,19 @@ useEffect на `[view, tracks, trackIdx, handleCloseArtist]` слушает `win
 7. HLS → hls.js manifest → play; иначе progressive → `audio.src` → play
 8. `setLoadingTrackId(null)` в `.then()`
 
-list priority в next/prev и handleScTrackClick: `stationQueueRef > playlistQueueRef > searchQueueRef > scTracks/filteredSc`. плейлист и станция взаимоисключающие (открытие одного чистит другое): `handleOpenPlaylist` / `handleExitPlaylist` / `handleCreatePlaylist` (POST → сразу редактор) / `handleOpenPlEditor` / `handleClosePlEditor` / `handlePlaylistUpdated` (синхрон списка + активного плейлиста).
+### `App` — трек в плейлисте (добавление/снятие)
+
+`fetchPlaylistTrackIds(id, auth, expected)` → `Promise<Set<trackId>|null>` — состав **только по id**, без гидратации и `mapScTrack` (в отличие от `fetchPlaylistTracks`), с ранним выходом по `expected`; `null` = запрос не удался (не пустой плейлист!).
+
+кеш: `plMembers` (state) + `plMembersRef` (зеркало) + `membersBusyRef` (plId пока едет). Запись идёт **только** через `rememberMember(plId, ids)`.
+
+- **`ensurePlaylistMembers(list)`** — ленивая догрузка состава своих плейлистов при открытии пикера, **пачками по 4**; уже кешированные (`Set`) и уже упавшие (`null`) пропускаются, `membersBusyRef` гасит дубли на ре-рендерах
+- **`handleAddToPlaylist`** → `'added' | 'exists' | 'error'`. `'exists'` — трек уже внутри: PUT не шлём, просто `rememberMember` и выходим (чекбокс не мигает)
+- **`handleRemoveFromPlaylist`** → `'removed' | 'absent' | 'error'`. DELETE-трека из плейлиста у SC нет, поэтому тот же приём: свежий GET → `ids.filter(id => id !== track.id)` → PUT. правит `playlists`, состав, и **активный плейлист** — работа с `playlistActiveRef.current` идёт **вне** апдейтера `setPlaylistActive` (там нельзя звать другие setState): сняли текущий трек → `handleScTrackClick` соседнего; плейлист опустел → `handleExitPlaylist()`
+- **`handleToggleInPlaylist(track, pl, isIn)`** — оркестратор чекбокса; на `'loading'` клик блокируется (не тыкаем вслепую)
+- `playlistActiveRef` — зеркало `playlistActive` для хендлеров вне рендера
+
+list priority в next/prev и handleScTrackClick: `stationQueueRef > playlistQueueRef > searchQueueRef > scTracks/filteredSc`. плейлист и станция взаимоисключающие (открытие одного чистит другое): `handleOpenPlaylist` / `handleExitPlaylist` / `handleCreatePlaylist` (POST → сразу редактор) / `handleOpenPlEditor` / `handleClosePlEditor` / `handlePlaylistUpdated` (синхрон списка + активного плейлиста, meta `{title, coverUrl}`). пикер контекст-меню: `handleAddToPlaylist(track, pl)` (GET свежий объект → PUT с id в конце → живое обновление кеша/активной очереди → тост), `handleCreatePlaylistWithTrack(track)` (POST приватный с одним треком), `ensurePlaylists(force)` (ленивая загрузка списка для пикера).
 
 ### `App` — handleLike
 
