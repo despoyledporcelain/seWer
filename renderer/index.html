@@ -119,6 +119,21 @@
     border:2px solid transparent;
     background-clip:content-box;
   }
+  /* Полоса текста песни: видна только пока скроллим или под курсором.
+     Раньше висела постоянно и в колонке 260px читалась как тяжёлая
+     вертикальная черта во всю высоту панели. Вместо «полосы как
+     индикация» добавлены ещё градиенты по краям (mask у LyricsPanel) —
+     как у VirtualTrackList в библиотеке. */
+  .scroll-fade::-webkit-scrollbar { width:6px; }
+  .scroll-fade::-webkit-scrollbar-track { background:transparent; }
+  .scroll-fade::-webkit-scrollbar-thumb {
+    background:transparent; border-radius:3px;
+    border:2px solid transparent; background-clip:content-box;
+    min-height:28px; transition:background 0.25s ease;
+  }
+  .scroll-fade.on::-webkit-scrollbar-thumb,
+  .scroll-fade:hover::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.16); }
+  .scroll-fade.on::-webkit-scrollbar-thumb:hover { background:rgba(255,255,255,0.34); }
   input::placeholder { color:rgba(255,255,255,0.2); }
   input { caret-color:var(--accent); }
   input::selection { background:rgba(255,255,255,0.18); color:inherit; }
@@ -225,6 +240,523 @@ const ACCENT_PRESETS = {
   rose:     { r: 255, g: 145, b: 175 },
   amber:    { r: 255, g: 178, b: 100 },
 };
+
+/* ── lyrics sources ───────────────────────────────────────────────────────── */
+/* порядок в settings.lyricsSources — это порядок поиска, сверху вниз.
+   synced: true — источник умеет отдавать текст с таймкодами (строка
+   подсвечивается по позиции воспроизведения).
+   musixmatch сюда не внесён намеренно: поиск у него требует apikey или
+   сессионный токен, без них он молча вернул бы 401 на каждый трек */
+const LYRICS_SOURCES = [
+  { id: 'lrclib', label: 'LRCLib', synced: true  },
+  { id: 'genius', label: 'Genius', synced: false },
+];
+const LYRICS_SOURCE_IDS = LYRICS_SOURCES.map(s => s.id);
+/* массив в настройках = включённые источники в порядке приоритета.
+   не-массив (поле ещё не было в файле настроек) → все включены по умолчанию;
+   массив остаётся как есть, иначе выключенный источник снова «включался» бы */
+function cleanLyricsSources(arr) {
+  if (!Array.isArray(arr)) return LYRICS_SOURCE_IDS.slice();
+  return [...new Set(arr.filter(id => LYRICS_SOURCE_IDS.includes(id)))];
+}
+
+/* ── lyrics fetching ──────────────────────────────────────────────────────── */
+/* Название без мусорного хвоста. Genius ищет по строке целиком и на любом
+   лишнем хвосте выдаёт 0 хитов — проверено на реальном треке:
+     «Поиск Врачей В Переулках Осенних 🍂 + voidvoice»  → 0 результатов
+     «Поиск Врачей В Переулках Осенних»                 → 1 результат
+   Поэтому режем:
+     «(feat. …)» / «[Live]»  — скобки
+     «- Remastered 2011»     — тире + хвост
+     «+ voidvoice»           — плюс-хвост (в SC это кредит: продюсер/фит)
+     «carnival * prod. @x»   — звёздочка-хвост, ТОТ ЖЕ кредит (проверено:
+                               Genius «carnival» / «@sedmoenebo», а с
+                               «* prod. …» в запросе — 0 хитов)
+     эмодзи                  — в поиске только мешают, Genius их не ищет */
+function cleanTrackName(s) {
+  return String(s || '')
+    .replace(/\s*[\(\[][^\)\]]*[\)\]]/g, ' ')
+    .replace(/\s*[-–—]\s.*$/, ' ')
+    .replace(/\s+\+\s*.*$/, ' ')
+    /* « * » требует пробелов с двух сторон, иначе «2*3» и «AC*DC» разъедутся */
+    .replace(/\s+\*\s+.*$/, ' ')
+    /* эмодзи и прочая пиктографика: \p{So} символ, \p{Cf} невидимые */
+    .replace(/[\p{So}\p{Cf}\p{No}]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/* [00:12.34] / [01:02.5] → секунды */
+function parseLrcStamp(mm) {
+  const m = /^(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?$/.exec(mm);
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]) + (m[3] ? Number('0.' + m[3]) : 0);
+}
+
+/* LRC → строки. на строке бывает несколько тегов ([00:10][01:20] chorus).
+   меты вида [ar:…] выкидываем, метки секций ([Verse], [Chorus 2]) — идут
+   без времени и рендерятся разделителями.
+   порядок строк НЕ сортируем: в LRC он уже правильный, а сортировка
+   закинула бы все метки секций в конец */
+function parseLrc(text) {
+  const out = [];
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const stamps = [];
+    let rest = raw;
+    for (;;) {
+      const m = /^\s*\[([^\]]*)\]/.exec(rest);
+      if (!m) break;
+      const t = parseLrcStamp(m[1]);
+      /* не таймкод — значит это сама метка секции ([Chorus], [Verse 2]).
+         её нельзя срезать: строка останется пустой и потеряется.
+         срезаем только то, что действительно распарсилось как время */
+      if (t === null) break;
+      stamps.push(t);
+      rest = rest.slice(m[0].length);
+    }
+    const line = rest.trim();
+    if (!line) continue;
+    if (/^\[(ar|ti|al|au|by|length|offset|re|ve|tool|id|encoding):/i.test(line)) continue;
+    if (!stamps.length) { out.push({ t: null, text: line, section: true }); continue; }
+    for (const t of stamps) out.push({ t, text: line, section: false });
+  }
+  return out;
+}
+
+function parsePlainLyrics(text) {
+  return String(text || '')
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(Boolean)
+    .map(l => ({ t: null, text: l, section: /^\[.+\]$/.test(l) }));
+}
+
+/* ── разбор названия SC ─────────────────────────────────────────────────────
+   На SC трек называют «Название + кредит», и формат всё время разный:
+     «carnival * prod. @lungsinfection»  (звёздочка)
+     «Королевский XVII — Charles de Gaulle» (тире, причём тут наоборот:
+        на Genius «Название» — это правая часть, а левая became артистом)
+     «Song + voidvoice», «Track (feat. X)», «Song - Remastered 2011»
+   Добавлять условие на каждый новый случай — путь в никуда, поэтому разбор
+   общий: хвост режется по СЛОВАМ-кредитам, а части — по ЗНАКАМ-разделителям.
+   Пробелы вокруг знака обязательны, иначе «AC*DC» и «2*3» разъедутся. */
+
+/* Слова-кредиты: после первого такого слова начинается не название.
+   Ищем ПЕРВОЕ вхождение, а не жадное «до любого»: «Song feat. Bob (Remix)»
+   должен обрезаться до «Song», а не до «Song feat. Bob». */
+const CREDIT_WORDS = /\b(prod\.?|prodby|feat\.?|ft\.?|featuring|remix|rmx|mix(?:ed)?|edits?|bootleg|rework|rewrk|vip|mash(?:ed)?[\s-]?up|sped[\s-]*up|slowed(?:ed)?|reverb|nightcore|8d|flip|original\s+mix)\b/gi;
+
+/* знаки, которыми SC отделяет название от кредита.
+   ПРОБЕЛЫ с двух сторон обязательны: иначе «AC*DC» и «2*3» разъедутся */
+const TITLE_SPLIT = /\s+[-–—*+|·/]\s+|\s+[x×]\s+/i;
+
+function stripCreditTail(title) {
+  const s = String(title || '');
+  CREDIT_WORDS.lastIndex = 0;
+  const m = CREDIT_WORDS.exec(s);
+  if (!m) return s;
+  /* срез до слова-кредита + снос хвостовых разделителей/открытых скобок */
+  return s.slice(0, m.index).replace(/[\s([|+*\-–—/·x×]+$/i, '').trim();
+}
+
+/* Отсев мусорных кандидатов. Кандидаты АДДИТИВНЫ: полное название всегда идёт
+   первым, поэтому лишний/грязный кандидат лишь добавляет бесполезный запрос и
+   ничего не ломает. Ошибка опасна только в одну сторону — пропуск настоящего
+   названия, поэтому фильтр мягкий. */
+function plausibleTitle(s) {
+  const t = String(s || '').trim();
+  if (!t) return false;
+  /* нечётные скобки: «Track (Slowed» и «Reverb)» — обломки после split */
+  const open = (t.match(/[([{]/g) || []).length, close = (t.match(/[)\]}]/g) || []).length;
+  if (open !== close) return false;
+  /* сама часть состоит только из слова-кредита: «Remix», «feat» */
+  CREDIT_WORDS.lastIndex = 0;
+  if (CREDIT_WORDS.test(t)) { CREDIT_WORDS.lastIndex = 0; if (t.replace(CREDIT_WORDS, '').trim().length < 3) return false }
+  return /\p{L}/u.test(t);
+}
+
+/* Кандидаты в «настоящее» название, по убыванию правдоподобия.
+   Ограничен CAP: каждый кандидат — это запрос к источнику. */
+const TITLE_CAND_CAP = 6;
+function titleCandidates(rawTitle) {
+  const T = String(rawTitle || '').trim();
+  const out = [];
+  const add = v => {
+    const s = cleanTrackName(v);
+    if (s && plausibleTitle(s) && !out.includes(s)) out.push(s);
+  };
+  add(T);                                  // целиком, почищенное — всегда первым
+  add(stripCreditTail(T));                 // без хвоста «prod. …»
+  for (const p of T.split(TITLE_SPLIT)) {
+    const s = p.trim();
+    if (!s) continue;
+    add(s);
+    add(stripCreditTail(s));
+  }
+  /* префикс до первого разделителя/слова-кредита: «carnival * prod. @x» →
+     «carnival». Раньше брались первые 3 слова подряд, и получалось
+     «Королевский XVII —» с висящим тире */
+  const head = T.split(TITLE_SPLIT)[0] || '';
+  if (head && head !== T) add(head);
+  add(stripCreditTail(head));
+  return out.slice(0, TITLE_CAND_CAP);
+}
+
+/* Трактовки пары «артист / название». На Genius те же слова часто лежат с
+   полями НАОБОРОТ (SC «Королевский XVII — Charles de Gaulle» → Genius
+   artist «королевский XVII», title «charles de gaulle»), поэтому для каждого
+   кандидата пробуем и нормальную, и перевёрнутую расстановку.
+   ВАЖНО: аргумент СЫРОЙ — разбор идёт по нему, чистка применяется после. */
+function trackQueries(artist, rawTitle) {
+  const A = cleanTrackName(artist);
+  const seen = new Set();
+  const pairs = [];
+  for (const c of titleCandidates(rawTitle)) {
+    for (const p of [[A, c], [c, A]]) {
+      const [a, t] = p;
+      /* вырожденная пара «артист + то же имя» бесполезна: запрос вышел бы
+         «Королевский XVII Королевский XVII» и вернул 0 хитов */
+      if (!a || !t || a === t) continue;
+      const k = a + '/' + t;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      pairs.push(p);
+    }
+  }
+  return pairs.length ? pairs : [[A, cleanTrackName(rawTitle)]].filter(([a, t]) => a && t);
+}
+/* Строки запроса, по приоритету: первым самый вероятный.
+   Кроме пар «артист + название» идёт ПОИСК ТОЛЬКО ПО НАЗВАНИЮ — на SC в
+   название часто кладут и артиста, и трек, и запрос с артистом мешает
+   (проверено: «Королевский XVII — Charles de Gaulle» без артиста → 2 хита).
+   Список ОГРАНИЧЕН: каждый вариант — это запрос к источнику, и без потолка
+   при длинном названии с кредитами их уходит слишком много. */
+const TITLE_QUERY_CAP = 7;
+function titleVariants(artist, rawTitle) {
+  const out = [];
+  const add = s => {
+    const v = String(s || '').replace(/\s+/g, ' ').trim();
+    if (v && !out.includes(v) && out.length < TITLE_QUERY_CAP) out.push(v);
+  };
+  for (const [a, t] of trackQueries(artist, rawTitle)) add(a ? `${a} ${t}` : t);
+  for (const c of titleCandidates(rawTitle)) add(c);
+  add(String(rawTitle || '').trim());   /* СЫРОЕ: с тире и эмодзи — иногда матчится лучше */
+  return out;
+}
+
+/* числовые сущности: genius отдаёт `&#x27;` (hex), не только `&#39;` */
+const safeChar = n => (Number.isFinite(n) && n > 0 && n < 0x110000) ? String.fromCodePoint(n) : '';
+function decodeEntities(s) {
+  return String(s)
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => safeChar(parseInt(h, 16)))
+    .replace(/&#(\d+);/g,       (_, d) => safeChar(parseInt(d, 10)))
+    .replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, "'").replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&');   /* &amp; строго последним, иначе раскроет уже раскрытое */
+}
+
+/* Содержимое div начиная с позиции ПОСЛЕ его открывающего тега, конец — по
+   СЧЁТЧИКУ вложенности, а не ленивым /<\/div>/.
+   Именно на этом Genius и ломался: в контейнере текста лежат ВЛОЖЕННЫЕ div'ы
+   (шапка «Contributors / Translations» со своей разметкой), и не-greedy
+   вариант обрывался на ПЕРВОМ внутреннем </div> — и вместе с шапкой уносил
+   куплет, идущий после неё. На проверенном треке это давало 11 строк вместо
+   41: оставался только последний припев. */
+function divInnerAt(html, openEnd) {
+  const tags = /<\/?div\b[^>]*>/gi;
+  tags.lastIndex = openEnd;
+  let depth = 1;
+  for (let t; (t = tags.exec(html)) !== null; ) {
+    if (t[0][1] === '/') { if (--depth === 0) return html.slice(openEnd, t.index); }
+    else depth++;
+  }
+  return html.slice(openEnd);
+}
+
+/* все контейнеры текста песни со страницы genius, по порядку */
+function geniusLyricChunks(html) {
+  const open = /<div[^>]+data-lyrics-container="true"[^>]*>/gi;
+  const out = [];
+  let m;
+  while ((m = open.exec(html)) !== null) {
+    const start = m.index + m[0].length;
+    const inner = divInnerAt(html, start);
+    /* прыгаем за весь матченный блок, иначе open повторно найдёт вложенный
+       контейнер (или тот же самый) и зациклится */
+    open.lastIndex = start + inner.length;
+    out.push(inner);
+  }
+  return out;
+}
+
+/* вырезает блоки, помеченные data-exclude-from-selection — в Genius это
+   шапка «Contributors / Translations». она лежит В ТОМ ЖЕ контейнере, что и
+   текст песни, поэтому считаем вложенность, а не режем по первому </div> */
+function stripExcluded(html) {
+  let out = html;
+  for (let guard = 0; guard < 50; guard++) {
+    const m = /<div[^>]*\sdata-exclude-from-selection="true"[^>]*>/i.exec(out);
+    if (!m) return out;
+    const start = m.index + m[0].length;
+    const inner = divInnerAt(out, start);
+    out = out.slice(0, m.index) + out.slice(start + inner.length + 6);
+  }
+  return out;
+}
+
+async function netGet(url, headers) {
+  const res = await window.electronAPI.netFetch(url, headers);
+  if (!res || res.error) throw new Error(res?.error || 'net_error');
+  return res;
+}
+
+/* ── LRCLib ───────────────────────────────────────────────────────────────── */
+/* открытый, без ключа. /api/get — точное совпадение: artist+track+duration,
+   длительность решает (без неё берётся первая строка и можно попасть в
+   ремикс). если точного нет — /api/search, из выдачи берём ближайшую по
+   длительности версию. внутри источника синхронный текст приоритетнее
+   обычного даже если оба пришли */
+async function fetchLrclib(artist, title, duration) {
+  let hit = null;
+  /* Те же варианты, что и для Genius, но ТОЛЬКО ПЕРВЫЕ ДВА. /api/search у
+     lrclib и так нечёткий, третий и четвёртый вариант почти ничего не дают,
+     а стоят 2 запроса каждый: на висящем lrclib это до 96с ожидания. */
+  for (const [qa, qt] of trackQueries(artist, title).slice(0, 3)) {
+    const params = new URLSearchParams({
+      track_name: qt,
+      artist_name: qa,
+      ...(duration > 0 ? { duration: String(Math.round(duration)) } : {}),
+    }).toString();
+
+    if (duration > 0 && !hit) {
+      const r = await netGet(`https://lrclib.net/api/get?${params}`);
+      if (r.status === 200) { try { hit = JSON.parse(r.body) } catch {} }
+    }
+    if (!hit) {
+      const r = await netGet(`https://lrclib.net/api/search?${params}`);
+      if (r.status === 200) {
+        try {
+          const list = JSON.parse(r.body);
+          if (Array.isArray(list) && list.length) {
+            hit = duration > 0
+              ? list.reduce((a, b) => Math.abs((b.duration || 0) - duration) < Math.abs((a.duration || 0) - duration) ? b : a)
+              : list[0];
+          }
+        } catch {}
+      }
+    }
+    if (hit) break;
+  }
+  if (!hit) return null;
+
+  if (hit.syncedLyrics && hit.syncedLyrics.trim()) {
+    const lines = parseLrc(hit.syncedLyrics);
+    if (lines.length) return { lines, synced: true };
+  }
+  if (hit.plainLyrics && hit.plainLyrics.trim())
+    return { lines: parsePlainLyrics(hit.plainLyrics), synced: false };
+  return null;
+}
+
+/* ── Genius ───────────────────────────────────────────────────────────────── */
+/* официальный API требует OAuth-токена, поэтому идём через внутренние
+   эндпоинты сайта (те же, что genius.com дёргает из браузера).
+   Схема неофициальная и может отвалиться, поэтому у обоих шагов есть
+   запасной путь. Проверено на живой странице: /api/songs/{id} отдаёт 200,
+   но без поля lyrics (без токена), а текст лежит в HTML — поэтому HTML идёт
+   ПЕРВЫМ, json только как фолбэк. Genius синхронизации не даёт, только plain */
+function geniusNorm(s) {
+  return String(s || '').toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, '').replace(/\s+/g, ' ').trim();
+}
+/* Доля слов нашего названия, найденных в кандидате, в процентах.
+   Нужна как страховка к includes(): у Genius в заголовке трека часто стоит
+   хвост, которого нет в названии на SC («…(SFDITAA)»), или наоборот. Раньше
+   из-за одного лишнего слова includes() давал false → score 0 → гейт `s > 0`
+   закрывал дверь, хотя трек был найден. */
+function geniusWordOverlap(a, b) {
+  const A = new Set(a.split(' ').filter(w => w.length > 1));
+  if (!A.size) return 0;
+  let hit = 0;
+  for (const w of A) if (b.includes(w)) hit++;
+  return Math.round((hit / A.size) * 100);
+}
+/* Лучший score кандидата по ВСЕМ трактовкам трека. При развороте
+   «Артист — Название» роли меняются местами, и сравнивать кандидата только с
+   исходными полями бессмысленно — он получит 0 вопреки точному совпадению. */
+function trackScore(cand, artist, title) {
+  if (!cand) return 0;
+  let best = 0;
+  for (const [a, t] of trackQueries(artist, title)) {
+    const s = geniusScore(cand, geniusNorm(a), geniusNorm(t));
+    if (s > best) best = s;
+  }
+  return best;
+}
+function geniusScore(cand, artist, title) {
+  if (!cand) return 0;
+  const ct = geniusNorm(cand.title);
+  const ca = geniusNorm(cand.primary_artist_names || cand.primary_artist?.name);
+  const t = geniusNorm(title);
+  if (!t) return 0;
+  let s = ct === t ? 100 : (ct.includes(t) || t.includes(ct)) ? 70 : 0;
+  if (!s) {
+    const ov = geniusWordOverlap(t, ct);
+    /* 60% порог: у Genius к названию почти всегда приписан хвост, иначе
+       не проходил бы ни один трек */
+    if (ov >= 60) s = 40 + Math.round(ov / 5);
+  }
+  /* Без совпадения по названию трек не найден. Артиста знать не обязательно
+     (перезаливы бывают с чужим uploader), но «совпал только артист» — это
+     чужая песня: раньше такое давало 40 и проходило гейт `s > 0`. */
+  if (!s) return 0;
+  if (artist && ca) s += ca === artist ? 40 : (ca.includes(artist) || artist.includes(ca)) ? 20 : 0;
+  return s;
+}
+
+async function fetchGenius(artist, rawTitle) {
+  /* 1. поиск. Пробуем НЕСКОЛЬКО вариантов запроса: на SC трек называют
+        «Артист — Название», а на Genius те же слова лежат с полями
+        НАОБОРОТ (проверено: SC «Королевский XVII — Charles de Gaulle» →
+        Genius artist «королевский XVII», title «charles de gaulle»).
+        Здесь title — СЫРОЕ, разбор внутри trackQueries. */
+  let id = null;
+  for (const v of titleVariants(artist, rawTitle)) {
+    try {
+      const r = await netGet(`https://genius.com/api/search/multi?q=${encodeURIComponent(v)}`);
+      if (r.status !== 200) continue;
+      const sections = JSON.parse(r.body)?.response?.sections || [];
+      const hits = sections.find(s => s.type === 'song')?.hits || [];
+      const scored = hits
+        .map(h => ({ h, s: trackScore(h.result, artist, rawTitle) }))
+        .sort((a, b) => b.s - a.s);
+      if (scored[0]?.s > 0) { id = scored[0].h.result?.id; break }
+    } catch {}
+  }
+  if (!id) return null;
+
+  /* 2. страница трека — рабочий путь. genius режет текст на НЕСКОЛЬКО
+     контейнеров (по секциям: [Verse] / [Chorus] / [Bridge]), между ними
+     лежат пустые плейсхолдеры для мобильной вёрстки. поэтому склеиваем
+     все непустые по порядку: взять первый непустой = оставить только
+     первую секцию песни.
+     границы контейнеров — по счётчику вложенности (divInnerAt), ленивый
+     /<\/div>/ тут обрезал песню до последнего припева */
+  try {
+    const r = await netGet(`https://genius.com/songs/${id}`, { 'Accept': 'text/html,application/xhtml+xml' });
+    if (r.status === 200) {
+      let txt = '';
+      for (const inner of geniusLyricChunks(r.body)) {
+        const chunk = decodeEntities(
+          stripExcluded(inner).replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '')
+        ).trim();
+        if (chunk) txt += chunk + '\n';
+      }
+      if (txt.trim()) return { lines: parsePlainLyrics(txt), synced: false };
+    }
+  } catch {}
+
+  /* 3. json — на случай если Genius вернёт lyrics в api без токена */
+  try {
+    const r = await netGet(`https://genius.com/api/songs/${id}`);
+    if (r.status === 200) {
+      const txt = JSON.parse(r.body)?.response?.song?.lyrics;
+      if (txt?.trim()) return { lines: parsePlainLyrics(txt), synced: false };
+    }
+  } catch {}
+  return null;
+}
+
+/* Обходит включённые источники по порядку и берёт первый ответивший.
+   Порядок из настроек — это приоритет, а не «кто первый ответил»: гонка
+   между источниками не устраивает смысла пользователю.
+
+   Раньше здесь стоял голый `catch {}` на источник, и из-за этого «текст не
+   нашёлся» и «сеть / IPC отвалились» выглядели в панели одинаково — а это
+   совершенно разные вещи. Теперь tried собирает исход по каждому
+   источнику, и панель показывает, кто именно не сработал. */
+const LYRICS_MISS = 'miss';   /* источник жив, но трека у него нет */
+async function fetchLyrics(track, order) {
+  const artist = cleanTrackName(splitArtists(track.artist || '')[0]?.name || '');
+  /* СЫРОЕ название, НЕ чищеное: разбор «Артист — Название» делает
+     trackQueries, и если почистить заранее, тире уже исчезнет и ветка
+     разбора не сработает. Из-за этого весь разворот был мёртвым кодом:
+     «Королевский XVII — Charles de Gaulle» превращался в «Королевский XVII»
+     (то же самое, что и артист), и поиск шёл «Королевский XVII
+     Королевский XVII» → 0 хитов. */
+  const rawTitle = String(track.title || '').trim();
+  const dur = track.duration || 0;
+  const tried = [];
+  if (!cleanTrackName(rawTitle)) return { status: 'empty', tried };
+
+  /* Порядок из настроек — это ПРИОРИТЕТ, а не «кто быстрее ответил».
+     Но строго последовательный обход означал, что первый источник блокирует
+     остальные на своём таймауте: если LRCLib первым и не отвечает, Genius
+     стартовал только через 12с×2 запроса, и панель всё это время молчала.
+
+     Решение — все источники в полёте одновременно + ЖЕСТКИЙ БЮДЖЕТ времени:
+     ждём либо разрешения источника №1, либо истечения бюджета. Уложились —
+     берём лучшее по приоритету; не уложились — берём то, что уже есть, и
+     не ждём оставшиеся. Итог: порядок по-прежнему выбирает победителя среди
+     доступных, но мёртвый источник больше не может съесть всё время. */
+  const BUDGET_MS = 9000;
+  if (!order.length) return { status: 'empty', tried };
+  const one = (id) => id === 'lrclib' ? fetchLrclib(artist, rawTitle, dur)
+                    : id === 'genius' ? fetchGenius(artist, rawTitle)
+                    : Promise.resolve(null);
+
+  const box = order.map(() => null);   /* null = ещё в полёте */
+  const inflight = order.map((id, i) => {
+    const p = Promise.resolve().then(() => one(id));
+    p.then(v => { box[i] = { ok: true, v }; },
+           e => { box[i] = { ok: false, e }; });
+    return p;
+  });
+
+  /* deadline считаем ДО гонки: если посчитать после, к бюджету прибавится
+     весь срок ожидания и он удвоится */
+  const deadline = Date.now() + BUDGET_MS;
+  const left = () => Math.max(0, deadline - Date.now());
+  /* ОЖИДАНИЕ ТОЖЕ ОГРАНИЧЕНО бюджетом. Раньше проверка «вышли ли за бюджет»
+     стояла ПЕРЕД await, а сам await был без ограничения — а это и есть
+     «скелетон навечно»: genius с 4 вариантами это до 4×12с таймаута, lrclib
+     с 4 вариантами × 2 запроса — до 96с, и всё это время панель молчала.
+     Теперь КАЖДЫЙ await гоняется с остатком бюджета, и по исчерпании
+     берётся всё, что уже успели принести. */
+  const settle = (p, ms) => Promise.race([
+    p.then(v => ({ ok: true, v }), e => ({ ok: false, e })),
+    new Promise(res => setTimeout(() => res(null), ms)),
+  ]);
+
+  await settle(inflight[0], left());
+  for (let i = 0; i < order.length; i++) {
+    const id = order[i];
+    let s = box[i] || await settle(inflight[i], left());
+    if (!s) {
+      tried.push({ id, result: 'error', why: 'budget' });
+      continue;
+    }
+    if (s.ok) {
+      if (s.v && s.v.lines.length) return { status: 'ready', ...s.v, source: id, tried };
+      tried.push({ id, result: LYRICS_MISS });
+    } else {
+      const why = String(s.e?.message || s.e);
+      tried.push({ id, result: 'error', why });
+      console.warn('[lyrics]', id, why);
+    }
+  }
+  /* бюджет кончился — но может остаться результат источника ПОЗЖЕ по
+     приоритету, который уже успел ответить (все промисы в полёте с самого
+     начала). берём лучший из пришедших, а не выбрасываем */
+  for (let i = 0; i < order.length; i++) {
+    const s = box[i];
+    if (s && s.ok && s.v && s.v.lines.length && !tried.some(x => x.id === order[i]))
+      return { status: 'ready', ...s.v, source: order[i], tried };
+  }
+  /* если все ответили ошибкой, а не «нет трека» — это не miss */
+  const allError = tried.length > 0 && tried.every(x => x.result === 'error');
+  return { status: allError ? 'error' : 'empty', tried };
+}
 
 /* ── live accent ─────────────────────────────────────────────────────────── */
 /* актуальное анимируемое значение акцента: App лерпит его покадрово,
@@ -721,6 +1253,16 @@ const STRINGS = {
     accent_cover_sub:'Динамически меняется под обложку трека',
     accent_seg_off:'Выкл', accent_seg_color:'Цвет',
     accent_off_title:'Свечения выключены', accent_off_sub:'Фоновые свечения скрыты, акцент — статичный серый',
+    sec_lyrics:'Текст песен',
+    lyrics_sources:'Источники текста', lyrics_sources_sub:'Сверху вниз — в этом порядке ищется текст песни',
+    lyrics_off:'Выключенные', lyrics_synced:'синхронный',
+    lyrics_up:'Выше по списку', lyrics_down:'Ниже по списку',
+    lyrics_back:'вернуться к трекам',
+    lyrics_loading:'ищем текст…', lyrics_notfound:'текст не нашёлся',
+    lyrics_err:'не удалось загрузить текст', lyrics_err_sub:'источники не ответили',
+    lyrics_notfound_sub:'попробовали все включённые источники',
+    lyrics_tap_line:'нажми на строку, чтобы перейти', lyrics_retry:'попробовать снова',
+    lyrics_all_off:'Все источники выключены — искать негде',
   },
   en: {
     minimize:'Minimize', maximize:'Maximize', close:'Close',
@@ -816,6 +1358,16 @@ const STRINGS = {
     accent_cover_sub:'Dynamically follows the current track artwork',
     accent_seg_off:'Off', accent_seg_color:'Color',
     accent_off_title:'Glow disabled', accent_off_sub:'Background glows hidden, accent is flat gray',
+    sec_lyrics:'Lyrics',
+    lyrics_sources:'Lyrics sources', lyrics_sources_sub:'Top to bottom — lyrics are searched in this order',
+    lyrics_off:'Turned off', lyrics_synced:'synced',
+    lyrics_up:'Move up', lyrics_down:'Move down',
+    lyrics_back:'back to tracks',
+    lyrics_loading:'looking for lyrics…', lyrics_notfound:'lyrics not found',
+    lyrics_err:'could not load lyrics', lyrics_err_sub:'sources did not respond',
+    lyrics_notfound_sub:'tried every enabled source',
+    lyrics_tap_line:'tap a line to seek', lyrics_retry:'try again',
+    lyrics_all_off:'All sources are turned off — nowhere to look',
   },
 };
 const LangContext = React.createContext('ru');
@@ -2278,6 +2830,304 @@ function VirtualTrackList({ items, activeId, loadingId, errorId, onClickItem, on
   );
 }
 
+/* ── LyricsPanel ──────────────────────────────────────────────────────────── */
+/* панель текста песни: перекрывает библиотеку в колонке 260px и уезжает
+   вместе с ней. всегда смонтирована — видимостью управляет `open`
+   (крестфейд + сдвиг), иначе на первом открытии был бы мгновенный
+   переход вместо анимации.
+   `state` = { status:'loading'|'ready'|'empty', lines, synced, source }.
+   `activeLine` считает App (см. rAF-эффект) — здесь только отрисовка */
+function LyricsPanel({ open, state, activeLine, onSeek, onRetry, onBack, sources }) {
+  const t = useLang();
+  const bodyRef  = useRef(null);
+  const lineRefs = useRef([]);
+  const userScrollRef = useRef(0);
+  const autoUntilRef  = useRef(0);
+  const wasOpenRef    = useRef(false);
+  const scrollHideRef = useRef(null);
+  const [scrolling, setScrolling] = useState(false);
+  /* края храним в ref + чиним через счётчик: меняются они на каждом
+     скролле, а ререндер ради двух булевых значений не нужен — маска
+     применяется стилем, а состояние нужно только чтобы перерисовалось */
+  const [edgesTick, setEdgesTick] = useState(0);
+  const edgesRef = useRef({ top: false, bottom: false });
+  const forceEdges = useCallback(() => setEdgesTick(v => v + 1), []);
+  lineRefs.current = [];
+
+  /* порядок — из массива настроек, не из реестра (см. LyricsSettings) */
+  const _on = cleanLyricsSources(sources);
+  const enabled = _on.map(id => LYRICS_SOURCES.find(s => s.id === id)).filter(Boolean);
+  const lines   = state?.status === 'ready' ? state.lines : null;
+  /* `synced` в панели больше не читается: подпись «без таймкодов» убрана.
+     само поле `state.synced` по-прежнему нужно — по нему App гоняет rAF
+     подсветки (см. эффект активной строки) */
+
+  /* Маска по краям контента: градиент там, где контент обрезан.
+     Если контент влез целиком — маски нет (как в VirtualTrackList) */
+  const EDGE_FADE = 20;
+  const edges = edgesRef.current;
+  const maskImage = (() => {
+    if (!edges.top && !edges.bottom) return 'none';
+    const parts = [];
+    parts.push(edges.top ? 'transparent 0' : 'black 0');
+    parts.push(edges.top ? `black ${EDGE_FADE}px` : 'black 0');
+    parts.push(edges.bottom ? `black calc(100% - ${EDGE_FADE}px)` : 'black 100%');
+    parts.push(edges.bottom ? 'transparent 100%' : 'black 100%');
+    return `linear-gradient(to bottom, ${parts.join(', ')})`;
+  })();
+
+  const scrollToActive = useCallback((smooth) => {
+    const el   = bodyRef.current;
+    const line = lineRefs.current[activeLine];
+    if (!el || !line) return;
+    const top = Math.max(0, line.offsetTop - el.clientHeight / 2 + line.offsetHeight / 2);
+    autoUntilRef.current = Date.now() + (smooth ? 700 : 120);
+    if (smooth) smoothScroll(el, top, 480);
+    else el.scrollTop = top;
+  }, [activeLine]);
+
+  /* новый трек — новый текст: сбрасываем скролл в начало, иначе открытие
+     с середины прошлого трека выглядело бы как случайность */
+  useEffect(() => {
+    if (state?.status !== 'loading') return;
+    if (bodyRef.current) { bodyRef.current.scrollTop = 0; forceEdges() }
+    setScrolling(false);
+  }, [state, forceEdges]);
+
+  /* края пересчитываются не только на скролле: контент мог смениться,
+     панель открылась, окноresize */
+  useEffect(() => {
+    if (!open) return;
+    const el = bodyRef.current;
+    if (!el) return;
+    const sync = () => {
+      const top = el.scrollTop > 4;
+      const bottom = el.scrollTop + el.clientHeight < el.scrollHeight - 4;
+      if (top !== edgesRef.current.top || bottom !== edgesRef.current.bottom) {
+        edgesRef.current = { top, bottom };
+        forceEdges();
+      }
+    };
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(el);
+    return () => { ro.disconnect(); clearTimeout(scrollHideRef.current) };
+  }, [open, state, forceEdges]);
+
+  /* при открытии — сразу к активной строке. плавно прокручивать через весь
+     текст от начала смысла нет, это зрелищно и долго */
+  useEffect(() => {
+    if (!open) { wasOpenRef.current = false; return; }
+    if (wasOpenRef.current) return;
+    wasOpenRef.current = true;
+    if (activeLine >= 0) scrollToActive(false);
+  }, [open, activeLine, scrollToActive]);
+
+  /* дальше подсветка ведёт сама. 4 секунды после ручного скролла панель
+     не дёргается — иначе она вырывает текст из-под читателя */
+  useEffect(() => {
+    if (!open || !wasOpenRef.current || activeLine < 0) return;
+    if (Date.now() - userScrollRef.current < 4000) return;
+    scrollToActive(true);
+  }, [activeLine, open, scrollToActive]);
+
+  const onBodyScroll = useCallback(() => {
+    /* границы контента: по ним рисуем градиенты у краёв панели, вместо
+       постоянно висящей полосы. обе считаются напрямую из DOM — состояние
+       ради двух булевых значений перекладывать не нужно */
+    const el = bodyRef.current;
+    if (el) {
+      const top = el.scrollTop > 4;
+      const bottom = el.scrollTop + el.clientHeight < el.scrollHeight - 4;
+      if (top !== edgesRef.current.top || bottom !== edgesRef.current.bottom) {
+        edgesRef.current = { top, bottom };
+        forceEdges();
+      }
+    }
+    /* показать полосу на время скролла, потом погасить */
+    setScrolling(true);
+    clearTimeout(scrollHideRef.current);
+    scrollHideRef.current = setTimeout(() => setScrolling(false), 900);
+
+    if (Date.now() < autoUntilRef.current) return;  /* это наша автопрокрутка */
+    userScrollRef.current = Date.now();
+  }, []);
+
+  /* Один стиль на чип источника и на кнопку возврата — по просьбе выключалка
+     должна быть того же размера, что и чипы. Раньше шапка была большой
+     плашкой «ТЕКСТ ПЕСНИ» с иконкой 26px, а источники жили отдельной полосой
+     внизу; теперь плашки нет, а чипы стоят на её месте. */
+  const CHIP = {
+    display:'flex', alignItems:'center', gap:5,
+    fontSize:'var(--fs-xs)', lineHeight:1,
+    padding:'5px 8px', borderRadius:7, height:24,
+    background:'rgba(255,255,255,0.035)',
+    border:'1px solid rgba(255,255,255,0.03)',
+    color:'rgba(255,255,255,0.22)',
+    boxSizing:'border-box',
+  };
+
+  return (
+    <div style={{
+      position:'absolute', inset:0, display:'flex', flexDirection:'column',
+      opacity: open ? 1 : 0,
+      pointerEvents: open ? 'auto' : 'none',
+      transform: open ? 'translateX(0)' : 'translateX(14px)',
+      transition: open
+        ? 'opacity 0.3s ease 0.08s, transform 0.44s cubic-bezier(0.22,1,0.36,1) 0.08s'
+        : 'opacity 0.16s ease, transform 0.16s ease',
+    }}>
+      {/* верхняя полоса: чипы источников + выключалка того же размера.
+          большой плашки «ТЕКСТ ПЕСНИ» с иконкой больше нет — по просьбе
+          на её место переехали сами источники */}
+      <div style={{
+        display:'flex', alignItems:'center', gap:4,
+        margin:'10px 12px 0', flexShrink:0, minHeight:24,
+      }}>
+        {enabled.map(s => {
+          const used  = state?.status === 'ready' && state.source === s.id;
+          const entry = state?.tried?.find(x => x.id === s.id);
+          const dead  = entry?.result === 'error';
+          const busy  = state?.status === 'loading' && !entry;
+          return (
+            <span key={s.id} title={dead ? entry.why : undefined} style={{
+              ...CHIP,
+              color: used ? 'rgba(255,255,255,0.6)' : CHIP.color,
+              background: used ? 'rgba(var(--accent-rgb),0.1)' : CHIP.background,
+              border: used ? '1px solid rgba(var(--accent-rgb),0.28)' : CHIP.border,
+            }}>
+              {dead && <span style={{width:4, height:4, borderRadius:'50%', background:'rgba(255,80,60,0.7)', flexShrink:0}}/>}
+              {busy && <span style={{
+                width:7, height:7, borderRadius:'50%', flexShrink:0,
+                border:'1px solid rgba(255,255,255,0.28)',
+                borderTopColor:'rgba(255,255,255,0.7)',
+                animation:'spin 0.7s linear infinite',
+              }}/>}
+              {s.label}
+            </span>
+          );
+        })}
+        <div style={{flex:1, minWidth:4}}/>
+        <div onClick={onBack} title={t('lyrics_back')} style={{
+          ...CHIP, flexShrink:0, cursor:'pointer',
+          justifyContent:'center', color:'rgba(255,255,255,0.3)',
+          transition:'background 0.15s, color 0.15s',
+        }}
+          onMouseEnter={e => { e.currentTarget.style.background='rgba(255,255,255,0.08)'; e.currentTarget.style.color='rgba(255,255,255,0.75)'; }}
+          onMouseLeave={e => { e.currentTarget.style.background=CHIP.background; e.currentTarget.style.color='rgba(255,255,255,0.3)'; }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="2" strokeLinecap="round">
+            <path d="M8 6h13M8 12h13M8 18h13"/>
+            <circle cx="3.6" cy="6" r="1" fill="currentColor" stroke="none"/>
+            <circle cx="3.6" cy="12" r="1" fill="currentColor" stroke="none"/>
+            <circle cx="3.6" cy="18" r="1" fill="currentColor" stroke="none"/>
+          </svg>
+        </div>
+      </div>
+
+      <div className={'scroll-fade' + (scrolling ? ' on' : '')} ref={bodyRef} onScroll={onBodyScroll}
+        style={{
+          flex:1, minHeight:0, overflowY:'auto',
+          display:'flex', flexDirection:'column',
+          padding:'0 14px 10px', marginTop:12,
+          /* градиенты у краёв — индикация «есть что прокрутить», как в
+             VirtualTrackList. полоса при этом появляется лишь на время
+             скролла, а не висит постоянно */
+          maskImage, WebkitMaskImage: maskImage,
+          transition: 'mask-image 0.2s ease, -webkit-mask-image 0.2s ease',
+        }}>
+        {/* Раньше здесь была строка «без таймкодов — подсветки не будет».
+            Убрана: она съедала 12px сверху текста на каждом треке без
+            синхронизации, а в колонке 260px это ощутимый кусок первого
+            экрана. Отсутствие подсветки теперь видно и без подписи — просто
+            ни одна строка не подсвечивается. */}
+        {/* Загрузка. Скелетон строк тут был плохой идеей: он изображал
+            строки текста, которых ещё нет, и в узкой колонке 260px читался
+            как кривые полосы. Вместо него — эквалайзер: трек-то играет, и
+            motion честный («идёт работа»), и не выдаёт несуществующий текст.
+            Та же анимация .st-eq, что в чипе станции. */}
+        {state?.status === 'loading' && (
+          <div style={{
+            flex:1, display:'flex', flexDirection:'column',
+            alignItems:'center', justifyContent:'center', gap:16, padding:'0 20px 60px',
+          }}>
+            <div className="st-eq" style={{display:'flex', alignItems:'flex-end', gap:4, height:26}}>
+              {[0, 1, 2, 3, 4].map(i => (
+                <i key={i} style={{
+                  width:3, background:'var(--accent)', opacity:0.55,
+                  /* инлайн перекрывает nth-child задержки из CSS — у нас 5
+                     полос вместо трёх, иначе последние две шевелились в такт */
+                  animationDelay: (i * 0.11) + 's',
+                }}/>
+              ))}
+            </div>
+            <div style={{
+              fontSize:'var(--fs-xs)', color:'rgba(255,255,255,0.26)',
+              textAlign:'center', lineHeight:1.5,
+            }}>{t('lyrics_loading')}</div>
+          </div>
+        )}
+
+        {/* подписи вида [Куплет] / [Chorus] / [Bridge] НЕ рисуем — по просьбе
+            текст должен идти сплошным. сами строки в данных остаются (индексы
+            `lines` не сдвигаются, автоскролл и подсветка считают по ним),
+            пропускаем их только на отрисовке */}
+        {lines && lines.map((l, i) => l.section ? null : (
+          <div key={i} ref={el => { if (el) lineRefs.current[i] = el; }}
+            onClick={() => l.t != null && onSeek(l.t)}
+            title={l.t != null ? t('lyrics_tap_line') : undefined}
+            style={{
+              fontSize:'var(--fs-md)', lineHeight:1.5,
+              color: i === activeLine ? 'var(--accent)' : 'rgba(255,255,255,0.34)',
+              fontWeight: i === activeLine ? 600 : 500,
+              transform: i === activeLine ? 'translateX(2px)' : 'translateX(0)',
+              cursor: l.t != null ? 'pointer' : 'default',
+              padding:'3px 0', borderRadius:5,
+              transition:'color 0.28s ease, font-weight 0.28s ease, transform 0.28s ease',
+            }}>{l.text}</div>
+        ))}
+
+        {/* «не нашлось» и «источник упал» — разные вещи, и раньше они
+            выглядели одинаково. error показываем явно + причину в title */}
+        {(state?.status === 'empty' || state?.status === 'error') && (
+          <div style={{
+            display:'flex', flexDirection:'column', alignItems:'center',
+            gap:11, padding:'54px 8px 0', textAlign:'center',
+          }}>
+            <img src="../assets/textt.png" style={{width:22, height:22, filter:'brightness(0) invert(1)', opacity:0.15, display:'block'}}/>
+            <div style={{fontSize:'var(--fs-md)', fontWeight:500, color:'rgba(255,255,255,0.38)', lineHeight:1.45}}>
+              {state.status === 'error' ? t('lyrics_err') : t('lyrics_notfound')}
+            </div>
+            <div style={{fontSize:'var(--fs-xs)', color:'rgba(255,255,255,0.2)', lineHeight:1.5}}>
+              {!enabled.length ? t('lyrics_all_off')
+                : state.status === 'error' ? t('lyrics_err_sub')
+                : t('lyrics_notfound_sub')}
+            </div>
+            {state.status === 'error' && state.tried?.some(x => x.why) && (
+              <div style={{
+                fontSize:'var(--fs-xs)', color:'rgba(255,80,60,0.55)', lineHeight:1.45,
+                maxWidth:'100%', wordBreak:'break-word',
+              }}>{state.tried.filter(x => x.why).map(x => `${x.id}: ${x.why}`).join(' · ')}</div>
+            )}
+            <div onClick={onRetry} style={{
+              marginTop:4, fontSize:'var(--fs-xs)', fontWeight:500, cursor:'pointer',
+              color:'rgba(255,255,255,0.4)', background:'rgba(255,255,255,0.055)',
+              borderRadius:7, padding:'5px 13px', transition:'background 0.15s, color 0.15s',
+            }}
+              onMouseEnter={e => { e.currentTarget.style.background='rgba(255,255,255,0.09)'; e.currentTarget.style.color='rgba(255,255,255,0.7)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background='rgba(255,255,255,0.055)'; e.currentTarget.style.color='rgba(255,255,255,0.4)'; }}
+            >{t('lyrics_retry')}</div>
+          </div>
+        )}
+
+        {/* Раньше здесь была вторая полоса чипов источников снизу. Теперь они
+            в верхней строке (вместо бывшей плашки «ТЕКСТ ПЕСНИ»), здесь
+            ничего — иначе один и тот же список рисовался дважды. */}
+      </div>
+    </div>
+  );
+}
+
 /* ── HomeCard ────────────────────────────────────────────────────────────── */
 const HomeCard = React.memo(function HomeCard({ track, onSelect, artRef, artHidden, isLiked, onLike }) {
   const handleClick = useCallback(() => onSelect(track), [onSelect, track]);
@@ -2302,7 +3152,7 @@ const HomeCard = React.memo(function HomeCard({ track, onSelect, artRef, artHidd
         <div style={{fontSize: 'var(--fs-sm)', fontWeight:500, color:'rgba(255,255,255,0.88)',
           whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{track.title}</div>
       </div>
-      <div ref={artRef} style={{
+      <div ref={artRef} data-sewer-art={track.id} style={{
         opacity: artHidden ? 0 : 1,
         width:'100%', aspectRatio:'1', position:'relative',
         background:'#111116',
@@ -2652,6 +3502,124 @@ function ClearCacheCard({ Card, Row, onClearCoversCache, onClearLikesCache }) {
   );
 }
 
+/* ── LyricsSettings ───────────────────────────────────────────────────────── */
+/* пара «стрелки приоритета» у строки источника. на краях списка стрелка
+   гаснет и не кликается. на модульном уровне — вложенный компонент
+   пересоздавался бы на каждом рендере (см. TrackContextMenu) */
+function SourceArrows({ i, count, onMove, upTitle, downTitle }) {
+  return (
+    <div style={{display:'flex', flexDirection:'column', gap:1, flexShrink:0}}>
+      {[-1, 1].map(dir => {
+        const edge = i + dir < 0 || i + dir >= count;
+        return (
+          <div key={dir} onClick={() => { if (!edge) onMove(i, dir); }}
+            title={dir < 0 ? upTitle : downTitle}
+            style={{
+              width:18, height:12, borderRadius:4,
+              display:'flex', alignItems:'center', justifyContent:'center',
+              cursor: edge ? 'default' : 'pointer',
+              color: edge ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.24)',
+              transition:'color 0.15s, background 0.15s',
+            }}
+            onMouseEnter={e => { if (!edge) e.currentTarget.style.color = 'rgba(255,255,255,0.72)'; }}
+            onMouseLeave={e => { e.currentTarget.style.color = edge ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.24)'; }}>
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round"
+              style={{transform: dir < 0 ? 'none' : 'rotate(180deg)'}}>
+              <path d="m6 15 6-6 6 6"/>
+            </svg>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function LyricsSettings({ settings, onSettings, Card, Toggle }) {
+  const t = useLang();
+  const on = cleanLyricsSources(settings.lyricsSources);
+  /* порядок берётся из МАССИВА НАСТРОЕК, а не из реестра LYRICS_SOURCES.
+     `LYRICS_SOURCES.filter(s => on.includes(s.id))` всегда возвращает порядок
+     реестра, и стрелки «ничего не меняют»: массив перезаписывался правильно,
+     но рендер снова сортировал его по исходному. сортируем по позиции в `on` */
+  const byOrder = ids => ids
+    .map(id => LYRICS_SOURCES.find(s => s.id === id))
+    .filter(Boolean);
+  const enabled  = byOrder(on);
+  const disabled = byOrder(LYRICS_SOURCE_IDS.filter(id => !on.includes(id)));
+  const div = settings.hideDividers ? 'none' : '1px solid rgba(255,255,255,0.045)';
+
+  const write  = next => onSettings(s => ({ ...s, lyricsSources: next }));
+  const toggle = id => write(on.includes(id) ? on.filter(x => x !== id) : [...on, id]);
+  const move = (i, dir) => {
+    const j = i + dir;
+    if (j < 0 || j >= on.length) return;   /* на границе списка — no-op */
+    const next = on.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    write(next);
+  };
+
+  return (
+    <Card title={t('lyrics_sources')}>
+      <div style={{
+        padding:'13px 20px 11px',
+        fontSize:'var(--fs-xs)', color:'rgba(255,255,255,0.28)', lineHeight:1.45,
+      }}>{t('lyrics_sources_sub')}</div>
+
+      {enabled.map((s, i) => (
+        <div key={s.id} style={{
+          display:'flex', alignItems:'center', gap:11, padding:'10px 16px 10px 12px',
+          borderBottom: (disabled.length || i === enabled.length - 1) ? div : 'none',
+        }}>
+          <SourceArrows i={i} count={enabled.length} onMove={move}
+            upTitle={t('lyrics_up')} downTitle={t('lyrics_down')}/>
+          <div style={{flex:1, minWidth:0, display:'flex', alignItems:'center', gap:8}}>
+            <span style={{fontSize:'var(--fs-md)', color:'rgba(255,255,255,0.75)'}}>{s.label}</span>
+            {s.synced && (
+              <span style={{
+                fontSize:'var(--fs-eyebrow)', letterSpacing:'0.06em', textTransform:'uppercase',
+                color:'rgba(255,255,255,0.26)', padding:'2px 6px', borderRadius:5,
+                background:'rgba(255,255,255,0.05)', flexShrink:0,
+              }}>{t('lyrics_synced')}</span>
+            )}
+          </div>
+          <Toggle value onChange={() => toggle(s.id)}/>
+        </div>
+      ))}
+
+      {enabled.length === 0 && (
+        <div style={{
+          padding:'2px 20px 14px', fontSize:'var(--fs-xs)',
+          color:'rgba(255,255,255,0.22)', lineHeight:1.45,
+        }}>{t('lyrics_all_off')}</div>
+      )}
+
+      {disabled.length > 0 && (
+        <>
+          <div style={{
+            padding:'12px 20px 4px',
+            fontSize:'var(--fs-eyebrow)', letterSpacing:'0.09em', textTransform:'uppercase',
+            color:'rgba(255,255,255,0.2)',
+          }}>{t('lyrics_off')}</div>
+          {disabled.map((s, i) => (
+            <div key={s.id} style={{
+              display:'flex', alignItems:'center', gap:11, padding:'10px 20px',
+              borderBottom: i === disabled.length - 1 ? 'none' : div,
+            }}>
+              {/* место под стрелки, чтобы названия выключенных не съезжали влево */}
+              <div style={{width:18, flexShrink:0}}/>
+              <span style={{flex:1, minWidth:0, fontSize:'var(--fs-md)', color:'rgba(255,255,255,0.3)'}}>
+                {s.label}
+              </span>
+              <Toggle value={false} onChange={() => toggle(s.id)}/>
+            </div>
+          ))}
+        </>
+      )}
+    </Card>
+  );
+}
+
 /* ── SettingsView ─────────────────────────────────────────────────────────── */
 function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFolder, onClearCoversCache, onClearLikesCache, appAccent, scAuth, onScLogin, onScLogout, sec, setSec }) {
   const t = useLang();
@@ -2681,14 +3649,16 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
     setPill({ top: er.top - pr.top, height: er.height });
   }, [sec]);
 
-  const Toggle = ({ k }) => {
-    const on = !!settings[k];
+  /* k — ключ в settings. либо вместо него явные value/onChange:
+     тумблер поверх не-булевой настройки (порядок источников текста) */
+  const Toggle = ({ k, value, onChange }) => {
+    const on = value !== undefined ? !!value : !!settings[k];
     return (
       <div style={{
         width:38, height:22, borderRadius:11, cursor:'pointer', flexShrink:0,
         background: on ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.1)',
         position:'relative', transition:'background 0.22s ease',
-      }} onClick={()=>set(k, !on)}>
+      }} onClick={() => onChange !== undefined ? onChange(!on) : set(k, !on)}>
         <div style={{
           position:'absolute', top:4, width:14, height:14, borderRadius:'50%',
           background:'#fff', boxShadow:'0 1px 4px rgba(0,0,0,0.4)',
@@ -2731,6 +3701,8 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
       icon:<SoundCloudIcon size={14} fill="rgba(255,255,255,0.5)"/> },
     { id:'playback', label:t('sec_playback'),
       icon:<img src="../assets/vosproizvedenie.png" style={{width:15,height:15,filter:'brightness(0) invert(1)',display:'block'}}/> },
+    { id:'lyrics',   label:t('sec_lyrics'),
+      icon:<img src="../assets/textt.png" style={{width:15,height:15,filter:'brightness(0) invert(1)',display:'block'}}/> },
     { id:'appearance', label:t('sec_appearance'),
       icon:<img src="../assets/theme.png" style={{width:15,height:15,filter:'brightness(0) invert(1)',display:'block'}}/> },
     { id:'system',   label:t('sec_system'),
@@ -2808,6 +3780,9 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
           <CrossfadeSlider value={settings.crossfade} onChange={v=>set('crossfade', v)}/>
         </Row>
       </Card>
+    ),
+    lyrics: (
+      <LyricsSettings settings={settings} onSettings={onSettings} Card={Card} Toggle={Toggle}/>
     ),
     appearance: (<>
       <Card title={t('accent_title')}>
@@ -5005,13 +5980,20 @@ function App() {
   const [reverseHeroExiting, setReverseHeroExiting] = useState(false);
   const [artistView,         setArtistView]         = useState(null);
   const [libCollapsed,  setLibCollapsed]  = useState(false);
+  /* текст песни: перекрывает библиотеку в колонке слева */
+  const [lyricsOpen,   setLyricsOpen]   = useState(false);
+  const [lyrics,       setLyrics]       = useState(null);   /* { status, lines, synced, source } */
+  const [lyricsActive, setLyricsActive] = useState(-1);
+  const [lyricsNonce,  setLyricsNonce]  = useState(0);      /* ретрай: тот же эффект заново */
+  const lyricsReqRef = useRef(0);
   const [settings,      setSettings]      = useState({
     autoplay:false, crossfade:0, defaultRepeat:false,
-    startWithWindows:false, minimizeToTray:false, musicFolder:'',
+    startWithWindows:false, minimizeToTray:false, musicFolder:'', downloadsFolder:'',
     customTitles: {}, minDuration: 30, soundcloudAuth: null,
     sourceMode: 'local', discordRpc: true,
     discordTimestamp: 'progress', discordPause: 'show', discordCover: true,
     accentMode: 'color', accentPreset: 'default',
+    lyricsSources: LYRICS_SOURCE_IDS.slice(),  /* включённые источники, сверху вниз */
     volume: 0.7,   /* gain 0..1 (не позиция ползунка) — переживает перезапуск */
   });
   const [sort,         setSort]         = useState('added');
@@ -5100,6 +6082,9 @@ function App() {
   const filteredScRef     = useRef([]);
   const searchRef         = useRef('');
   const searchQueueRef    = useRef(null);
+  /* токен текущей загрузки SC-трека: handleScTrackClick делает await'ы, и без
+     guard'а два быстрых клика давали гонку — включался не тот трек */
+  const scReqRef          = useRef(0);
   const stationQueueRef   = useRef(null);
   const playlistQueueRef  = useRef(null);
   const playlistsRef      = useRef(null);
@@ -5225,6 +6210,9 @@ function App() {
               m.accentMode = (saved.accentMode === 'cover') ? 'cover' : 'color';
             }
             if (!ACCENT_PRESETS[m.accentPreset]) m.accentPreset = 'default';
+            /* список источников текста: выкидываем мусор и дубли, отсутствие
+               поля (старый файл настроек) → все источники по умолчанию */
+            m.lyricsSources = cleanLyricsSources(m.lyricsSources);
             return m;
           });
           if (typeof saved.volume === 'number') {
@@ -6289,6 +7277,12 @@ function App() {
   }
 
   async function handleScTrackClick(scTrack, idx, autoSkip = false, skipCount = 0, direction = 1) {
+    /* Токен запроса. handleScTrackClick делает await'ы (streamUrl, потом HLS),
+       и без guard'а два быстрых клика давали гонку: первый запрос резолвился
+       вторым и перебивал setScPlayingTrack — включался не тот трек, на который
+       кликнули. Сейчас устаревший запрос просто выходит. */
+    const req = ++scReqRef.current;
+    const stale = () => req !== scReqRef.current;
     trackSwitchingRef.current = true;
     setScPlayingIdx(idx);
     progressRef.current = 0;
@@ -6355,12 +7349,17 @@ function App() {
 
     if (scTrack.streamUrl) {
       const res = await window.electronAPI.scFetch(scTrack.streamUrl, auth.token, auth.clientId);
+      if (stale()) return;
       if (res.data?.url) resolvedUrl = res.data.url;
     }
     if (!resolvedUrl && scTrack.hlsUrl) {
       const res = await window.electronAPI.scFetch(scTrack.hlsUrl, auth.token, auth.clientId);
+      if (stale()) return;
       if (res.data?.url) { resolvedUrl = res.data.url; isHls = true; }
     }
+    /* успел протухнуть, пока грузили: не снимаем индикатор загрузки и не
+       трогаем markError — этим занимается тот запрос, который актуален */
+    if (stale()) return;
 
     if (!resolvedUrl) {
       trackSwitchingRef.current = false;
@@ -6417,6 +7416,12 @@ function App() {
     };
     const startPlay = () => {
       if (sourceMode === 'sc') {
+        /* Клик по карточке сетки — такой же библиотечный контекст, как клик в
+           списке слева, и очередь поиска должна сброситься. В onClickItem
+           библиотеки это есть, здесь забыли: после поиска в SearchView очередь
+           оставалась живой, и next/prev/skip шли по ней — играл трек из
+           старого поиска, а не тот, что в списке */
+        searchQueueRef.current = null;
         const scIdx = scTracks.indexOf(t);
         if (scIdx >= 0) handleScTrackClick(t, scIdx);
       } else {
@@ -6430,8 +7435,17 @@ function App() {
       return;
     }
 
+    /* Ищем обложку карточки дважды: сначала в кеше ref'ов, потом — прямо в
+       DOM по data-атрибуту. Кеш может быть пуст (карточка только что
+       перемонтировалась, AnimatePresence отмонтировал старую и повесил ref
+       в null), и тогда hero просто молча пропускался — картинка телепортировалась
+       без анимации. */
+    const findArt = () => artRefs.current[t.id]
+      || homeScrollRef.current?.querySelector(`[data-sewer-art="${CSS.escape(String(t.id))}"]`)
+      || null;
+
     // scroll target card into view if needed (mirrors handleNav home→player)
-    const initialEl = artRefs.current[t.id];
+    const initialEl = findArt();
     const scrollEl = homeScrollRef.current;
     if (initialEl && scrollEl) {
       const box = scrollEl.getBoundingClientRect();
@@ -6443,7 +7457,7 @@ function App() {
       }
     }
 
-    const artEl = artRefs.current[t.id];
+    const artEl = findArt();
     const par = playerArtRef.current?.getBoundingClientRect();
 
     if (artEl && par) {
@@ -6644,6 +7658,69 @@ function App() {
     : (scPlayingTrack ? null : track?.id);
 
   const showWelcome = !settings.musicFolder && !settings.soundcloudAuth;
+
+  const handleToggleLyrics = () => {
+    const next = !lyricsOpen;
+    setLyricsOpen(next);
+    /* текст живёт в колонке библиотеки — если она свёрнута, показать негде */
+    if (next) setLibCollapsed(false);
+  };
+
+  /* панель уезжает вместе с плеером, а не остаётся висеть на чужом экране */
+  useEffect(() => { if (!playerVisible) setLyricsOpen(false); }, [playerVisible]);
+
+  /* тянем текст только пока панель открыта — незачем грузить то, чего не видно.
+     lyricsReqRef защищает от гонки: сменился трек/порядок, старый ответ
+     пришёл последним и затёр бы новый */
+  useEffect(() => {
+    if (!lyricsOpen) return;
+    const req = ++lyricsReqRef.current;
+    const order = cleanLyricsSources(settingsRef.current?.lyricsSources);
+    setLyricsActive(-1);
+    if (!order.length) { setLyrics({ status: 'empty', tried: [] }); return; }
+    setLyrics({ status: 'loading', tried: [] });
+    fetchLyrics(track, order).then(r => {
+      if (req !== lyricsReqRef.current) return;
+      setLyrics(r);
+    }).catch(e => {
+      if (req !== lyricsReqRef.current) return;
+      console.warn('[lyrics] fetch failed', e);
+      setLyrics({ status: 'error', tried: [], why: String(e?.message || e) });
+    });
+  }, [lyricsOpen, track.id, lyricsNonce]);
+
+  /* активная строка. rAF нужен только чтобы догонять play/pause/seek, но
+     setState с bailout'ом не даёт ререндерить App каждый кадр: значение
+     меняется на строку пару раз за трек, не 60 раз в секунду */
+  useEffect(() => {
+    if (!lyricsOpen || lyrics?.status !== 'ready' || !lyrics.synced) {
+      if (lyricsActive !== -1) setLyricsActive(-1);
+      return;
+    }
+    let raf = 0;
+    const tick = () => {
+      const dur = track.duration || 0;
+      if (dur > 0) {
+        const t = progressRef.current * dur;
+        const ls = lyrics.lines;
+        let idx = -1;
+        for (let i = 0; i < ls.length; i++) {
+          if (ls[i].t == null) continue;            /* метка секции — не строка */
+          if (ls[i].t <= t) idx = i; else break;
+        }
+        setLyricsActive(prev => (prev === idx ? prev : idx));
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [lyricsOpen, lyrics, track.id]);
+
+  const handleLyricsSeek = useCallback((t) => {
+    const dur = track.duration || 0;
+    if (t == null || dur <= 0) return;
+    handleSeek(t / dur);
+  }, [track.duration, handleSeek]);
 
   const handlePickFolderFromWelcome = async () => {
     const folder = await window.electronAPI.selectMusicFolder();
@@ -6951,7 +8028,19 @@ function App() {
             ? 'opacity 0.36s ease 0.1s, transform 0.44s cubic-bezier(0.22,1,0.36,1) 0.1s, width 0.44s cubic-bezier(0.4,0,0.2,1)'
             : 'opacity 0.14s ease, transform 0.18s ease, width 0.44s cubic-bezier(0.4,0,0.2,1)',
         }}>
-          <div style={{width: 260, flexShrink:0, height:'100%', display:'flex', flexDirection:'column'}}>
+          {/* оба слоя абсолютные и всегда смонтированы: список уезжает влево,
+              текст приезжает справа. ширина родителя схлопывается до 0 и
+              клипует всё лишнее, поэтому за колонку ничего не вылезает */}
+          <div style={{width:260, flexShrink:0, height:'100%', position:'relative'}}>
+          <div style={{
+            position:'absolute', inset:0, display:'flex', flexDirection:'column',
+            opacity: lyricsOpen ? 0 : 1,
+            pointerEvents: lyricsOpen ? 'none' : 'auto',
+            transform: lyricsOpen ? 'translateX(-14px)' : 'translateX(0)',
+            transition: lyricsOpen
+              ? 'opacity 0.16s ease, transform 0.16s ease'
+              : 'opacity 0.3s ease 0.08s, transform 0.44s cubic-bezier(0.22,1,0.36,1) 0.08s',
+          }}>
           <AnimatePresence initial={false} mode="wait">
           {stationActive ? (
             <motion.div key="station-chip"
@@ -7152,6 +8241,10 @@ function App() {
             
           />
           </div>
+          <LyricsPanel open={lyricsOpen} state={lyrics} activeLine={lyricsActive}
+            onSeek={handleLyricsSeek} onRetry={() => setLyricsNonce(n => n + 1)}
+            sources={settings.lyricsSources} onBack={() => setLyricsOpen(false)}/>
+          </div>
         </div>
 
         {/* drag handle — positioned relative to flex parent, sits on library's right edge */}
@@ -7270,10 +8363,20 @@ function App() {
               <ProgressBar progressRef={progressRef} total={track.duration || 0}
                 onSeek={handleSeek} isPlaying={isPlaying} visible={playerVisible}
                 />
-            {(()=>{ const P = { spring:0.055, damping:0.84, clamp:10 }; return (
+            {(()=>{ const P = { spring:0.055, damping:0.84, clamp:10 }; const SIDE = 'clamp(40px, 5.2vw, 58px)'; return (
             <div style={{display:'flex', alignItems:'center', gap:14, justifyContent:'center', marginTop:16}}>
-              {scPlayingTrack && <div style={{width:27, marginRight:14, flexShrink:0}}/>}
-              <MagBtn onClick={()=>setShuffle(s=>!s)} active={shuffle} size={'clamp(40px, 5.2vw, 58px)'} physics={P}>
+              {/* Левый балансирующий спейсер 27px УБРАН. Он уравнивал play с
+                  кнопкой лайка, когда слева было только shuffle+prev. Слева
+                  теперь ещё и кнопка текста, и спейсер сдвигал play на 29px.
+                  Справа вместо этого постоянный слот шириной лайка (27px +
+                  marginLeft 14): сам лайк, когда он есть, и невидимый спейсер,
+                  когда трек локальный. Ряд сбалансирован в обоих случаях,
+                  лайк никуда не уезжает. Слева спейсер не нужен вовсе —
+                  flex gap уже даёт отступ от края. */}
+              <MagBtn onClick={handleToggleLyrics} active={lyricsOpen} size={SIDE} physics={P}>
+                <img src="../assets/textt.png" style={{width:'clamp(18px, 2.2vw, 26px)',height:'clamp(18px, 2.2vw, 26px)',filter:'brightness(0) invert(1)',opacity:lyricsOpen?1:0.38,transition:'opacity 0.2s ease'}}/>
+              </MagBtn>
+              <MagBtn onClick={()=>setShuffle(s=>!s)} active={shuffle} size={SIDE} physics={P}>
                 <img src="../assets/shuffle.png" style={{width:'clamp(18px, 2.2vw, 26px)',height:'clamp(18px, 2.2vw, 26px)',filter:'brightness(0) invert(1)',opacity:shuffle?1:0.38,transition:'opacity 0.2s ease'}}/>
               </MagBtn>
               <MagBtn onClick={handlePrev} size={'clamp(46px, 6vw, 66px)'} physics={P}>
@@ -7283,16 +8386,16 @@ function App() {
               <MagBtn onClick={handleNext} size={'clamp(46px, 6vw, 66px)'} physics={P}>
                 <img src="../assets/forward.png" style={{width:'clamp(18px, 2.2vw, 26px)',height:'clamp(18px, 2.2vw, 26px)',filter:'brightness(0) invert(1)',opacity:0.38}}/>
               </MagBtn>
-              <MagBtn onClick={()=>setRepeat(r=>r==='off'?'all':r==='all'?'one':'off')} active={repeat!=='off'} size={'clamp(40px, 5.2vw, 58px)'} physics={P}>
+              <MagBtn onClick={()=>setRepeat(r=>r==='off'?'all':r==='all'?'one':'off')} active={repeat!=='off'} size={SIDE} physics={P}>
                 <div style={{position:'relative',width:'clamp(18px, 2.2vw, 26px)',height:'clamp(18px, 2.2vw, 26px)'}}>
                   <img src="../assets/repeat.png"  style={{position:'absolute',top:0,left:0,width:'100%',height:'100%',filter:'brightness(0) invert(1)',opacity:repeat==='off'?0.38:repeat==='all'?1:0,transition:'opacity 0.2s ease'}}/>
                   <img src="../assets/repeat1.png" style={{position:'absolute',top:0,left:0,width:'100%',height:'100%',filter:'brightness(0) invert(1)',opacity:repeat==='one'?1:0,transition:'opacity 0.2s ease'}}/>
                 </div>
               </MagBtn>
-              {scPlayingTrack && (() => {
-                const liked = likedIds.has(scPlayingTrack.id);
-                return <PlayerLikeBtn liked={liked} onLike={() => handleLike(scPlayingTrack)} style={{marginLeft:14}}/>;
-              })()}
+              {scPlayingTrack
+                ? <PlayerLikeBtn liked={likedIds.has(scPlayingTrack.id)}
+                    onLike={() => handleLike(scPlayingTrack)} style={{marginLeft:14}}/>
+                : <div style={{width:27, marginLeft:14, flexShrink:0}}/>}
             </div>
             ); })()}
             </div>{/* controls+progress wrapper end */}

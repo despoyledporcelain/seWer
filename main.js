@@ -390,6 +390,40 @@ ipcMain.handle('sc-fetch', async (_, url, token, clientId, method = 'GET', body 
   })
 })
 
+/* ─── net-fetch: прямой https к сторонним сервисам ───────────────────────────
+   Отдельный канал от sc-fetch: там soundcloud-сессия с DataDome-cookie и
+   client_id в URL. Здесь — обычный GET без куки, с браузерным User-Agent
+   (lrclib.net отвечает 403 на пустой/нечеловеческий UA, genius.com не
+   отдаёт CORS-заголовки, поэтому из рендерера напрямую не уехать).
+   Отдаём сырой текст: genius отвечает HTML, который разбирает рендерер.
+   Хосты зафиксированы — иначе это просто открытый прокси наружу. */
+const NET_FETCH_HOSTS = new Set(['lrclib.net', 'genius.com'])
+const NET_FETCH_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36'
+
+ipcMain.handle('net-fetch', async (_, url, headers = {}) => {
+  let parsed
+  try { parsed = new URL(url) } catch { return { error: 'bad_url' } }
+  if (parsed.protocol !== 'https:' || !NET_FETCH_HOSTS.has(parsed.hostname))
+    return { error: 'host_not_allowed' }
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 12000)
+  try {
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      redirect: 'follow',
+      headers: {
+        'User-Agent': NET_FETCH_UA,
+        'Accept-Language': 'en-US,en;q=0.9',
+        ...headers,
+      },
+    })
+    return { status: res.status, body: await res.text() }
+  } catch (e) {
+    return { error: String(e?.message || e) }
+  } finally {
+    clearTimeout(timer)
+  }
+})
 
 /* ─── скачивание трека ─────────────────────────────────────────────────────
    Отдельный путь от sc-fetch: тот читает тело через res.text() и для
