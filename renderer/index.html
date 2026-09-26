@@ -389,6 +389,9 @@ function mapScTrack(t, noTitle) {
     id: t.id,
     title: t.title || noTitle || '—',
     artist: t.publisher_metadata?.artist || t.user?.username || '',
+    /* publisher_metadata.artist = настоящий исполнитель, uploader — часто
+       канал/лейбл. различаем, иначе разбор «X - Y» лезет в имя трека */
+    artistReal: t.publisher_metadata?.artist || null,
     artistId: t.user?.id || null,
     artistAvatarUrl: t.user?.avatar_url || null,
     uploaderUsername: t.user?.username || null,
@@ -436,6 +439,85 @@ function isScPlaylist(p) {
   if (typeof p.set_type === 'string') return p.set_type !== 'album';
   return true;
 }
+
+/* ─── разбор имени трека для тегов и имени файла ──────────────────────────
+   В SC мусорный мета-текст: «Artist - Song (feat. X)», «Song feat. X»,
+   «Artist & Other — Song», «[4K] Song», «Song (prod. Y)».
+   Разбираем в три части: исполнитель, название, feat-участники
+   (feat из имени исполнителя убираем — в тегах он засоряет артиста). */
+const TITLE_NOISE = [
+  /\[[^\]]*\]/g,                       /* [4K], [Official Video] */
+  /* в скобках может быть несколько слов до маркера: «(Official Audio)»,
+     «(prod. metro)», «(Audio Version)» — поэтому \\b не сразу после ( */
+  /\((?:[^)]*?\b)?(?:prod|produced|official|audio|video|lyrics?|visualizer|hq)\b[^)]*\)/gi,
+  /\bofficial\s*(?:music\s*)?video\b/gi,
+  /\bhq\b/gi,
+];
+const FEAT_RE = /\s*[([]?\s*\b(?:feat|ft|featuring|feat\.)[\s.][^)\]]*[)\]]?\s*$/i;
+/* «исполнитель — название»: тире в разных кодировках, сократки */
+const DASH_RE = /\s+[-–—]\s+/;
+
+function cleanTrackMeta(rawTitle, rawArtist, artistReal, uploader) {
+  let title = String(rawTitle || '').replace(/\s+/g, ' ').trim();
+  /* artistReal = publisher_metadata.artist (настоящий исполнитель).
+     uploader = username аккаунта: часто это канал/лейбл, а не артист */
+  let artist = String(artistReal || '').replace(/\s+/g, ' ').trim()
+            || String(rawArtist || '').replace(/\s+/g, ' ').trim()
+            || String(uploader || '').replace(/\s+/g, ' ').trim();
+
+  for (const re of TITLE_NOISE) title = title.replace(re, ' ');
+  title = title.replace(/\s*[([]\s*[)\]]\s*/g, ' ');   /* остатки пустых скобок */
+  title = title.replace(/\s+/g, ' ').trim();
+
+  /* feat вытаскиваем ДО разбора на артиста/название, иначе «feat. X» уедет
+     в имя трека через разделитель */
+  const feats = []
+  const featM = title.match(FEAT_RE)
+  if (featM) {
+    const f = featM[0].replace(/^[\s([]+|[)\]]+$/g, '')
+      .replace(/\s*\b(feat|ft|featuring)\b\.?\s*/i, '').trim()
+    if (f) feats.push(f)
+    title = title.replace(FEAT_RE, '').trim()
+  }
+  const artistFeatM = artist.match(FEAT_RE)
+  if (artistFeatM) {
+    const f = artistFeatM[0].replace(/^[\s([]+|[)\]]+$/g, '')
+      .replace(/\s*\b(feat|ft|featuring)\b\.?\s*/i, '').trim()
+    if (f && !feats.includes(f)) feats.push(f)
+    artist = artist.replace(FEAT_RE, '').trim()   /* feat из артиста — выкидываем */
+  }
+
+  /* «Исполнитель - Название» в поле title. если исполнитель уже известен —
+     не разбираем, а ВЫРЕЗАЕМ префикс из названия: иначе в теги уехало бы
+     «GloRilla — Glowing» целиком. если неизвестен — левая часть и есть артист,
+     и она важнее uploader'а (канал/лейбл) */
+  if (DASH_RE.test(title)) {
+    const [a, ...rest] = title.split(DASH_RE)
+    const right = rest.join(' ').trim()
+    const norm = s => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
+    if (right) {
+      if (!artistReal && a.length <= 60) { title = right; artist = a.trim() }
+      else if (norm(a) === norm(artist)) { title = right }   /* артист уже назван — отрезаем */
+    }
+  }
+
+  const featStr = feats.filter(Boolean).join(', ')
+  return {
+    title: title || '—',
+    artist: artist || (featStr || '—'),
+    /* для тегов: артист без feat + feat отдельной строкой в comment */
+    comment: featStr ? `feat. ${featStr}` : '',
+  }
+}
+
+/* имя файла: Windows не любит \/:*?"<>| и хвостовые точки */
+const ILLEGAL_FS = /[<>:"/\\|?*\x00-\x1f]/g;
+const fileNameFor = (artist, title) =>
+  (artist && artist !== '—' ? `${artist} - ${title}` : (title || 'track'))
+    .replace(ILLEGAL_FS, '_')
+    .replace(/\s+/g, ' ')
+    .replace(/[. ]+$/, '')
+    .trim() || 'track';
 
 /* полный список треков плейлиста. /playlists/{id}/tracks отдаёт голый массив
    ИЛИ {collection, next_href}, и там бывают заглушки {id} без title/media —
@@ -623,6 +705,14 @@ const STRINGS = {
     start_station:'Запустить станцию', station_for:'Станция по треку', station_label:'Станция', station_exit:'выйти', station_err:'не удалось запустить станцию',
     add_to_pl:'Добавить в плейлист', add_pl_new:'новый плейлист', added_to:'добавлено в',
     removed_from:'удалено из', pl_rm_err:'не удалось удалить трек',
+    dl_save:'Скачать', dl_folder:'Папка', dl_change:'изменить', dl_name:'Имя файла',
+    dl_no_dir:'папка не выбрана', dl_no_auth:'нужен вход в SoundCloud',
+    dl_no_stream:'у трека нет прямого mp3 (только hls) — нужен ffmpeg',
+    dl_resolve:'не удалось получить ссылку на файл',
+    dl_not_audio:'сервер вернул не аудио — файл не записан',
+    dl_resolving:'получаем ссылку…',
+    dl_err:'не удалось скачать', dl_wait:'скачивание…', dl_ok:'скачано',
+    dl_no_tags:'скачано, но без тегов и обложки',
     pl_in:'убрать из плейлиста', pl_out:'добавить в плейлист', pl_in_loading:'проверяем…',
     pl_add_err:'не удалось добавить трек', pl_list_err:'не удалось загрузить плейлисты',
     ed_title_ph:'Название плейлиста', ed_art_pick:'Выбрать обложку', ed_art_err:'не удалось загрузить обложку',
@@ -710,6 +800,14 @@ const STRINGS = {
     start_station:'Start station', station_for:'Station for', station_label:'Station', station_exit:'exit', station_err:'could not start station',
     add_to_pl:'Add to playlist', add_pl_new:'new playlist', added_to:'added to',
     removed_from:'removed from', pl_rm_err:'could not remove the track',
+    dl_save:'Download', dl_folder:'Folder', dl_change:'change', dl_name:'File name',
+    dl_no_dir:'no folder selected', dl_no_auth:'SoundCloud login required',
+    dl_no_stream:'no direct mp3 for this track (hls only) — needs ffmpeg',
+    dl_resolve:'could not get a file url',
+    dl_not_audio:'server returned non-audio — nothing was written',
+    dl_resolving:'getting the file url…',
+    dl_err:'download failed', dl_wait:'downloading…', dl_ok:'downloaded',
+    dl_no_tags:'downloaded, but without tags and cover',
     pl_in:'remove from playlist', pl_out:'add to playlist', pl_in_loading:'checking…',
     pl_add_err:'could not add the track', pl_list_err:'could not load playlists',
     ed_title_ph:'Playlist name', ed_art_pick:'Choose cover', ed_art_err:'cover upload failed',
@@ -1527,7 +1625,7 @@ const TrackRow = React.memo(function TrackRow({ track, isActive, isLoading, isEr
    вход — spring + каскад пунктов (лёгкий mac-стиль), «добавить» раскрывает
    сабменю-пикер со своими плейлистами, где чекбокс = трек внутри плейлиста
    (клик снимает/кладёт, повторно добавить нельзя) */
-function TrackContextMenu({ menu, onClose, onCopyLink, onStartStation, canAddPl,
+function TrackContextMenu({ menu, onClose, onCopyLink, onStartStation, canAddPl, onDownload,
   playlists, playlistsLoading, onEnsurePlaylists, plMembers, onEnsureMembers,
   onToggleInPlaylist, onCreateWithTrack }) {
   const SUB_W = 262; /* ширины хватает чекбоксу + обложке + названию + счётчику */
@@ -1624,6 +1722,9 @@ function TrackContextMenu({ menu, onClose, onCopyLink, onStartStation, canAddPl,
 
   const t = useLang();
   const canCopy = !!menu.track.permalinkUrl;
+  /* качать имеет смысл только у SC-трека с progressive-transcoding:
+     локальный файл уже на диске, hls-only требует ffmpeg */
+  const canDownload = !!menu.track.streamUrl;
   const own = (playlists || []).filter(p => p.isOwn);
 
   /* tri-state чекбокса: 'loading' — состав РЕАЛЬНО в полёте; true/false —
@@ -1691,14 +1792,29 @@ function TrackContextMenu({ menu, onClose, onCopyLink, onStartStation, canAddPl,
         zIndex: 9998,
       }}>
       <div style={{ display:'flex', flexDirection:'column' }}>
-      <Item label={t('copy_link')} disabled={!canCopy} onClose={onClose}
-        onClick={() => onCopyLink(menu.track)}
-        icon={
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-          </svg>
-        }/>
+      {/* «Скачать» ВМЕСТО «Скопировать ссылку» — по решению пользователя.
+          canDownload=false, когда качать нечем: локальный файл или трек,
+          у которого SC отдал только hls. тогда остаётся ссылка, а не
+          заведомо мёртвый пункт. */}
+      {canDownload ? (
+        <Item label={t('dl_save')} onClose={onClose}
+          onClick={() => onDownload?.(menu.track)}
+          icon={
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+          }/>
+      ) : (
+        <Item label={t('copy_link')} disabled={!canCopy} onClose={onClose}
+          onClick={() => onCopyLink(menu.track)}
+          icon={
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+            </svg>
+          }/>
+      )}
       <Item label={t('start_station')} disabled={!menu.track.id || !onStartStation} onClose={onClose}
         onClick={() => onStartStation(menu.track)}
         icon={
@@ -1824,6 +1940,233 @@ function TrackContextMenu({ menu, onClose, onCopyLink, onStartStation, canAddPl,
       </AnimatePresence>
     </>,
     document.body
+  );
+}
+
+/* коды из main → человекочитаемый текст. раньше всё, кроме no_progressive,
+   сворачивалось в общий dl_err — и «пришёл json вместо звука» выглядело так же,
+   как «сеть отвалилась». различать обязательно: это разные диагнозы */
+const DL_ERR = {
+  no_dir:        'dl_no_dir',
+  no_progressive:'dl_no_stream',
+  not_audio_json:'dl_not_audio',
+  not_audio_m3u8:'dl_not_audio',
+  not_audio_html:'dl_not_audio',
+  not_audio:     'dl_not_audio',
+  too_small:     'dl_not_audio',
+};
+/* всё, чего здесь нет (HTTP 403, 'too many redirects', 'rename: …'), уходит в
+   общий dl_err — отдельные коды для них заводить незачем */
+
+/* ─── DownloadDialog ───────────────────────────────────────────────────────
+   Кастомный диалог сохранения вместо нативного: в приложении вся отрисовка
+   своя, и системный окошко выбивается. нативный появляется ровно один раз —
+   для выбора папки (обойти ФС из рендерера нельзя).
+   Показывает разобранные метаданные ДО сохранения, имя файла редактируется. */
+function DownloadDialog({ track, scAuth, dir, onPickDir, onClose, onSaved }) {
+  const t = useLang();
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [prog, setProg] = useState(null);   /* { got, total } */
+  const [err, setErr] = useState(null);
+  const idRef = useRef(null);
+
+  const meta = useMemo(
+    () => cleanTrackMeta(track?.title, track?.artist, track?.artistReal, track?.uploaderUsername),
+    [track?.id, track?.title, track?.artist, track?.artistReal]
+  );
+
+  useEffect(() => {
+    if (!track) return;
+    setName(fileNameFor(meta.artist, meta.title) + '.mp3');
+    setProg(null); setErr(null); setBusy(false);
+  }, [track?.id]);
+
+  useEffect(() => {
+    const api = window.electronAPI;
+    if (!api?.onDownloadProgress || !track) return;
+    /* got != null — фильтр служебных сообщений (warn/done): без него
+       setProg({got: undefined}) затирал бы нормальный прогресс на 35% */
+    const cb = p => { if (p.id === idRef.current && p.got != null) setProg({ got: p.got, total: p.total }) };
+    const off = api.onDownloadProgress(cb);
+    return () => off?.();
+  }, [track?.id]);
+
+  /* РЕЗОЛВ URL. streamUrl из mapScTrack — это api-v2 .../stream/progressive,
+     который отдаёт JSON-МАНИФЕСТ, а не звук. если отдать его в main как есть,
+     на диск ляжет ~1кб json с расширением .mp3 (так и было). настоящий файл
+     лежит в .data.url — ровно так же, как это уже делает путь воспроизведения
+     в handleScTrackClick. резолвим ЗДЕСЬ, по двум причинам: scFetch — единственный
+     путь, обкатанный против DataDome, и CDN-ссылка короткоживущая (policy с TTL),
+     чем свежее — тем лучше */
+  const resolveStream = async (auth) => {
+    const res = await window.electronAPI.scFetch(track.streamUrl, auth.token, auth.clientId);
+    const url = res?.data?.url;
+    if (typeof url === 'string' && url.startsWith('http')) return url;
+    return null;
+  };
+
+  const start = async () => {
+    /* dir — проп из прошлого рендера: после await он не обновится, поэтому
+       выбор папки кладём в локальную переменную, иначе нативный диалог
+       выскочил бы дважды подряд */
+    let target = dir;
+    if (!target) { target = await onPickDir?.(); if (!target) return }
+    if (!scAuth?.token) { setErr(t('dl_no_auth')); return }
+    if (!track?.streamUrl) { setErr(t('dl_no_stream')); return }
+    setBusy(true); setErr(null); setProg(null);
+    idRef.current = track.id;
+    try {
+      const audioUrl = await resolveStream(scAuth);
+      if (!audioUrl) { setBusy(false); setErr(t('dl_resolve')); return }
+      setProg({ got: 0, total: 0 });
+      const res = await window.electronAPI.scDownloadTrack({
+        id: track.id,
+        title: meta.title,
+        artist: meta.artist,
+        comment: meta.comment,
+        coverUrl: track.coverUrl,
+        streamUrl: audioUrl,
+        baseName: name.replace(/\.mp3$/i, ''),
+        dir: target,
+        token: scAuth.token,
+      });
+      setBusy(false);
+      if (res?.error) { setErr(t(DL_ERR[res.error] || 'dl_err')); return }
+      setProg(null);
+      onSaved?.(res);
+    } catch (e) {
+      setBusy(false);
+      setErr(t('dl_err'));
+    }
+  };
+
+  const pct = prog && prog.total ? Math.min(99, Math.round(prog.got / prog.total * 100)) : null;
+  const mb = n => (n / 1048576).toFixed(1);
+
+  return (
+    <AnimatePresence>
+      {track && (
+        <motion.div key="dl" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          transition={{ duration: 0.16 }}
+          /* zIndex выше меню (9998): клик по «Скачать» закрывает меню, и его
+             exit-анимация не должна прорисоваться поверх диалога */
+          style={{ position: 'absolute', inset: 0, zIndex: 10000, background: 'rgba(4,4,8,0.55)',
+            backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <motion.div
+            initial={{ scale: 0.97, y: 10, opacity: 0 }}
+            animate={{ scale: 1, y: 0, opacity: 1 }}
+            exit={{ scale: 0.98, y: 6, opacity: 0, transition: { duration: 0.13, ease: 'easeIn' } }}
+            transition={{ type: 'spring', stiffness: 420, damping: 32, mass: 0.7 }}
+            style={{ width: 384, background: 'rgba(24,24,24,0.97)',
+              backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
+              border: '1px solid rgba(255,255,255,0.055)', borderRadius: 14, padding: 16,
+              boxShadow: '0 24px 60px rgba(0,0,0,0.5)' }}>
+
+            {/* трек: обложка + разобранные метаданные */}
+            <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
+              <div style={{ width: 56, height: 56, borderRadius: 9, flexShrink: 0, overflow: 'hidden',
+                background: '#111116', position: 'relative',
+                boxShadow: '0 0 0 1px rgba(255,255,255,0.055)' }}>
+                {track.coverUrl
+                  ? <img src={track.coverUrl} style={{ position: 'absolute', inset: 0, width: '100%',
+                      height: '100%', objectFit: 'cover' }}/>
+                  : <img src="../assets/note.png" style={{ position: 'absolute', inset: 0, margin: 'auto',
+                      width: 14, height: 14, filter: 'brightness(0) invert(1)', opacity: 0.2 }}/>}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 'var(--fs-md)', fontWeight: 600, color: 'rgba(255,255,255,0.88)',
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{meta.title}</div>
+                <div style={{ fontSize: 'var(--fs-xs)', color: 'rgba(255,255,255,0.4)', marginTop: 2,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{meta.artist}</div>
+                {meta.comment && (
+                  <div style={{ fontSize: 'var(--fs-xs)', color: 'rgba(255,255,255,0.26)', marginTop: 2,
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{meta.comment}</div>
+                )}
+              </div>
+            </div>
+
+            {/* папка */}
+            <div style={{ fontSize: 'var(--fs-eyebrow)', letterSpacing: '0.13em', textTransform: 'uppercase',
+              fontWeight: 600, color: 'rgba(255,255,255,0.26)', marginBottom: 7 }}>{t('dl_folder')}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+              <div style={{ flex: 1, minWidth: 0, padding: '7px 10px', borderRadius: 9,
+                background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)',
+                fontSize: 'var(--fs-xs)', color: dir ? 'rgba(255,255,255,0.62)' : 'rgba(255,80,60,0.75)',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {/* хвост пути informative важнее начала, поэтому режем слева
+                   тем же приёмом, что и в настройках, а не через rtl */}
+                {!dir ? t('dl_no_dir') : (dir.length > 40 ? '…' + dir.slice(-40) : dir)}
+              </div>
+              <div onClick={() => !busy && onPickDir?.()} style={{
+                padding: '0 11px', height: 30, borderRadius: 9, flexShrink: 0, cursor: busy ? 'default' : 'pointer',
+                display: 'flex', alignItems: 'center', fontSize: 'var(--fs-xs)', color: 'rgba(255,255,255,0.6)',
+                background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.07)',
+                transition: 'background 0.15s' }}>{t('dl_change')}</div>
+            </div>
+
+            {/* имя файла */}
+            <div style={{ fontSize: 'var(--fs-eyebrow)', letterSpacing: '0.13em', textTransform: 'uppercase',
+              fontWeight: 600, color: 'rgba(255,255,255,0.26)', marginBottom: 7 }}>{t('dl_name')}</div>
+            <div style={{ display: 'flex', alignItems: 'center', borderRadius: 9,
+              background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)',
+              paddingLeft: 10 }}>
+              <input value={name} onChange={e => setName(e.target.value)} disabled={busy}
+                spellCheck="false"
+                style={{ flex: 1, minWidth: 0, background: 'none', border: 'none', outline: 'none',
+                  padding: '8px 0', color: 'rgba(255,255,255,0.82)',
+                  fontSize: 'var(--fs-xs)', fontFamily: 'inherit' }}/>
+            </div>
+
+            {/* прогресс. prog === null при busy = идёт фаза резолва URL,
+                байты ещё не пошли — поэтому indeterminate-бар и отдельный текст */}
+            {busy && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ height: 3, borderRadius: 999, background: 'rgba(255,255,255,0.07)', overflow: 'hidden' }}>
+                  <div style={{ height: '100%', borderRadius: 999,
+                    width: pct != null ? pct + '%' : '35%',
+                    background: 'var(--accent)',
+                    opacity: pct == null ? 0.5 : 1, transition: 'width 0.18s linear' }}/>
+                </div>
+                <div style={{ fontSize: 'var(--fs-xs)', color: 'rgba(255,255,255,0.32)', marginTop: 6,
+                  fontVariantNumeric: 'tabular-nums' }}>
+                  {!prog ? t('dl_resolving')
+                    : pct != null ? `${pct}% · ${mb(prog.got)} / ${mb(prog.total)} МБ`
+                    : `${mb(prog.got)} МБ · ${t('dl_wait')}`}
+                </div>
+              </div>
+            )}
+
+            {err && (
+              <div style={{ marginTop: 12, fontSize: 'var(--fs-xs)', color: 'rgba(255,110,95,0.9)' }}>{err}</div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+              <div onClick={() => !busy && onClose()} style={{
+                padding: '0 14px', height: 32, borderRadius: 9, display: 'flex', alignItems: 'center',
+                cursor: busy ? 'default' : 'pointer', fontSize: 'var(--fs-sm)', color: 'rgba(255,255,255,0.4)',
+                border: '1px solid rgba(255,255,255,0.075)', transition: 'color 0.15s' }}
+                onMouseEnter={e => { if (!busy) e.currentTarget.style.color = 'rgba(255,255,255,0.8)' }}
+                onMouseLeave={e => { if (!busy) e.currentTarget.style.color = 'rgba(255,255,255,0.4)' }}>
+                {t('cancel')}
+              </div>
+              <div onClick={() => !busy && start()} style={{
+                padding: '0 16px', height: 32, borderRadius: 9, display: 'flex', alignItems: 'center',
+                cursor: busy ? 'default' : 'pointer', fontSize: 'var(--fs-sm)', fontWeight: 600,
+                color: '#0a0a0c', background: 'rgba(var(--accent-rgb),0.9)', opacity: busy ? 0.6 : 1,
+                transition: 'background 0.15s' }}
+                onMouseEnter={e => { if (!busy) e.currentTarget.style.background = 'var(--accent)' }}
+                onMouseLeave={e => { if (!busy) e.currentTarget.style.background = 'rgba(var(--accent-rgb),0.9)' }}>
+                {/* подпись не меняем: прогресс-баром выше идёт обратная связь,
+                   смена текста дёргала бы ширину кнопки */}
+                {t('dl_save')}
+              </div>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
 
@@ -4681,6 +5024,7 @@ function App() {
   const [toast,         setToast]         = useState(null);
   const [toastExiting,  setToastExiting]  = useState(false);
   const [trackMenu,     setTrackMenu]     = useState(null);
+  const [dlTrack,       setDlTrack]       = useState(null);   /* трек в диалоге скачивания */
   const [stationActive, setStationActive] = useState(null);
   /* плейлисты: список во вкладке + активный (паттерн станции) + редактор */
   const [playlistActive, setPlaylistActive] = useState(null);
@@ -6231,6 +6575,32 @@ function App() {
     }
   }, [t]);
 
+  /* ─── скачивание ────────────────────────────────────────────────────────
+     Папку выбираем нативным диалогом (обойти ФС из рендерера нельзя) и
+     запоминаем: дальше диалог сохранения полностью свой. */
+  const handleOpenDownload = useCallback((track) => {
+    if (!track) return;
+    setDlTrack(track);
+  }, []);
+
+  const handlePickDlDir = useCallback(async () => {
+    const folder = await window.electronAPI.selectMusicFolder();
+    if (folder) setSettings(s => ({ ...s, downloadsFolder: folder }));
+    return folder || null;
+  }, []);
+
+  const handleDlSaved = useCallback((res) => {
+    setDlTrack(null);
+    const name = (res?.path || '').split(/[\\/]/).pop();
+    /* файл сохранён всегда, но без тегов он неполноценен — говорим прямо,
+       иначе «скачалось» выглядит как «приложение забыло обложку» */
+    if (res && res.tagsOk === false) {
+      showToast(`${t('dl_no_tags')}${name ? ' — ' + name : ''}`);
+      return;
+    }
+    showToast(name ? `${t('dl_ok')} — ${name}` : t('dl_ok'));
+  }, [t]);
+
   const checkFollow = useCallback(async (userId) => {
     if (!userId) return false;
     if (followedIdsRef.current.has(userId)) return true;
@@ -7016,6 +7386,7 @@ function App() {
               onClose={() => setTrackMenu(null)}
               onCopyLink={handleCopyTrackLink}
               onStartStation={handleStartStation}
+              onDownload={handleOpenDownload}
               canAddPl={!!settings.soundcloudAuth && !trackMenu.track.path && trackMenu.track.id != null}
               playlists={playlists} playlistsLoading={playlistsLoading}
               onEnsurePlaylists={ensurePlaylists}
@@ -7025,6 +7396,12 @@ function App() {
               onCreateWithTrack={handleCreatePlaylistWithTrack}/>
           )}
         </AnimatePresence>
+
+        <DownloadDialog track={dlTrack} scAuth={settings.soundcloudAuth}
+          dir={settings.downloadsFolder}
+          onPickDir={handlePickDlDir}
+          onClose={() => setDlTrack(null)}
+          onSaved={handleDlSaved}/>
 
       </div>
     </div>

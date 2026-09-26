@@ -101,6 +101,8 @@ assets/
 - `plRecsUrl(id)` → URL рекомендаций плейлиста (station-эндпоинт `soundcloud:playlist-stations:{id}`); изолирован для лёгкой замены
 - `extractAccentColor(url)` → Promise<`{r,g,b}` | null>. 3-пасса с relaxing thresholds (sat/lum/count) + mean fallback + dark-boost. кеширует по URL в `_accentCache`. crossOrigin=anonymous.
 - `ACCENT_PRESETS` — `{ default, lavender, mint, rose, amber }` → `{r,g,b}`
+- `cleanTrackMeta(rawTitle, rawArtist, artistReal, uploader)` → `{title, artist, comment}` — разбор мусорных метаданных SC для тегов и имени файла. `TITLE_NOISE` снимает `[4K]`, `(Official Video/Audio)`, `(prod. …)`, `official video`, `hq`; в скобках маркер может идти **не первым** словом, отсюда `(?:[^)]*?\b)?` впереди (без него `Song (Official Audio)` не чистился). `FEAT_RE` вытаскивает `feat./ft./featuring` **до** разбора по тире — иначе «feat. X» уехал бы в название через разделитель — и **выкидывает** его из имени артиста, отдавая в `comment` как `feat. …`. разделитель `DASH_RE` (` - `, ` – `, ` — `): при известном артисте (`artistReal`) не разбираем, а **вырезаем** совпавший префикс из названия (иначе в теги уехало бы `GloRilla — Glowing` целиком); при неизвестном — левая часть становится артистом, и она важнее `uploader` (аккаунт загрузчика часто канал/лейбл, а не исполнитель)
+- `fileNameFor(artist, title)` — `Artist - Title` с санитизацией: `ILLEGAL_FS` (`<>:"/\|?*` + control), схлопывание пробелов, срез хвостовых точек/пробелов. **это дублирует `sanitizeFileName` в `main.js`** — намеренно: renderer показывает пользователю то самое имя, которое потом пишется на диск, иначе в диалоге было бы одно, а на диске другое (точнее — с суффиксом ` (2)` при дубле)
 
 ## i18n
 
@@ -115,13 +117,30 @@ useLang()      — хук: возвращает t(key), читает LangContext
 компоненты вызывают `const t = useLang()` внутри себя.
 **исключение**: `SearchView` использует `const T = useLang()` — буква `t` занята переменной трека в `.map(t => ...)`.
 
-ключи добавленные в сессиях: `back`, `subscribe`, `subscribed`, `artist_label`, `follow_err`, `unfollow_err`, `copy_link`, `link_copied`, `copy_link_err`, `start_station`, `station_for`, `station_exit`, `station_label`, `station_err`, `accent_title`, `accent_sub`, `accent_default/lavender/mint/rose/amber/cover`, `accent_cover_sub`, `nav_playlists`, `playlists_empty`, `playlists_empty_sub`, `accent_seg_off`, `accent_seg_color`, `accent_off_title`, `accent_off_sub`, `pl_new_title`, `pl_create_err`, `pl_edit`, `pl_login_hint`, `ed_saving`, `ed_saved`, `ed_save_err`, `ed_add`, `ed_add_search`, `ed_add_recs`, `ed_added`, `ed_empty`, `ed_recs_empty`, `ed_rec_loading`, `ed_track_del`, `pl_count_1/2/5`, `add_to_pl`, `add_pl_new`, `added_to`, `pl_add_err`, `pl_list_err`, `ed_title_ph`, `ed_art_pick`, `ed_art_err`, `removed_from`, `pl_rm_err`, `pl_in`, `pl_out`, `pl_in_loading`.
+ключи добавленные в сессиях: `back`, `subscribe`, `subscribed`, `artist_label`, `follow_err`, `unfollow_err`, `copy_link`, `link_copied`, `copy_link_err`, `start_station`, `station_for`, `station_exit`, `station_label`, `station_err`, `accent_title`, `accent_sub`, `accent_default/lavender/mint/rose/amber/cover`, `accent_cover_sub`, `nav_playlists`, `playlists_empty`, `playlists_empty_sub`, `accent_seg_off`, `accent_seg_color`, `accent_off_title`, `accent_off_sub`, `pl_new_title`, `pl_create_err`, `pl_edit`, `pl_login_hint`, `ed_saving`, `ed_saved`, `ed_save_err`, `ed_add`, `ed_add_search`, `ed_add_recs`, `ed_added`, `ed_empty`, `ed_recs_empty`, `ed_rec_loading`, `ed_track_del`, `pl_count_1/2/5`, `add_to_pl`, `add_pl_new`, `added_to`, `pl_add_err`, `pl_list_err`, `ed_title_ph`, `ed_art_pick`, `ed_art_err`, `removed_from`, `pl_rm_err`, `pl_in`, `pl_out`, `pl_in_loading`, `sec_lyrics`, `lyrics_sources`, `lyrics_sources_sub`, `lyrics_off`, `lyrics_synced`, `lyrics_up`, `lyrics_down`, `lyrics_title`, `lyrics_back`, `lyrics_loading`, `lyrics_notfound`, `lyrics_notfound_sub`, `lyrics_err`, `lyrics_err_sub`, `lyrics_plain`, `lyrics_tap_line`, `lyrics_retry`, `lyrics_all_off`, `dl_save`, `dl_folder`, `dl_change`, `dl_name`, `dl_no_dir`, `dl_no_auth`, `dl_no_stream`, `dl_resolve`, `dl_not_audio`, `dl_resolving`, `dl_err`, `dl_wait`, `dl_ok`, `dl_no_tags`.
 
 ## ipc-мост (обновление)
 
 `scFetch(url, token, clientId, method, body?, contentType?)` — 5-й параметр body (объект → JSON.stringify, строка → как есть), 6-й — опциональный Content-Type (дефолт `application/json`). PUT/DELETE/**POST** идут через ses.fetch-ветку с DataDome cookie; URL-суффикс `client_id&app_version&app_locale` (как у веб-клиента, из HAR). **Content-Type ставится только при наличии body** — запросы без тела (follow/unfollow: `POST`/`DELETE /me/followings/{id}`) сайт шлёт без него, а json-тип с пустым телом SC пытается парсить → 400 «Unable to parse JSON». **multipart**: body `{__multipart:{fields:[{name,value}], file:{name,filename,mime,b64}}}` — main собирает тело в Buffer с явным boundary и шлёт `multipart/form-data` (обложка плейлиста, `playlist[artwork_data]`). **анти-бот DataDome**: write-запросы троттлятся (минимум 1.5с между), при ответе 403/429 — минутный backoff на все write (`{error, blocked:true}`), renderer показывает тост `sc_blocked`. ошибки write-ветки возвращаются с `body` (первые 600 симв ответа SC). нужно для `PUT /playlists/{id}` (порядок треков), `POST /playlists` (создание), подписки на артистов.
 
 `selectImage()` → `dialog-select-image`: нативный диалог выбора картинки (jpg/png/webp/bmp, ≤25МБ), возвращает `{dataUrl, name}` или null. обложка плейлиста: renderer кропает в квадрат ≤1600px jpeg 0.9 (`prepareArtwork`), отправка через multipart-режим scFetch.
+
+`scDownloadTrack(t)` → `sc-download-track`: **отдельный путь, НЕ `scFetch`** — тот читает тело через `res.text()`, для бинарника в 10МБ это снесло бы память и испортило файл. принимает `{id, title, artist, comment, coverUrl, streamUrl, baseName, dir, token}` → `{path, size, tagsOk}` или `{error}`.
+
+⚠️ **`streamUrl` приходит УЖЕ РЕЗОЛВНУТЫМ** — renderer вызывает `scFetch` и берёт `.data.url`. сам `api-v2.../stream/progressive` отдаёт **JSON-манифест**, а не звук; первая версия отдавала его в main как есть и писала на диск файл на ~1кб с расширением `.mp3`. **оба шага нужны и оба обязательны**: `streamUrl` из `mapScTrack` — это *шаг 1*, `res.data.url` — *шаг 2*; путь воспроизведения в `handleScTrackClick` делает ровно то же. `client_id` в main **не дописывается** — у CDN-ссылки он уже сидит в policy-параметрах, хвост после подписи ломает валидацию.
+- **только `progressive`-transcoding** (обычный mp3). hls-only честно отдаёт `{error:'no_progressive'}` — собирать m3u8 в mp3 без ffmpeg нельзя, а писать m3u8 с расширением `.mp3` значило бы отдать пользователю битый файл
+- **`looksLikeAudio` — проверка сигнатуры первых байт, до записи на диск**: mp3 начинается либо с `ID3`, либо с кадра MPEG (`0xFF` + `(b1 & 0xE0) === 0xE0`). Всё прочее отбивается с кодом: `{`/`[` → `not_audio_json`, `#` → `not_audio_m3u8`, `<` → `not_audio_html`, иначе `not_audio`; файл короче 3 байт → `too_small`. **это страховка от повторения бага выше**: endpoint отдаёт 200 с мелким телом, и без проверки это тихо уезжает на диск как валидный `.mp3`. поток рвётся на первом же чанке, `.tmp` удаляется
+- пишет в `{finalPath}.tmp`, потом `rename` (атомарно: полузаписанный mp3 не остаётся на диске). при ошибке `.tmp` удаляется
+- `uniquePath`: `{finalPath}.mp3` → ` (2)`, ` (3)`… молча перезаписывать нельзя
+- редиректы до 5 хопов, `Authorization` **рвётся** при уходе на другой хост (CDN токен не нужен и иногда режет неожиданный заголовок). `http`/`https` выбирается по протоколу, `port` пробрасывается
+- таймаут 45с — это **inactivity**, не общая длительность: `req.setTimeout` срабатывает на молчание, поэтому медленная, но живая загрузка не убивается
+- `res.pipe(out)` вешается **до** счётчика прогресса: pipe берёт на себя backpressure, наш `on('data')` — только наблюдатель
+- теги пишутся `node-id3` (`TIT2`/`TPE1`/`TALB`/`TRCK`/`COMM` + **`APIC` с обложкой** — картинка внутри файла, без папки). `music-metadata` в проекте только **читает** теги. обложка тянется отдельным запросом (`fetchCoverBuffer`), её сбой молча переживается
+- **сбой тегов не отменяет скачивание** — mp3 уже на диске, но это не молчаливый исход: возвращается `tagsOk:false`, и renderer тостует `dl_no_tags`. иначе файл без обложки выглядел бы как «приложение забыло»
+
+`onDownloadProgress(cb)` → `download-progress` (`{id, got, total}` / `{id, done, path}` / `{id, warn}`). **возвращает функцию отписки**: обёртка нужна, иначе `removeListener` не найдёт исходный `cb` и слушатели копятся на каждом открытии диалога. в колбэке рендерера обязателен фильтр `p.got != null` — служебные сообщения (`warn`/`done`) иначе затирали бы прогресс на `undefined` и прыгали бар на 35% в самый конец.
+
+- реализация на глобальном `fetch` (Node в electron 41), не на `https.request` — ради авто-распаковки gzip/br
 
 ## компоненты
 
@@ -316,7 +335,7 @@ ROW_H=50. `content-visibility:auto`. абсолютный пилл с transition
 треки в `<AnimatePresence initial={false}>` через `SearchTrackRow`.
 
 ### `TrackContextMenu`
-`{menu, onClose, onCopyLink, onStartStation, canAddPl, playlists, playlistsLoading, onEnsurePlaylists, plMembers, onEnsureMembers, onToggleInPlaylist, onCreateWithTrack}`. portal → document.body, внутри — fragment: корневая панель + соседний сабменю (см. пункт «Добавить в плейлист»).
+`{menu, onClose, onCopyLink, onStartStation, canAddPl, onDownload, playlists, playlistsLoading, onEnsurePlaylists, plMembers, onEnsureMembers, onToggleInPlaylist, onCreateWithTrack}`. portal → document.body, внутри — fragment: корневая панель + соседний сабменю (см. пункт «Добавить в плейлист»).
 - **`Item` и `PlCheck` — В Модульной области, не внутри `TrackContextMenu`** (рядом с `MENU_VARIANTS`/`itemVars`/`itemStyle`/`itemHover`, в `index.html:1022+`). объявленные внутри компонента они получали **новый тип на каждом рендере**, React пересоздавал их поддеревья, Motion проигрывал `hidden→show` заново → первые две кнопки дёргались при любом обновлении state. **решающий признак: дёргались только две кнопки из трёх** — третья («Добавить в плейлист») инлайном и потому не пересоздавалась. `Item` получает `onClose` пропом, `PlCheck` — вычисленными `state`/`busy` вместо замыканий
 - **`variants`/`itemVars` — тоже в модульной области** (пересоздание объекта variants заставляло Motion пере-резолвить варианты на каждом рендере)
 - **вход — на КОРНЕ, одним элементом**: `MENU_VARIANTS.hidden = {opacity 0, scale 0.92, y -7}` → `show = {opacity 1, scale 1, y 0, duration .18 ease [0.22,1,0.36,1], staggerChildren .03, delayChildren .06}`, `transformOrigin: 'top left'` — растёт от курсора. контейнер пунктов — обычный `<div>`, `exit` только на корне (у вложенного он заставлял AnimatePresence ждать его пружину и держать панель ~0.4с после закрытия)
@@ -326,7 +345,7 @@ ROW_H=50. `content-visibility:auto`. абсолютный пилл с transition
 - закрывается: клик вне, Escape (если открыт сабменю — сначала он), scroll wheel **вне** меню (скролл внутри пикера не закрывает), `blur` окна
 - pill-стиль: `rgba(24,24,24,0.97)` + backdrop-blur, padding 4px, borderRadius 11
 - пункты:
-  - **Скопировать ссылку** (disabled если нет `permalinkUrl`)
+  - **Скачать** — **занимает место «Скопировать ссылку»** (решение пользователя). `canDownload = !!track.streamUrl`: у локального файла качать нечего, у hls-only трека нужен ffmpeg — тогда вместо пункта остаётся **Скопировать ссылку** (disabled если нет `permalinkUrl`), чтобы в меню не было заведомо мёртвой строки. Открывает `onDownload(track)` → `DownloadDialog`
   - **Запустить станцию** (disabled если нет id)
   - **Добавить в плейлист** (только при `canAddPl` = scAuth && SC-трек без `path`): раскрывает сабменю-пикер, где **чекбокс = трек уже в плейлисте**; клик по строке кладёт/снимает трек (повторно добавить нельзя — `handleAddToPlaylist` делает свежий GET и при `ids.includes(track.id)` отдаёт `'exists'` без PUT). Меню после переключения **не закрывается** — можно править несколько плейлистов подряд. Три состояния чекбокса: `'loading'` (состав едет, клик заблокирован) / `true` / `false`:
     - **сабменю — СОСЕД корневого `motion.div` в том же портале, не потомок.** Две причины: (1) `backdrop-filter` меню создаёт containing block для `position:fixed` — внутри координаты от вьюпорта уезжали на позицию меню (замер: `left 809` вместо `526`); (2) как потомок он наследовал бы `variants` корня и перезапускал каскад пунктов. `placeSub()` меряет меню, ставит `x = m.right+8`, при нехватке места флипает влево (`dir:-1`), `y = min(m.top, …)`, высота — через `offsetHeight` (не `getBoundingClientRect`); пересчёт на `resize`. обработчики клика/колеса считают сабменю «своим» через `inside()`
@@ -338,6 +357,32 @@ ROW_H=50. `content-visibility:auto`. абсолютный пилл с transition
     - свои плейлисты (`isOwn`): обложка 28px + название + счётчик; клик → `onAddToPlaylist(track, pl)` (GET свежий объект → PUT с id в конце). состояния строки: счётчик → спиннер → ✓ accent + подсветка строки, меню закрывается через 640мс
     - загрузка списка — 3 скелетона; ошибка — текст + «повторить» (`onEnsurePlaylists(true)`)
     - список пикера грузится лениво (`onEnsurePlaylists()` при открытии; кеш playlistsRef в App)
+
+---
+
+### `DownloadDialog`
+`{track, scAuth, dir, onPickDir, onClose, onSaved}`. кастомный диалог сохранения **вместо нативного** — в приложении вся отрисовка своя, и системное окошко выбивается. нативный появляется ровно один раз, для выбора папки (`onPickDir` → `selectMusicFolder`): обойти ФС из рендерера нельзя, и выбранная папка запоминается в `settings.downloadsFolder`. **на модульном уровне** — объявленный внутри компонента он пересоздавался бы на каждом рендере (та же причина, что у `Item`/`PlCheck` и `LyricsPanel`)
+
+поверхность — общая для всех оверлеев: `rgba(24,24,24,0.97)` + `blur(14px)` + `rgba(255,255,255,0.055)` + radius, подложка `rgba(4,4,8,0.55)` + `blur(12px)`
+
+- макет: `[обложка 56] [название / артист / feat-строка]` → `ПАПКА` (путь + «изменить») → `ИМЯ ФАЙЛА` (редактируемое) → прогресс-бар → `[отмена] [скачать]`
+- **разобранные метаданные показываются ДО сохранения** (`cleanTrackMeta`) — то, что попадёт в теги, видно сразу; `feat.` виден отдельной третьей строкой и в артист не попадает
+- **`zIndex: 10000`** — выше меню трека (9998): клик по «Скачать» его закрывает, и его exit-анимация не должна прорисоваться поверх диалога
+- **`dir` — проп из прошлого рендера: после `await onPickDir()` он не обновится.** поэтому выбор папки кладётся в локальную переменную `target` — иначе нативный диалог выскакивал бы дважды подряд (`dir || await onPickDir()` во втором аргументе)
+- прогресс приходит отдельным IPC-каналом и фильтруется по `idRef` (в диалоге открыт ровно один трек). `content-length` у SC часто нет — тогда вместо процентов ширина 35% и текст `dl_wait`
+- подпись кнопки **не меняется** на время загрузки — обратная связь уже идёт прогресс-баром, а смена текста дёргала бы ширину кнопки
+- длинный путь режется **слева** (`'…' + dir.slice(-40)`): хвост пути информативнее начала. это тот же приём, что в настройках, а не `direction: rtl` — у того с обратными слешами Windows ломается порядок символов
+- скачивание **по одному треку**, пакетного режима из плейлиста нет
+- **фаза 1 — резолв URL** (`resolveStream`): `scFetch(track.streamUrl)` → `res.data.url`. она идёт **в рендерере**, а не в main, потому что (1) `scFetch` — единственный путь, обкатанный против DataDome и с `client_id` в URL, и дублировать его в main незачем; (2) CDN-ссылка короткоживущая (policy с TTL) — чем ближе к скачиванию получена, тем лучше. `dl_resolving` отдельным состоянием: `prog === null` при `busy` = идёт резолв, байты ещё не пошли, поэтому indeterminate-бар с пониженной прозрачностью
+- **ошибки различаются** через `DL_ERR`: раньше всё, кроме `no_progressive`, сворачивалось в общий `dl_err`, и «пришёл json вместо звука» выглядело так же, как «сеть отвалилась» — два разных диагноза в одном сообщении. ключи, которых в `main.js` не бывает (`HTTP 403`, `'too many redirects'`), в карту **не внесены**: `new Error('HTTP ' + code)` даёт строку с **пробелом**, и такой ключ никогда не сматчился бы — всё лишнее уходит в общий `dl_err` через `|| 'dl_err'`
+
+---
+
+### `App` — скачивание
+- `dlTrack` — state открытого диалога (`null` = закрыт)
+- `handleOpenDownload(track)` — открыть
+- `handlePickDlDir()` — `selectMusicFolder()` → `settings.downloadsFolder` (пишется общим эффектом сохранения настроек, так что переживает перезапуск)
+- `handleDlSaved(res)` — закрыть + тост. **`res.tagsOk === false` → тост `dl_no_tags`, а не `dl_ok`**: файл сохранился, но без тегов и обложки, и по тихому «скачано» это выглядело бы как «приложение забыло»
 
 ---
 

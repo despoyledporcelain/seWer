@@ -390,6 +390,214 @@ ipcMain.handle('sc-fetch', async (_, url, token, clientId, method = 'GET', body 
   })
 })
 
+
+/* ─── скачивание трека ─────────────────────────────────────────────────────
+   Отдельный путь от sc-fetch: тот читает тело через res.text() и для
+   бинарника в 10МБ это снесло бы память и испортило файл. Здесь поток
+   пишется на диск по кускам, с прогрессом в рендерер.
+
+   Поддерживается только progressive-transcoding (обычный mp3). Для треков,
+   у которых SC отдаёт лишь hls, нужен ffmpeg — его в проекте нет, поэтому
+   такие честно отвечают ошибкой, а не молча пишут мусор. */
+const DL_REDIRECT_LIMIT = 5
+
+/* Windows не любит эти символы и зарезервированные имена */
+const ILLEGAL_NAME = /[<>:"/\\|?*\x00-\x1f]/g
+const RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i
+
+function sanitizeFileName(name) {
+  let s = String(name || 'track').replace(ILLEGAL_NAME, '_')
+  s = s.replace(/\s+/g, ' ').replace(/[. ]+$/, '').trim()   /* хвостовые точки и пробелы */
+  if (!s) s = 'track'
+  if (RESERVED_NAME.test(s)) s = '_' + s
+  if (s.length > 140) s = s.slice(0, 140).replace(/[. ]+$/, '')
+  return s
+}
+
+/* не перезаписываем: Artist - Song.mp3 → Artist - Song (2).mp3 */
+function uniquePath(dir, base, ext) {
+  let p = path.join(dir, base + ext)
+  let n = 2
+  while (fs.existsSync(p)) {
+    p = path.join(dir, `${base} (${n})` + ext)
+    n++
+    if (n > 999) break
+  }
+  return p
+}
+
+const sendProgress = payload => { try { win?.webContents.send('download-progress', payload) } catch {} }
+
+/* ГЛАВНОЕ, что здесь есть: проверка, что пришло АУДИО, а не мусор.
+   mp3 начинается либо с 'ID3' (id3v2-заголовок), либо с кадра MPEG —
+   байт 0xFF и следующий с 0xE0-битным вторым битом (0xE0 маска: 111xxxxx).
+   Всё остальное — не mp3: '{' — json-манифест (именно это приходило раньше:
+   streamUrl отдаёт json, а не звук, и он молча писался как .mp3 на 1кб),
+   '#' — m3u8-манифест. Ловим это ДО записи на диск. */
+function looksLikeAudio(buf) {
+  if (!buf || buf.length < 2) return false
+  if (buf[0] === 0x49 && buf[1] === 0x44 && buf[2] === 0x33) return true          /* ID3 */
+  if (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0) return true                    /* MPEG sync */
+  /* некоторым старым сборкам mp2/id3 без заголовка помогает RIFF/ADTS — не ловим,
+     лучше честно откажемся, чем запишем мусор */
+  return false
+}
+const badPayload = head => {
+  const c = head[0]
+  if (c === 0x7b || c === 0x5b) return 'not_audio_json'          /* { или [ */
+  if (c === 0x23) return 'not_audio_m3u8'                        /* # */
+  if (c === 0x3c) return 'not_audio_html'                         /* < */
+  return 'not_audio'
+}
+
+/* GET с редиректами, тело пишется в dest. отдаёт { total, sniffed } */
+function downloadToFile(url, dest, token, onProgress) {
+  return new Promise((resolve, reject) => {
+    let hops = 0
+    const attempt = (currentUrl, currentToken) => {
+      const u = new URL(currentUrl)
+      const mod = u.protocol === 'http:' ? require('http') : require('https')
+      const req = mod.get({
+        hostname: u.hostname,
+        port: u.port || undefined,
+        path: u.pathname + u.search,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36',
+          'Accept': 'audio/*,*/*;q=0.8',
+          ...(currentToken ? { 'Authorization': `OAuth ${currentToken}` } : {}),
+        },
+      }, res => {
+        const code = res.statusCode || 0
+        if ([301, 302, 303, 307, 308].includes(code) && res.headers.location) {
+          res.resume()
+          if (++hops > DL_REDIRECT_LIMIT) { reject(new Error('too many redirects')); return }
+          const next = new URL(res.headers.location, currentUrl).toString()
+          /* на CDN токен не нужен и иногда мешает — рвём его на другом хосте */
+          const sameHost = new URL(next).hostname === u.hostname
+          attempt(next, sameHost ? currentToken : null)
+          return
+        }
+        if (code !== 200) { res.resume(); reject(new Error('HTTP ' + code)); return }
+        const total = Number(res.headers['content-length']) || 0
+        const out = fs.createWriteStream(dest)
+        let got = 0
+        let head = null
+        let sniffErr = null
+        const fail = msg => {
+          res.destroy()
+          out.destroy()
+          try { fs.unlinkSync(dest) } catch {}
+          reject(new Error(msg))
+        }
+        /* pipe ПЕРВЫМ: он вешает свой обработчик и берёт на себя backpressure.
+           наш счётчик — только наблюдатель, и после pipe он уже не может
+           сорвать поток в flowing-режим раньше, чем появится получатель */
+        res.pipe(out)
+        res.on('data', c => {
+          got += c.length
+          /* первые 3 байта решают, аудио это или нет. рвём поток сразу,
+             не дописывая мусор до конца */
+          if (!head && got >= 3) { head = Buffer.from(c.subarray(0, 3)); if (!looksLikeAudio(head)) { sniffErr = badPayload(head); fail(sniffErr) } }
+          onProgress(got, total)
+        })
+        out.on('finish', () => {
+          if (sniffErr) return
+          if (!head && got > 0) {   /* файл короче 3 байт — точно не mp3 */
+            try { fs.unlinkSync(dest) } catch {}
+            reject(new Error('too_small')); return
+          }
+          resolve({ total })
+        })
+        out.on('error', e => { res.destroy(); reject(e) })
+        res.on('error', e => { if (!sniffErr) { out.destroy(); reject(e) } })
+      })
+      req.on('error', e => reject(e))
+      req.setTimeout(45000, () => { req.destroy(new Error('timeout')) })
+    }
+    attempt(url, token)
+  })
+}
+
+/* обложка в APIC: bytes, не путь. молча переживаем ошибку — теги важнее картинки */
+async function fetchCoverBuffer(url) {
+  if (!url) return null
+  return new Promise(resolve => {
+    let hops = 0
+    const attempt = u => {
+      const parsed = new URL(u)
+      require('https').get({
+        hostname: parsed.hostname, path: parsed.pathname + parsed.search,
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+      }, res => {
+        if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+          res.resume()
+          if (++hops > 4) { resolve(null); return }
+          attempt(new URL(res.headers.location, u).toString()); return
+        }
+        if (res.statusCode !== 200) { res.resume(); resolve(null); return }
+        const parts = []
+        res.on('data', c => parts.push(c))
+        res.on('end', () => { const b = Buffer.concat(parts); resolve(b.length ? b : null) })
+        res.on('error', () => resolve(null))
+      }).on('error', () => resolve(null))
+    }
+    try { attempt(url) } catch { resolve(null) }
+  })
+}
+
+/* streamUrl СЮДА ПРИХОДИТ УЖЕ РЕЗОЛВНУТЫМ (renderer вызывает scFetch и берёт
+   .data.url). сам api-v2 /media/.../stream/progressive отдаёт JSON-манифест, а
+   не звук — раньше он писался на диск как .mp3 и давал файл на 1кб. client_id
+   тоже НЕ дописывается: у CDN-ссылки он уже сидит в policy-параметрах, и хвост
+   после подписи ломает валидацию. */
+ipcMain.handle('sc-download-track', async (_, t) => {
+  const { id, title, artist, album, comment, coverUrl, streamUrl, dir, token, trackNo } = t || {}
+  if (!dir) return { error: 'no_dir' }
+  if (!streamUrl) return { error: 'no_progressive' }   /* hls-only: нужен ffmpeg */
+  fs.mkdirSync(dir, { recursive: true })
+
+  const base = sanitizeFileName(t.baseName || `${artist ? artist + ' - ' : ''}${title}`)
+  const finalPath = uniquePath(dir, base, '.mp3')
+  const tmp = finalPath + '.tmp'
+
+  let res
+  try {
+    res = await downloadToFile(streamUrl, tmp, token,
+      (got, total) => sendProgress({ id, got, total }))
+  } catch (e) {
+    try { fs.unlinkSync(tmp) } catch {}
+    return { error: String(e.message || e) }
+  }
+
+  /* тэги: сбой записи НЕ отменяет сам файл — mp3 уже лежит на диске, но
+     пользователь обязан узнать, что файл без обложки/тегов, иначе это
+     выглядит как «приложение забыло» */
+  let tagsOk = false
+  try {
+    const NodeID3 = require('node-id3')
+    const tags = {
+      title: title || '',
+      artist: artist || '',
+      ...(album ? { album } : {}),
+      ...(comment ? { comment } : {}),
+      ...(trackNo ? { track: String(trackNo) } : {}),
+    }
+    const cover = await fetchCoverBuffer(coverUrl)
+    if (cover) tags.image = cover
+    await NodeID3.write(tmp, tags)
+    tagsOk = true
+  } catch (e) {
+    sendProgress({ id, warn: 'tags_failed: ' + String(e.message || e) })
+  }
+
+  try { fs.renameSync(tmp, finalPath) } catch (e) {
+    return { error: 'rename: ' + String(e.message || e) }
+  }
+
+  sendProgress({ id, done: true, path: finalPath })
+  return { path: finalPath, size: res?.total || 0, tagsOk }
+})
+
 app.whenReady().then(() => {
   createWindow()
   createTray()

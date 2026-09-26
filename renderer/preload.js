@@ -21,6 +21,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   scClearLikesCache:  () => ipcRenderer.invoke('sc-clear-likes-cache'),
   scLoadLikesCache: ()   => ipcRenderer.invoke('sc-load-likes-cache'),
   scSaveLikesCache: (data) => ipcRenderer.invoke('sc-save-likes-cache', data),
+  scDownloadTrack:   (t)    => ipcRenderer.invoke('sc-download-track', t),
+  /* возвращает отписку: обёртка нужна, иначе removeListener не найдёт
+     исходный cb и слушатели накапливаются на каждом открытии диалога */
+  onDownloadProgress: (cb)  => {
+    const fn = (_e, p) => cb(p);
+    ipcRenderer.on('download-progress', fn);
+    return () => ipcRenderer.removeListener('download-progress', fn);
+  },
   discordUpdate:    (data) => ipcRenderer.invoke('discord-update', data),
   discordClear:     ()     => ipcRenderer.invoke('discord-clear'),
   setLoginItem:     (enable) => ipcRenderer.invoke('set-login-item', enable),
