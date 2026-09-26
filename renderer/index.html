@@ -3600,10 +3600,12 @@ const PlaylistEditor = React.forwardRef(function PlaylistEditor({ visible, playl
                 onMouseEnter={e => e.currentTarget.style.opacity='0.95'}
                 onMouseLeave={e => e.currentTarget.style.opacity='0.55'}/>
             </div>
-            {/* обложка (клик → выбор файла) — 96px, по схеме пользователя:
-                одна строка [выход][обложка][название/счётчик][сохранить] */}
+            {/* обложка (клик → выбор файла) — 112px, по схеме пользователя:
+                одна строка [выход][обложка][название/счётчик][сохранить].
+                высотой строка всё равно меряется по обложке, так что размер
+                не съедает контент, а identity-блок читается увереннее */}
             <div onClick={pickArtwork} title={t('ed_art_pick')} style={{
-              width:96, height:96, borderRadius:12, flexShrink:0, position:'relative',
+              width:112, height:112, borderRadius:12, flexShrink:0, position:'relative',
               overflow:'hidden', cursor:'pointer', background:'#111116',
               boxShadow:'0 0 0 1px rgba(255,255,255,0.055)',
             }}>
