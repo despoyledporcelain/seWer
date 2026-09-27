@@ -2837,7 +2837,7 @@ function VirtualTrackList({ items, activeId, loadingId, errorId, onClickItem, on
    переход вместо анимации.
    `state` = { status:'loading'|'ready'|'empty', lines, synced, source }.
    `activeLine` считает App (см. rAF-эффект) — здесь только отрисовка */
-function LyricsPanel({ open, state, activeLine, onSeek, onRetry, onBack, sources }) {
+function LyricsPanel({ open, inPlayer, state, activeLine, onSeek, onRetry, onBack, sources }) {
   const t = useLang();
   const bodyRef  = useRef(null);
   const lineRefs = useRef([]);
@@ -2971,7 +2971,11 @@ function LyricsPanel({ open, state, activeLine, onSeek, onRetry, onBack, sources
     <div style={{
       position:'absolute', inset:0, display:'flex', flexDirection:'column',
       opacity: open ? 1 : 0,
-      pointerEvents: open ? 'auto' : 'none',
+      /* inPlayer — тот же трюк, что у слоя списка: `pointer-events:none` на
+         скрытом слое плеера не гасит потомка, который сам ставит auto. Панель
+         закрыта, но на главной всё равно оставалась целью для кликов в
+         левом краю. */
+      pointerEvents: inPlayer && open ? 'auto' : 'none',
       transform: open ? 'translateX(0)' : 'translateX(14px)',
       transition: open
         ? 'opacity 0.3s ease 0.08s, transform 0.44s cubic-bezier(0.22,1,0.36,1) 0.08s'
@@ -6097,6 +6101,22 @@ function App() {
   const volumeRef         = useRef(0.7);
   const settingsRef       = useRef({});
   const crossfadeRafRef   = useRef(null);
+  /* Узел обложки карточки в сетке — для hero (вперёд и назад). Кеш ref'ов берём
+     ТОЛЬКО если узел живой: React вешает ref в null при размонтировании, но
+     после перестановки списка (сортировка, оптимистичный лайк, догрузка
+     обложек) в кеше может остаться уже отсоединённый узел, и
+     getBoundingClientRect() у него отдаёт нули. Тогда hero стартует из (0,0) с
+     scale(0) — клон не виден вообще, а `opacity: hero ? 0 : 1` на обложке
+     плеера держит её пустой ещё 300мс. В сумме это и читается как «кликнул
+     карточку — перехода нет, ничего не происходит». Фолбэк — поиск по
+     data-sewer-art прямо в DOM (общий для selectTrack и обоих hero в
+     handleNav: раньше фолбэк был только в selectTrack, и обратный hero
+     молча пропускался) */
+  const findArtEl = useCallback((id) => {
+    const cached = artRefs.current[id];
+    if (cached && cached.isConnected) return cached;
+    return homeScrollRef.current?.querySelector(`[data-sewer-art="${CSS.escape(String(id))}"]`) || null;
+  }, []);
   scTracksRef.current = scTracks;
   searchRef.current   = search;
   scAuthRef.current   = settings.soundcloudAuth;
@@ -6470,14 +6490,31 @@ function App() {
       else setIsPlaying(false);
       return;
     }
+    /* Локальная ветка. В режиме sc сюда попадают только когда SC-трек ещё не
+       играет — и тогда она молча двигала trackIdx по ЛОКАЛЬНОМУ списку, чего
+       в режиме sc вообще не должно быть: пользователь жмёт «вперёд» и получает
+       перемотку невидимого локального трека вместо следующего SC. Возвращаемся
+       явно. */
+    if (sourceMode === 'sc') { setIsPlaying(false); return; }
     const list = searchRef.current ? filteredRef.current : tracks;
+    if (!list.length) { setIsPlaying(false); return; }
     if (shuffle) {
       const cur = tracks[trackIdx];
       let n; do { n = Math.floor(Math.random()*list.length); } while (list[n] === cur && list.length > 1);
       setTrackIdx(tracks.indexOf(list[n]));
       progressRef.current = 0; return;
     }
+    /* curIdx может быть -1: текущий трек не попал в отфильтрованный список
+       (поиск его отсеял). Раньше next = 0 и мы просто прыгали на первый
+       элемент списка — визуально это выглядело как «следующий трек включился
+       рандомно». Считаем позицию по общему списку и берём её +1. */
     const curIdx = list.indexOf(tracks[trackIdx]);
+    if (curIdx < 0) {
+      const firstInList = list[0];
+      if (!firstInList) { setIsPlaying(false); return; }
+      setTrackIdx(tracks.indexOf(firstInList));
+      progressRef.current = 0; return;
+    }
     const next = curIdx + 1;
     if (next >= list.length) {
       if (repeat === 'all') { setTrackIdx(tracks.indexOf(list[0])); }
@@ -6511,7 +6548,11 @@ function App() {
       if (pi >= 0) handleScTrackClick(list[pi], scTracksRef.current.indexOf(list[pi]), true, 0, -1);
       return;
     }
+    /* тот же случай, что в handleNext: в режиме sc локальный список трогать
+       нельзя, и пустой список делить на ноль нельзя */
+    if (sourceMode === 'sc' || !tracks.length) return;
     const list = searchRef.current ? filteredRef.current : tracks;
+    if (!list.length) return;
     const curIdx = list.indexOf(tracks[trackIdx]);
     setTrackIdx(tracks.indexOf(list[(curIdx - 1 + list.length) % list.length]));
     progressRef.current = 0;
@@ -6925,6 +6966,7 @@ function App() {
     searchQueueRef.current = null;
     setStationActive(null);
     setPlaylistActive({ playlist: pl, tracks });
+    setHomeVisible(false);
     setPlayerVisible(true);
     setView('player');
     setNavActive('library');
@@ -7125,6 +7167,7 @@ function App() {
     const from = editingPlaylist?.from;
     setEditingPlaylist(null);
     if (from === 'player') {
+      setHomeVisible(false);
       setPlayerVisible(true);
       setView('player');
       setNavActive('library');
@@ -7435,14 +7478,11 @@ function App() {
       return;
     }
 
-    /* Ищем обложку карточки дважды: сначала в кеше ref'ов, потом — прямо в
-       DOM по data-атрибуту. Кеш может быть пуст (карточка только что
-       перемонтировалась, AnimatePresence отмонтировал старую и повесил ref
-       в null), и тогда hero просто молча пропускался — картинка телепортировалась
-       без анимации. */
-    const findArt = () => artRefs.current[t.id]
-      || homeScrollRef.current?.querySelector(`[data-sewer-art="${CSS.escape(String(t.id))}"]`)
-      || null;
+    /* Ищем обложку карточки (findArtEl — см. ref): кеш берём только если узел
+       живой, иначе ищем прямо в DOM по data-атрибуту. Отсоединённый узел в
+       кеше даёт нулевой rect, и hero стартует из (0,0) с scale(0) — картинка
+       телепортировалась без анимации, а обложка плеера ещё 300мс пустая. */
+    const findArt = () => findArtEl(t.id);
 
     // scroll target card into view if needed (mirrors handleNav home→player)
     const initialEl = findArt();
@@ -7552,6 +7592,7 @@ function App() {
       searchQueueRef.current = null;
       setPlaylistActive(null);
       setStationActive({ origTrack: track, tracks: mapped });
+      setHomeVisible(false);
       setPlayerVisible(true);
       setView('player');
       setNavActive('library');
@@ -7669,6 +7710,18 @@ function App() {
   /* панель уезжает вместе с плеером, а не остаётся висеть на чужом экране */
   useEffect(() => { if (!playerVisible) setLyricsOpen(false); }, [playerVisible]);
 
+  /* Панель текста занимает ВСЮ колонку библиотеки (position:absolute inset:0
+     поверх слоя списка) и глушит его pointerEvents — то есть выглядит как
+     «вся левая колонка не работает». Выход был один: кнопка «список» 12px в
+     углу панели (и та же кнопка textt в ряду управления). Escape — выход,
+     о котором не надо вспоминать. Тот же приём, что у TrackContextMenu */
+  useEffect(() => {
+    if (!lyricsOpen) return;
+    const onKey = e => { if (e.key === 'Escape') setLyricsOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lyricsOpen]);
+
   /* тянем текст только пока панель открыта — незачем грузить то, чего не видно.
      lyricsReqRef защищает от гонки: сменился трек/порядок, старый ответ
      пришёл последним и затёр бы новый */
@@ -7742,7 +7795,7 @@ function App() {
     setNavActive(id);
     if (id === 'home') {
       if (view === 'player') {
-        const artEl = artRefs.current[track.id];
+        const artEl = findArtEl(track.id);
         const par = playerArtRef.current?.getBoundingClientRect();
         if (artEl && par) {
           const scrollEl = homeScrollRef.current;
@@ -7790,7 +7843,7 @@ function App() {
       if (view === 'home') setHomeVisible(false);
       setTimeout(() => setView('settings'), view === 'home' ? 240 : 300);
     } else if (view === 'home') {
-      const artEl = artRefs.current[track.id];
+      const artEl = findArtEl(track.id);
       const par = playerArtRef.current?.getBoundingClientRect();
       if (artEl && par) {
         const scrollEl = homeScrollRef.current;
@@ -8035,7 +8088,19 @@ function App() {
           <div style={{
             position:'absolute', inset:0, display:'flex', flexDirection:'column',
             opacity: lyricsOpen ? 0 : 1,
-            pointerEvents: lyricsOpen ? 'none' : 'auto',
+            /* !playerVisible — ОБЯЗАТЕЛЬНО, иначе невидимый список ест клики
+               по сетке на главной. `pointer-events:none` на слое плеера
+               (строка выше) НЕ выключает клики в поддереве: по спеке CSS
+               потомок с `pointer-events:auto` снова становится целью, событие
+               просто идёт к нему через родителя. Этот слой — ровно такой
+               потомок (pointer-events:auto), а сам он `position:absolute
+               inset:0` в колонке 260px. На главной слой плеера opacity:0,
+               но opacity НЕ влияет на hit-testing → невидимая полоса
+               шириной 260px перехватывала клики по первому столбцу сетки.
+               Клик уходил в невидимую строку VirtualTrackList: звук шёл от
+               3-й/4-й строки (смещение по вертикали), экран не менялся,
+               hero не запускался. */
+            pointerEvents: playerVisible && !lyricsOpen ? 'auto' : 'none',
             transform: lyricsOpen ? 'translateX(-14px)' : 'translateX(0)',
             transition: lyricsOpen
               ? 'opacity 0.16s ease, transform 0.16s ease'
@@ -8228,8 +8293,27 @@ function App() {
                 handleScTrackClick(t, scTracksRef.current.indexOf(t));
               } else {
                 const idx = tracks.indexOf(t);
-                if (!scPlayingTrack && idx === trackIdx) { setIsPlaying(true); return; }
+                if (idx < 0) return;
                 setScPlayingTrack(null);
+                if (idx === trackIdx) {
+                  /* Клик по уже загруженному треку. Раньше здесь был
+                     `setIsPlaying(true); return` — и это был ПОЛНЫЙ no-op, если
+                     трек уже играет: клик по первой строке (trackIdx = 0 из
+                     коробки, до первого запуска) не давал вообще ничего — ни
+                     звука, ни перемотки, ни смены кадра. Плюс progressRef
+                     обнулялся без audio.currentTime, и шкала прыгала в ноль
+                     поверх продолжавшейся играть дорожки. Теперь это честный
+                     «переиграть с начала», как в любом плеере. */
+                  const audio = audioRef.current;
+                  if (audio && audio.src) {
+                    if (audio.currentTime > 0.05) audio.currentTime = 0;
+                    progressRef.current = 0;
+                    startFadeIn(audio);
+                    audio.play().catch(() => setIsPlaying(false));
+                  }
+                  setIsPlaying(true);
+                  return;
+                }
                 setTrackIdx(idx);
                 progressRef.current = 0;
                 setIsPlaying(true);
@@ -8241,7 +8325,7 @@ function App() {
             
           />
           </div>
-          <LyricsPanel open={lyricsOpen} state={lyrics} activeLine={lyricsActive}
+          <LyricsPanel open={lyricsOpen} inPlayer={playerVisible} state={lyrics} activeLine={lyricsActive}
             onSeek={handleLyricsSeek} onRetry={() => setLyricsNonce(n => n + 1)}
             sources={settings.lyricsSources} onBack={() => setLyricsOpen(false)}/>
           </div>
@@ -8432,7 +8516,7 @@ function App() {
         <SearchView ref={searchViewRef} visible={view==='search'} scAuth={settings.soundcloudAuth||null}
           likedIds={likedIds} onLike={handleLike}
           onPlayTrack={(t, queue) => { searchQueueRef.current = queue || null; handleScTrackClick(t, -1); }}
-          onSelectTrack={(t, queue) => { searchQueueRef.current = queue || null; handleScTrackClick(t, -1); setPlayerVisible(true); setView('player'); setNavActive('library'); }}
+          onSelectTrack={(t, queue) => { searchQueueRef.current = queue || null; handleScTrackClick(t, -1); setHomeVisible(false); setPlayerVisible(true); setView('player'); setNavActive('library'); }}
           onResultsLoaded={handleSearchResultsLoaded}
           onArtistClick={handleOpenArtist}
           loadingTrackId={loadingTrackId} errorTrackId={errorTrackId}
@@ -8441,7 +8525,7 @@ function App() {
           hideDividers={settings.hideDividers}
           likedIds={likedIds} onLike={handleLike}
           onPlayTrack={t => handleScTrackClick(t, -1)}
-          onSelectTrack={t => { handleScTrackClick(t, -1); setPlayerVisible(true); setView('player'); setNavActive('library'); }}
+          onSelectTrack={t => { handleScTrackClick(t, -1); setHomeVisible(false); setPlayerVisible(true); setView('player'); setNavActive('library'); }}
           loadingTrackId={loadingTrackId} errorTrackId={errorTrackId}
           onFollow={handleFollow} onCheckFollow={checkFollow}/>
 
