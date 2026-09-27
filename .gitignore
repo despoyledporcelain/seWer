@@ -2,4 +2,6 @@
 dist/
 .DS_Store
 .vscode/
+.claude/
+.zcode/
 
