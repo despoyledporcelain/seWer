@@ -260,6 +260,19 @@ function cleanLyricsSources(arr) {
   return [...new Set(arr.filter(id => LYRICS_SOURCE_IDS.includes(id)))];
 }
 
+/* значения RPC-настроек. мусор из settings.json (или значения из будущей
+   версии) раньше уезжали в main как есть: 'Progress' не совпадал ни с одним
+   чипом в ui и в main проваливался в ветку 'elapsed' молча, без ошибки */
+const DISCORD_TS    = ['progress', 'elapsed', 'none'];
+const DISCORD_PAUSE = ['show', 'hide'];
+function cleanDiscordSettings(s) {
+  s.discordRpc        = s.discordRpc   !== false;
+  s.discordCover      = s.discordCover !== false;
+  s.discordTimestamp  = DISCORD_TS.includes(s.discordTimestamp)    ? s.discordTimestamp    : 'progress';
+  s.discordPause      = DISCORD_PAUSE.includes(s.discordPause)     ? s.discordPause        : 'show';
+  return s;
+}
+
 /* ── lyrics fetching ──────────────────────────────────────────────────────── */
 /* Название без мусорного хвоста. Genius ищет по строке целиком и на любом
    лишнем хвосте выдаёт 0 хитов — проверено на реальном треке:
@@ -887,6 +900,16 @@ function fmtCount(n) {
   return String(n);
 }
 
+/* логотип discord в том же приёме, что SoundCloudIcon: инлайн-svg с
+   currentColor, потому что картинкой currentColor не красится */
+function DiscordIcon({ size = 15, fill = 'currentColor' }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} style={{display:'block'}}>
+      <path d="M20.32 4.57A19.79 19.79 0 0 0 15.43 3c-.24.42-.51.99-.7 1.44a18.3 18.3 0 0 0-5.48 0c-.19-.45-.47-1.02-.71-1.44a19.74 19.74 0 0 0-4.9 1.57C.63 9.2-.3 13.71.13 18.16A19.9 19.9 0 0 0 6.15 21.3c.49-.66.92-1.37 1.29-2.11-.71-.27-1.39-.6-2.03-.99.17-.13.34-.26.5-.4a14.2 14.2 0 0 0 12.18 0c.16.14.33.27.5.4-.64.39-1.32.72-2.03.99.37.74.8 1.45 1.29 2.11a19.87 19.87 0 0 0 6.02-3.14c.5-5.15-.85-9.62-3.55-13.55zM8.02 15.44c-1.18 0-2.15-1.08-2.15-2.4 0-1.32.95-2.4 2.15-2.4 1.21 0 2.18 1.09 2.16 2.4 0 1.32-.95 2.4-2.16 2.4zm7.96 0c-1.18 0-2.15-1.08-2.15-2.4 0-1.32.95-2.4 2.15-2.4 1.21 0 2.18 1.09 2.16 2.4 0 1.32-.95 2.4-2.16 2.4z"/>
+    </svg>
+  );
+}
+
 function SoundCloudIcon({ size = 16, fill = 'currentColor' }) {
   return (
     <svg width={size} height={size} viewBox="-271 345.8 256 111.2" fill={fill}>
@@ -1186,6 +1209,10 @@ const STRINGS = {
     discord_on_pause:'При паузе',
     discord_pause_show:'Показывать', discord_pause_hide:'Скрывать',
     discord_cover:'Обложка трека', discord_cover_sub:'Показывать art в присутствии',
+    discord_st_off:'Discord не запущен или RPC выключен',
+    discord_st_connecting:'Подключение к Discord…',
+    discord_st_connected:'Discord подключён',
+    discord_st_lost:'Соединение с Discord потеряно, переподключаемся…',
     card_account:'Аккаунт', card_language:'Язык интерфейса', language_label:'Язык', language_sub:'Язык элементов управления',
     card_startup:'Запуск',
     start_windows:'Запускать при старте Windows', minimize_tray:'Сворачивать в трей',
@@ -1254,6 +1281,7 @@ const STRINGS = {
     accent_seg_off:'Выкл', accent_seg_color:'Цвет',
     accent_off_title:'Свечения выключены', accent_off_sub:'Фоновые свечения скрыты, акцент — статичный серый',
     sec_lyrics:'Текст песен',
+    sec_discord:'Discord',
     lyrics_sources:'Источники текста', lyrics_sources_sub:'Сверху вниз — в этом порядке ищется текст песни',
     lyrics_off:'Выключенные', lyrics_synced:'синхронный',
     lyrics_up:'Выше по списку', lyrics_down:'Ниже по списку',
@@ -1291,6 +1319,10 @@ const STRINGS = {
     discord_on_pause:'On pause',
     discord_pause_show:'Show', discord_pause_hide:'Hide',
     discord_cover:'Track artwork', discord_cover_sub:'Show art in presence',
+    discord_st_off:'Discord is not running or RPC is off',
+    discord_st_connecting:'Connecting to Discord…',
+    discord_st_connected:'Discord connected',
+    discord_st_lost:'Lost connection to Discord, reconnecting…',
     card_account:'Account', card_language:'Interface language', language_label:'Language', language_sub:'Language of UI elements',
     card_startup:'Startup',
     start_windows:'Launch at Windows startup', minimize_tray:'Minimize to tray',
@@ -1359,6 +1391,7 @@ const STRINGS = {
     accent_seg_off:'Off', accent_seg_color:'Color',
     accent_off_title:'Glow disabled', accent_off_sub:'Background glows hidden, accent is flat gray',
     sec_lyrics:'Lyrics',
+    sec_discord:'Discord',
     lyrics_sources:'Lyrics sources', lyrics_sources_sub:'Top to bottom — lyrics are searched in this order',
     lyrics_off:'Turned off', lyrics_synced:'synced',
     lyrics_up:'Move up', lyrics_down:'Move down',
@@ -3625,7 +3658,7 @@ function LyricsSettings({ settings, onSettings, Card, Toggle }) {
 }
 
 /* ── SettingsView ─────────────────────────────────────────────────────────── */
-function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFolder, onClearCoversCache, onClearLikesCache, appAccent, scAuth, onScLogin, onScLogout, sec, setSec }) {
+function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFolder, onClearCoversCache, onClearLikesCache, appAccent, scAuth, onScLogin, onScLogout, sec, setSec, discordStatus }) {
   const t = useLang();
   const [scLoading, setScLoading] = useState(false);
   const [scError, setScError] = useState(null);
@@ -3707,6 +3740,8 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
       icon:<img src="../assets/vosproizvedenie.png" style={{width:15,height:15,filter:'brightness(0) invert(1)',display:'block'}}/> },
     { id:'lyrics',   label:t('sec_lyrics'),
       icon:<img src="../assets/textt.png" style={{width:15,height:15,filter:'brightness(0) invert(1)',display:'block'}}/> },
+    { id:'discord',  label:t('sec_discord'),
+      icon:<DiscordIcon size={15} fill="rgba(255,255,255,0.5)"/> },
     { id:'appearance', label:t('sec_appearance'),
       icon:<img src="../assets/theme.png" style={{width:15,height:15,filter:'brightness(0) invert(1)',display:'block'}}/> },
     { id:'system',   label:t('sec_system'),
@@ -3969,6 +4004,9 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
       <Card title={t('card_interface')}>
         <Row label={t('hide_dividers')} sub={t('hide_dividers_sub')} last><Toggle k="hideDividers"/></Row>
       </Card>
+    </>),
+    /* секция discord вынесена из оформления: это интеграция, а не вид */
+    discord: (<>
       <Card title={t('card_discord')}>
         <Row label={t('discord_rpc')} sub={t('discord_rpc_sub')} last={!settings.discordRpc}>
           <Toggle k="discordRpc"/>
@@ -3985,6 +4023,31 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
             borderRadius:10,
             overflow:'hidden',
           }}>
+            {/* статус подключения. без него «RPC включён, но ничего не видно»
+               и «Discord не запущен» выглядят одинаково — а это разные вещи,
+               и чинить их надо по-разному (перезапустить клиент vs ждать) */}
+            {(() => {
+              const map = {
+                connected:   { c:'#4ade80', t:t('discord_st_connected')   },
+                connecting:  { c:'#fbbf24', t:t('discord_st_connecting')  },
+                disconnected:{ c:'#fbbf24', t:t('discord_st_lost')        },
+                off:         { c:'rgba(255,255,255,0.25)', t:t('discord_st_off') },
+              }[discordStatus] || { c:'rgba(255,255,255,0.25)', t:t('discord_st_off') };
+              const live = discordStatus === 'connected';
+              return (
+                <div style={{
+                  display:'flex', alignItems:'center', gap:8,
+                  padding:'10px 14px',
+                  borderBottom: settings.hideDividers ? 'none' : '1px solid rgba(255,255,255,0.04)',
+                }}>
+                  <div style={{
+                    width:6, height:6, borderRadius:'50%', background:map.c, flexShrink:0,
+                    boxShadow: live ? `0 0 0 3px rgba(74,222,128,0.14)` : 'none',
+                  }}/>
+                  <div style={{fontSize:'var(--fs-xs)', color: live ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.3)'}}>{map.t}</div>
+                </div>
+              );
+            })()}
             {/* таймстамп */}
             <div style={{
               display:'flex', alignItems:'center', justifyContent:'space-between',
@@ -4000,7 +4063,7 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
                 ].map(({v,l}) => {
                   const active = (settings.discordTimestamp||'progress') === v;
                   return (
-                    <div key={v} onClick={()=>set('discordTimestamp',v)} style={{
+                    <div key={v} onClick={()=>{ if (active) return; set('discordTimestamp',v); }} style={{
                       fontSize: 'var(--fs-xs)', fontWeight:500, letterSpacing:'0.03em',
                       padding:'4px 11px', borderRadius:7, cursor:'pointer', userSelect:'none',
                       background: active ? 'rgba(255,255,255,0.13)' : 'rgba(255,255,255,0.04)',
@@ -4029,7 +4092,7 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
                 ].map(({v,l}) => {
                   const active = (settings.discordPause||'show') === v;
                   return (
-                    <div key={v} onClick={()=>set('discordPause',v)} style={{
+                    <div key={v} onClick={()=>{ if (active) return; set('discordPause',v); }} style={{
                       fontSize: 'var(--fs-xs)', fontWeight:500, letterSpacing:'0.03em',
                       padding:'4px 11px', borderRadius:7, cursor:'pointer', userSelect:'none',
                       background: active ? 'rgba(255,255,255,0.13)' : 'rgba(255,255,255,0.04)',
@@ -6081,6 +6144,12 @@ function App() {
   const searchViewRef     = useRef(null);
   const discordTimerRef    = useRef(null);
   const discordProgressRef = useRef(0);
+  /* статус rpc приходит из main ('off'|'connecting'|'connected'|'disconnected').
+     раньше ошибки подключения глотались пустым catch и в ui было видно ровно
+     то же, что при «всё работает» — отличить нельзя было */
+  const [discordStatus, setDiscordStatus] = useState('off');
+  /* null = настройки ещё не прочитаны (см. эффект включения rpc ниже) */
+  const [rpcWanted, setRpcWanted] = useState(null);
   const trackSwitchingRef  = useRef(false);
   const filteredRef       = useRef([]);
   const filteredScRef     = useRef([]);
@@ -6220,6 +6289,11 @@ function App() {
     (async () => {
       try {
         const saved = await window.electronAPI.loadSettings();
+        /* решение на подключение принимаем только после чтения файла настроек.
+           ВНУТРИ async: `saved` объявлен тут же, и снаружи это ReferenceError.
+           сразу после чтения, а не в конце: до сканa папки и остальной разбор —
+           упало бы что-то одно, а rpc не включился бы вовсе */
+        setRpcWanted(!!(saved?.discordRpc !== false));
         if (saved && Object.keys(saved).length) {
           setSettings(s => {
             const m = { ...s, ...saved };
@@ -6233,6 +6307,9 @@ function App() {
             /* список источников текста: выкидываем мусор и дубли, отсутствие
                поля (старый файл настроек) → все источники по умолчанию */
             m.lyricsSources = cleanLyricsSources(m.lyricsSources);
+            /* те же ворота для rpc: без них мусорное значение из старого файла
+               настроек уезжало в main как есть (см. cleanDiscordSettings) */
+            cleanDiscordSettings(m);
             return m;
           });
           if (typeof saved.volume === 'number') {
@@ -6321,6 +6398,9 @@ function App() {
       audio.src = '';
     }
     progressRef.current = 0;
+    /* без этого в присутствие уезжал прогресс ПРЕДЫДУЩЕГО трека: если новый
+       не играет (пауза, ошибка загрузки), timeupdate не придёт и не поправит */
+    discordProgressRef.current = 0;
   }, [trackIdx, track?.path, scPlayingTrack]);
 
   /* play / pause */
@@ -6416,16 +6496,24 @@ function App() {
     return () => window.removeEventListener('keydown', handler);
   }, [view]);
 
-  useEffect(() => {
+  /* единственная точка сборки присутствия. раньше таких было две (эффект
+     ниже + копия внутри handleSeek) — они делили ОДИН discordTimerRef,
+     поэтому взаимно отменяли дебаунс друг друга и расходились в мелочах
+     (в seek-копии при !discordRpc был `return` вместо discordClear, а
+     isPlaying брался из ref, здесь — из state) */
+  const pushDiscord = useCallback((delay) => {
     clearTimeout(discordTimerRef.current);
     discordTimerRef.current = setTimeout(() => {
       const s = settingsRef.current;
-      if (!s.discordRpc) { window.electronAPI?.discordClear?.(); return; }
-      if (!track) { window.electronAPI?.discordClear?.(); return; }
-      if (!isPlaying && s.discordPause === 'hide') { window.electronAPI?.discordClear?.(); return; }
+      if (!s.discordRpc || !track) return;   /* выключенным rpc'ом рулит main */
+      if (!isPlayingRef.current && s.discordPause === 'hide') { window.electronAPI?.discordClear?.(); return; }
       let coverUrl = null;
       if (s.discordCover !== false) {
-        coverUrl = (track.coverUrl || '').startsWith('https://') ? track.coverUrl : null;
+        const direct = track.coverUrl || '';
+        /* sc-обложки — обычные https-ссылки, их discord берёт сам.
+           локальные приходят data-url'ом (getCoverArt) — их надо сначала
+           загрузить в дискорд, этим занимается main по coverKey */
+        if (direct.startsWith('https://') || direct.startsWith('data:image')) coverUrl = direct;
         if (!coverUrl && scPlayingTrack) {
           const cached = scCacheMapRef.current.get(track.id);
           if (cached?.coverUrl?.startsWith('https://')) coverUrl = cached.coverUrl;
@@ -6437,11 +6525,37 @@ function App() {
         duration:  track.duration,
         progress:  discordProgressRef.current,
         coverUrl,
-        isPlaying,
+        coverKey:  track.id,
+        isPlaying: isPlayingRef.current,
         timestamp: s.discordTimestamp || 'progress',
       });
-    }, 800);
-  }, [track?.id, isPlaying, settings.discordRpc, settings.discordTimestamp, settings.discordPause, settings.discordCover]);
+    }, delay);
+  }, [track, scPlayingTrack]);
+
+  /* deps по полям трека, а не по track?.id: coverUrl у локальных приезжает
+     асинхронно (loadCovers), duration уточняется в loadedmetadata. при
+     deps по id эффект не перезапускался, и дискорд весь трек показывал
+     не ту длительность и без обложки — он сам activity не перерисовывает.
+     pushDiscord в списке обязателен: он пересобирается на каждый новый объект
+     трека, и без него переименование (commitEdit) меняло title в state, но
+     эффект держал старое замыкание — присутствие оставалось с прежним названием */
+  useEffect(() => { pushDiscord(800); },
+    [pushDiscord, track?.id, track?.coverUrl, track?.duration, isPlaying, scPlayingTrack,
+     settings.discordRpc, settings.discordTimestamp, settings.discordPause, settings.discordCover]);
+
+  /* тумблер = решение на подключение вообще. раньше initDiscord() дёргался
+     из app.whenReady безусловно: rpc выключен — а сокет в дискорд уже открыт,
+     и наоборот, включить его было нельзя, не перезапустив приложение.
+     null = настройки ещё не прочитаны: дефолт discordRpc:true успевал увести
+     main в connect, и пользователь с выключенным rpc получал лишний
+     connect/disconnect на каждом запуске. реальное значение ставит
+     загрузка настроек ниже (cleanDiscordSettings) */
+  useEffect(() => { window.electronAPI?.discordSetEnabled?.(rpcWanted === true); }, [rpcWanted]);
+
+  useEffect(() => {
+    const off = window.electronAPI?.onDiscordStatus?.(setDiscordStatus);
+    return () => { off?.(); };
+  }, []);
 
   useEffect(() => () => window.electronAPI?.discordClear?.(), []);
 
@@ -6568,28 +6682,11 @@ function App() {
       audio.currentTime = v * audio.duration;
       audio.volume = volumeRef.current; // восстанавливаем громкость после seek
     }
-    clearTimeout(discordTimerRef.current);
-    discordTimerRef.current = setTimeout(() => {
-      const s = settingsRef.current;
-      if (!s.discordRpc) return;
-      const t = track;
-      if (!t) return;
-      if (!isPlayingRef.current && s.discordPause === 'hide') { window.electronAPI?.discordClear?.(); return; }
-      let coverUrl = null;
-      if (s.discordCover !== false) {
-        coverUrl = (t.coverUrl || '').startsWith('https://') ? t.coverUrl : null;
-        if (!coverUrl && scPlayingTrack) {
-          const cached = scCacheMapRef.current.get(t.id);
-          if (cached?.coverUrl?.startsWith('https://')) coverUrl = cached.coverUrl;
-        }
-      }
-      window.electronAPI?.discordUpdate?.({
-        title: t.title, artist: t.artist, duration: t.duration,
-        progress: v, coverUrl, isPlaying: isPlayingRef.current,
-        timestamp: s.discordTimestamp || 'progress',
-      });
-    }, 400);
-  }, [track, scPlayingTrack]);
+    /* pushDiscord сам гасит прошлый таймер. раньше здесь стоял отдельный
+       clearTimeout того же ref — из-за него seek отменял дебаунс эффекта,
+       и задержка обновления присутствия становилась случайной */
+    pushDiscord(400);
+  }, [track, scPlayingTrack, pushDiscord]);
 
   useEffect(() => { setEditingTitle(false); }, [trackIdx]);
 
@@ -8500,7 +8597,7 @@ function App() {
           </div>
         )}
 
-        <SettingsView settings={settings} onSettings={setSettings} visible={view==='settings'} onScanTracks={handleScanTracks} onClearFolder={handleClearFolder} onClearCoversCache={handleClearCoversCache} onClearLikesCache={handleClearLikesCache} appAccent={appAccent} scAuth={settings.soundcloudAuth||null} onScLogin={handleScLogin} onScLogout={handleScLogout} sec={settingsSec} setSec={setSettingsSec}/>
+        <SettingsView settings={settings} onSettings={setSettings} visible={view==='settings'} onScanTracks={handleScanTracks} onClearFolder={handleClearFolder} onClearCoversCache={handleClearCoversCache} onClearLikesCache={handleClearLikesCache} appAccent={appAccent} scAuth={settings.soundcloudAuth||null} onScLogin={handleScLogin} onScLogout={handleScLogout} sec={settingsSec} setSec={setSettingsSec} discordStatus={discordStatus}/>
         <PlaylistsView visible={view==='playlists'} scAuth={settings.soundcloudAuth||null}
           playlists={playlists} loading={playlistsLoading} error={playlistsError} creating={creatingPlaylist}
           onOpen={handleOpenPlaylist} onEdit={pl => handleOpenPlEditor(pl, 'playlists')}

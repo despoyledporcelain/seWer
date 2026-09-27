@@ -316,6 +316,10 @@ useLang()      — хук: возвращает t(key), читает LangContext
 
 `onDownloadProgress(cb)` → `download-progress` (`{id, got, total}` / `{id, done, path}` / `{id, warn}`). **возвращает функцию отписки**: обёртка нужна, иначе `removeListener` не найдёт исходный `cb` и слушатели копятся на каждом открытии диалога. в колбэке рендерера обязателен фильтр `p.got != null` — служебные сообщения (`warn`/`done`) иначе затирали бы прогресс на `undefined` и прыгали бар на 35% в самый конец.
 
+`discordSetEnabled(on)` → `discord-rpc-enabled` (`ipcRenderer.send`): решение на подключение вообще, по тумблеру. ответ не нужен → `send`, не `invoke`.
+
+`onDiscordStatus(cb)` → `discord-status` (`'off'|'connecting'|'connected'|'disconnected'`). **возвращает отписку** — по тем же причинам, что и у `onDownloadProgress`.
+
 `netFetch(url, headers)` → `net-fetch`: **отдельный канал от sc-fetch** для сторонних сервисов. в sc-fetch soundcloud-сессия с DataDome-cookie и `client_id` в URL — для источников текста это не годится (client_id превратился бы в 404, а genius не отдаёт CORS-заголовки, и из рендерера напрямую не уехать). отдаёт `{status, body}` сырым текстом: genius отвечает HTML, который разбирает рендерер.
 - хосты зафиксированы в `NET_FETCH_HOSTS` (`lrclib.net`, `genius.com`) — иначе это просто открытый прокси наружу
 - `User-Agent` обязателен: lrclib.net отвечает 403 на нечеловеческий
@@ -440,7 +444,11 @@ ROW_H=50. `content-visibility:auto`. абсолютный пилл с transition
      - `cover` → карточка с conic-gradient rainbow border (CSS mask `xor` trick), палитра-иконка, live preview swatch (`appAccent` real-time)
      - `off` → приглушённая карточка «свечения выключены» (power-иконка)
 2. карточка «Интерфейс» — `hideDividers` toggle (влияет на разделители в SettingsView **и** SearchTrackRow)
-3. карточка «Discord» — toggle `discordRpc` + анимированный блок (timestamp chips, pause chips, cover toggle)
+3. ~~карточка «Discord»~~ — **вынесена в отдельную секцию `discord`**, стоит между «Текст песен» и «Оформление». это интеграция, а не вид, и в «Оформлении» она была третьим пунктом из двух. иконка секции — `DiscordIcon` (инлайн-svg, `currentColor`, тем же приёмом что `SoundCloudIcon`)
+
+**секции настроек** (порядок в `SECS`): `account` → `playback` → `lyrics` → `discord` → `appearance` → `system` → `about`
+
+**discord**: тумблер `discordRpc` + анимированный блок: **строка статуса подключения** (точка + текст из `discordStatus`), timestamp chips, pause chips, cover toggle. чипы с гардом `if (active) return`
 
 миграция: старый `accentMode` (`'default'|'lavender'|...|'cover'`) при загрузке настроек раскладывается в новую пару `accentMode` + `accentPreset` (useEffect в App). там же `lyricsSources` прогоняется через `cleanLyricsSources`.
 
@@ -668,7 +676,7 @@ filteredRef, filteredScRef, searchRef
 volumeRef, settingsRef, langRef
 crossfadeRafRef, trackSwitchingRef
 toastTimerRef
-discordTimerRef, discordProgressRef
+discordTimerRef, discordProgressRef, rpcWanted
 prevSearchRef, homeSearchRef, libSearchRef
 searchQueueRef            — queue из SearchView/ArtistView (для next/prev)
 stationQueueRef           — queue станции (приоритет над searchQueue в next/prev)
@@ -807,7 +815,134 @@ async функция:
 
 ### `App` — Discord RPC
 
-useEffect зависит от `[track?.id, isPlaying, settings.discordRpc, discordTimestamp, discordPause, discordCover]`. `timestamp` в main: `'progress'` → start+end; `'elapsed'` → только start; `'none'` → без.
+**сборка присутствия — одна функция `pushDiscord(delay)`.** раньше их было две
+(эффект + копия в `handleSeek`), и они делили ОДИН `discordTimerRef`, поэтому
+взаимно отменяли дебаунс друг друга. копия в seek отличалась ещё и логикой: при
+`!discordRpc` делала `return` вместо `discordClear`, и `isPlaying` брала из
+`isPlayingRef`, а не из state. сейчас `handleSeek` только обновляет
+`discordProgressRef` и зовёт `pushDiscord(400)`.
+
+два вызова: эффект с дебаунсом **800мс** и seek с **400мс**.
+
+**deps эффекта — `[pushDiscord, track?.id, track?.coverUrl, track?.duration, isPlaying, scPlayingTrack, settings.discordRpc, settings.discordTimestamp, settings.discordPause, settings.discordCover]`.** по одному
+`track?.id` нельзя: `coverUrl` у локальных приезжает асинхронно
+(`loadCovers`), `duration` уточняется в `loadedmetadata` — а дискорд сам
+activity не перерисовывает, и неверные данные висели бы весь трек. `pushDiscord`
+в списке нужен отдельно: переименование трека (`commitEdit`) создаёт новый
+объект с новым `title` при неизменных id/coverUrl/duration, и без него эффект
+держал бы старое замыкание.
+
+**обложка уходит в main без гейта.** https-ссылки (SoundCloud) дискорд тянет
+сам. локальные — это **data-url** (`getCoverArt`), и их раньше резал гейт
+`startsWith('https://')` в main, то есть тумблер «обложка» на всей локальной
+библиотеке был no-op. now: `data:image` передаётся как есть + `coverKey =
+track.id`, дальше main грузит.
+
+**`rpcWanted` — отдельный state, а не `settings.discordRpc` напрямую.**
+`null` = настройки ещё не прочитаны. при `null` шлём `false`: дефолт
+`discordRpc:true` в state иначе успевал увести main в connect, и пользователь с
+выключенным RPC получал лишний connect/disconnect на каждом запуске. реальное
+значение ставит загрузка настроек (`saved?.discordRpc !== false`).
+
+**`discordProgressRef` обнуляется вместе с `progressRef`** при смене трека.
+иначе на неигрющем треке (пауза, ошибка загрузки) `timeupdate` не придёт и в
+присутствие уедет прогресс предыдущего.
+
+**`cleanDiscordSettings(s)`** — нормализация по образцу `cleanLyricsSources`,
+в той же миграции настроек. без неё мусорное значение из `settings.json`
+(например `'Progress'`) уезжало в main как есть: в UI не подсвечивался ни один
+чип, а в main `ts === 'progress'` давало false и режим молча проваливался в
+`elapsed`.
+
+**статус подключения** приходит из main событием `discord-status`
+(`off`|`connecting`|`connected`|`disconnected`) и рисуется строкой с точкой в
+карточке Discord. раньше все ошибки глотались пустым `catch`, и «всё работает»
+выглядело так же, как «Discord не запущен» — см. «тихий catch» выше.
+
+**чипы таймстампа/паузы** получили гард `if (active) return` — как сегмент
+акцента. клик по уже активному чипу больше не переписывает `settings.json`.
+
+в main (`main.js:12-241`):
+
+```
+discord-rpc-enabled (send)  — решение на подключение, а не «обновить присутствие».
+                              тумблер = вкл/выкл сокет. initDiscord() из
+                              whenReady убран: rpc выключен — а сокет уже открыт,
+                              и включить его было нельзя без перезапуска
+withTimeout(p, ms)          — ВСЕ rpc-вызовы обёрнуты. Client.request()
+                              резолвится только по ответу с совпавшим nonce,
+                              таймаута в библиотеке нет: зависший дискорд держал
+                              before-quit (с preventDefault!) вечно, то есть
+                              приложение не закрывалось ни через трей, ни крестиком
+connectDiscord()            — ready/disconnected/login-fail → scheduleDiscordReconnect
+                              с backoff 1.5с→30с. раньше 'disconnected' просто
+                              ставил флаг, и rpc мёрт до перезапуска приложения
+teardownDiscordClient()     — removeAllListeners перед destroy: destroy() сам эмитит
+                              'disconnected', иначе ui мигал «соединение потеряно»
+                              на КАЖДОМ переподключении
+discordQueued / discordBusy — буфер последней activity + сериализация отправки.
+                              переживает «присутствие ушло раньше handshake» —
+                              иначе первый трек (тем более при autoplay) не
+                              показывался до следующего изменения состояния
+```
+
+**`buildActivity`:**
+
+| поле        | значение                                                          |
+|-------------|-------------------------------------------------------------------|
+| `type: 2`   | Listening — заголовок «Слушает `name`»                             |
+| `name`      | **артист**. раньше не передавался вовсе → дискорд подставлял имя зарегистрированного приложения, отсюда «Слушает SoundCloud» |
+| `details`   | название трека                                                     |
+| `state`     | **нет**                                                           |
+| `largeImageText` | **нет**                                                      |
+| `largeImageKey` | https-ссылка как есть; data-url → загруженный `external:…`     |
+
+⚠️ **третьей строки нет намеренно.** `state` и `largeImageText` клиент рисует
+в одном и том же слоте под `details`, и артист уже стоит в заголовке — с
+любым из них он дублируется («Слушает X / Название / X»). проверено на живом
+клиенте: с `state` строка была, с одним `largeImageText` строка тоже была.
+итог — ровно две строки, Spotify-раскладка. потерян тултип на обложке,
+это цена отсутствия дубля.
+
+таймстемпы — **только на PLAYING** (`d.isPlaying && dur > 0 && ts !== 'none'`),
+и это не «оптимизация»:
+
+⚠️ **заморозить таймер на паузе нельзя.** discord считает прошедшее как
+`Date.now() - start` у себя, каждую секунду. `startTimestamp` — это якорь в
+прошлом, поэтому цифра продолжает тикать мимо остановленной музыки. единственный
+способ — убрать timestamps совсем. вариант «отдать только start на паузе»
+был попыткой заморозить — он не замораживал, а просто врал.
+
+| режим      | на игре                                     | на паузе     |
+|------------|---------------------------------------------|--------------|
+| `progress` | start + end → «прошло / всего», тикает с 0:00 | таймера нет |
+| `elapsed`  | только start → «прошло», тикает с 0:00        | таймера нет |
+| `none`     | ничего → остаётся одно название трека         | таймера нет |
+
+на паузе карточка остаётся (если `discordPause:'show'`) — пропадает именно
+таймер.
+
+🚧 **`none` не работает в клиенте, и это не наша дыра.** проверено на живом
+клиенте: при `ts:'none'` payload чистый, timestamps не отправляются вообще
+(`sent:"none"` в логе) — а клиент всё равно рисует замершие `0:00`. он держит
+**собственный** якорь от прошлой activity и не сбрасывает его, потому что
+новая activity приходит уже без timestamps. `clearActivity` перед `setActivity`
+не помог, поэтому режим оставлен как есть, а не «починен» наугад. чинить
+иначе нечем: сброса состояния на стороне RPC-клиента нет.
+
+`[discord] set` — одна строка на push (`ts`/`playing`/`dur`/`pr`/`sent`).
+без неё «в дискорде таймер, а мы его не отправляли» и «отправляем, а он не
+рисует» неразличимы, и приходится гадать. сырой hex фреймов — только за
+`SEWER_RPC_DEBUG`.
+
+**локальные обложки** (`rpcAssetKey`) — `INITIATE_IMAGE_UPLOAD` → POST →
+`largeImageKey = 'external:' + upload_filename`. ⚠️ команда **недокументированная**
+(в библиотеке помечена «may not even be correct»), поэтому вся функция
+деградирует в `null` на любом сбое — это ровно то же, что было до её
+появления, просто нет картинки. кеш `coverKey → external:…` в `rpcAssets`,
+потолок `RPC_ASSET_LIMIT = 250` на сессию (дискорд держит ~300 активных
+ассетов на приложение, и загруженные не исчезают). сперва пробует сырые
+байты, при не-2xx — multipart c `payload_json`+`file`.
 
 ### `App` — лейаут плеера
 

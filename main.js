@@ -10,54 +10,265 @@ let win
 let tray = null
 
 // Discord RPC
-let discordClient = null
-let discordReady  = false
+//
+// присутствие собирает renderer и отдаёт сюда готовым payload'ом; здесь
+// только транспорт. состояние хранится явно, потому что ТРИ независимые
+// вещи могут быть не готовы в разное время: сокет, handshake ('ready')
+// и сам ответ SET_ACTIVITY.
 
-async function initDiscord() {
+const RPC_CLIENT_ID   = '1501214545136586792'
+const RPC_APP_NAME    = 'seWer'
+/* дискорд держит ~300 активных ассетов на приложение (docs: «Up to 300
+   custom assets»), и загруженные не исчезают — поэтому потолок на
+   сессию, а не «грузим каждый трек заново» */
+const RPC_ASSET_LIMIT = 250
+
+let discordClient   = null
+let discordReady    = false
+let discordWanted   = false
+let discordConnecting = false
+let discordRetryTimer  = null
+let discordRetryDelay  = 1500
+/* последняя activity: переживает и неготовый сокет, и очередь */
+let discordQueued   = null
+let discordBusy     = false
+/* cache обложек: coverKey → 'external:…'. локальные треки дают data-url,
+   который дискорд не берёт — его надо один раз загрузить */
+const rpcAssets     = new Map()
+const rpcUploading  = new Map()
+
+function discordStatus(s) {
+  try { win?.webContents.send('discord-status', s) } catch {}
+}
+
+/* Client.request() резолвится ТОЛЬКО по ответу с совпавшим nonce — таймаута
+   в библиотеке нет. без этой обёртки зависший дискорд (а pipe полуоткрыт)
+   держал before-quit вечно, а он с preventDefault — то есть приложение
+   вообще не закрывалось ни через трей, ни через крестик */
+function withTimeout(p, ms) {
+  return Promise.race([
+    Promise.resolve(p).catch(() => undefined),
+    new Promise(r => { const t = setTimeout(r, ms); t.unref?.() }),
+  ])
+}
+
+function scheduleDiscordReconnect() {
+  if (!discordWanted || discordRetryTimer) return
+  discordRetryTimer = setTimeout(() => {
+    discordRetryTimer = null
+    connectDiscord()
+  }, discordRetryDelay)
+  discordRetryDelay = Math.min(discordRetryDelay * 2, 30000)
+}
+
+/* снос клиента без его собственных слушателей: destroy() сам эмитит
+   'disconnected', и на обычном переподключении ui мигал бы «соединение
+   потеряно» за 200мс до «подключение» */
+async function teardownDiscordClient() {
+  const c = discordClient
+  discordClient = null
+  if (!c) return
+  try { c.removeAllListeners?.() } catch {}
+  await withTimeout(c.user?.clearActivity(), 1500)
+  await withTimeout(c.destroy(), 1500)
+}
+
+async function connectDiscord() {
+  if (discordConnecting || discordReady || !discordWanted) return
+  discordConnecting = true
+  discordStatus('connecting')
   try {
     const { Client } = await import('@xhayper/discord-rpc')
-    discordClient = new Client({ clientId: '1501214545136586792' })
-    discordClient.on('ready',        () => { discordReady = true })
-    discordClient.on('disconnected', () => { discordReady = false })
+    await teardownDiscordClient()
+    discordClient = new Client({ clientId: RPC_CLIENT_ID })
+    discordClient.on('ready', () => {
+      discordReady = true
+      discordRetryDelay = 1500
+      discordStatus('connected')
+      /* присутствие, ушедшее до handshake, не выбрасываем — иначе первый
+         же трек (тем более при autoplay) не показывался до следующего
+         изменения состояния */
+      if (discordQueued) { const q = discordQueued; discordQueued = null; discordPush(q) }
+    })
+    /* рестарт дискорда / сон ноутбука / сеть. раньше здесь просто ставился
+       флаг и rpc мёрт до перезапуска приложения */
+    discordClient.on('disconnected', () => {
+      discordReady = false
+      discordStatus('disconnected')
+      scheduleDiscordReconnect()
+    })
+    /* сырой hex каждого фрейма в консоль — мусор. включается только явно */
+    if (process.env.SEWER_RPC_DEBUG) discordClient.on('debug', m => console.log('[discord]', m))
     await discordClient.login()
-  } catch {}
+  } catch (e) {
+    discordReady = false
+    discordStatus('disconnected')
+    console.warn('[discord] login failed:', e?.message || e)
+    scheduleDiscordReconnect()
+  } finally {
+    discordConnecting = false
+  }
 }
+
+async function disconnectDiscord() {
+  if (discordRetryTimer) { clearTimeout(discordRetryTimer); discordRetryTimer = null }
+  discordReady  = false
+  discordQueued = null
+  discordStatus('off')
+  await teardownDiscordClient()
+}
+
+ipcMain.on('discord-rpc-enabled', (_, on) => {
+  const want = !!on
+  if (want === discordWanted) return
+  discordWanted = want
+  if (want) connectDiscord()
+  else disconnectDiscord()
+})
 
 ipcMain.handle('set-login-item', (_, enable) => {
   app.setLoginItemSettings({ openAtLogin: !!enable, name: 'seWer' })
 })
 
-ipcMain.handle('discord-update', async (_, data) => {
-  if (!discordReady || !discordClient?.user) return
-  try {
-    const details = String(data.title  || '').slice(0, 128).padEnd(2, ' ')
-    const state   = String(data.artist || '').slice(0, 128).padEnd(2, ' ')
-    const activity = {
-      type: 2,
-      details,
-      state,
+function dataUrlToBuffer(dataUrl) {
+  const comma = dataUrl.indexOf(',')
+  if (comma < 0) return null
+  const head = dataUrl.slice(5, comma)            /* 'image/jpeg;base64' */
+  if (!head.includes('base64')) return null
+  return { buf: Buffer.from(dataUrl.slice(comma + 1), 'base64'), mime: head.split(';')[0] }
+}
+
+/* обложка → ключ для assets.large_image.
+   https — поддерживаемый путь, дискорд тянет её сам.
+   data-url (локальные файлы) приходится загружать: RPC-команда
+   INITIATE_IMAGE_UPLOAD в библиотеке помечена как недокументированная, так
+   что на любом сбое возвращаем null — это ровно то же поведение, что было
+   до поддержки локальных обложек (просто нет картинки) */
+async function rpcAssetKey(coverUrl, coverKey) {
+  if (!coverUrl) return null
+  if (coverUrl.startsWith('https://')) return coverUrl
+  if (!coverUrl.startsWith('data:image') || !coverKey) return null
+  if (!discordReady || !discordClient?.user) return null
+  if (rpcAssets.has(coverKey)) return rpcAssets.get(coverKey)
+  if (rpcAssets.size >= RPC_ASSET_LIMIT) return null
+  if (rpcUploading.has(coverKey)) return rpcUploading.get(coverKey)
+
+  const job = (async () => {
+    const parsed = dataUrlToBuffer(coverUrl)
+    if (!parsed?.buf.length) return null
+    const res = await withTimeout(discordClient.user.initiateImageUpload(), 8000)
+    const url     = res?.upload_url
+    const remote  = res?.upload_filename
+    if (!url || !remote) { console.warn('[discord] asset: unexpected upload shape', res); return null }
+    const put = (body, headers) => fetch(url, { method: 'POST', headers, body })
+    /* сперва сырые байты, при не-2xx — multipart (так делает discord-rich-presence) */
+    let r = await withTimeout(put(parsed.buf, { 'Content-Type': parsed.mime }), 15000)
+    if (!r?.ok) {
+      const fd = new FormData()
+      fd.append('payload_json', JSON.stringify({ name: 'seWer-cover' }))
+      fd.append('file', new Blob([parsed.buf], { type: parsed.mime }), `${coverKey}.jpg`)
+      r = await withTimeout(fetch(url, { method: 'POST', body: fd }), 15000)
     }
-    if (data.coverUrl?.startsWith('https://')) {
-      activity.largeImageKey = data.coverUrl
+    if (!r?.ok) { console.warn('[discord] asset upload failed:', r?.status); return null }
+    const key = 'external:' + remote
+    rpcAssets.set(coverKey, key)
+    return key
+  })().catch(e => { console.warn('[discord] asset:', e?.message || e); return null })
+                .finally(() => rpcUploading.delete(coverKey))
+
+  rpcUploading.set(coverKey, job)
+  return job
+}
+
+function buildActivity(d, largeImageKey) {
+  const title  = String(d.title  || '').trim()
+  const artist = String(d.artist || '').trim()
+  const dur = Number(d.duration) || 0
+  const pr  = Number.isFinite(d.progress) ? Math.max(0, d.progress) : 0
+  const ts  = d.timestamp || 'progress'
+
+  const activity = {
+    /* type 2 = Listening: заголовок присутствия — «Слушает <name>».
+       раньше name не передавался вовсе, и дискорд подставлял имя
+       зарегистрированного приложения — отсюда «Слушает SoundCloud».
+       Spotify-вариант «Слушает <артист>» = name: artist */
+    type: 2,
+    name:    (artist || title || RPC_APP_NAME).slice(0, 128).padEnd(2, ' '),
+    details: title.slice(0, 128).padEnd(2, ' '),
+  }
+  if (largeImageKey) {
+    activity.largeImageKey = largeImageKey
+  }
+  /* ТОЛЬКО на PLAYING, и это не «оптимизация»:
+     discord считает прошедшее как Date.now() - start КАЖДУЮ секунду, на
+     своей стороне. заморозить таймер на паузе нельзя — только убрать. со
+     startTimestamp на паузе цифра продолжала бы тикать мимо музыки.
+     режим 'none' убирает таймер и на игре — остаётся одно название трека. */
+  if (d.isPlaying && dur > 0 && ts !== 'none') {
+    const start = Math.floor(Date.now() - pr * dur * 1000)
+    activity.startTimestamp = start
+    if (ts === 'progress') {
+      activity.endTimestamp = Math.floor(start + dur * 1000)
     }
-    if (data.isPlaying && data.duration > 0 && (data.timestamp || 'progress') !== 'none') {
-      const elapsed = Math.max(0, data.progress) * data.duration * 1000
-      const now = Date.now()
-      const ts = data.timestamp || 'progress'
-      if (ts === 'progress') {
-        activity.startTimestamp = Math.floor(now - elapsed)
-        activity.endTimestamp   = Math.floor(now - elapsed + data.duration * 1000)
-      } else {
-        activity.startTimestamp = Math.floor(now - elapsed)
+  }
+  return activity
+}
+
+/* сериализованная отправка: setActivity и загрузка обложки — await'ы, и без
+   флага два быстрых изменения состояния давали бы две параллельные
+   setActivity, где побеждает не та, что последняя */
+function discordPush(data) {
+  if (!discordWanted) return
+  discordQueued = data
+  if (discordBusy) return
+  discordBusy = true
+  ;(async () => {
+    try {
+      while (discordQueued) {
+        const d = discordQueued
+        discordQueued = null
+        if (!discordReady || !discordClient?.user) { discordQueued = d; break }
+        try {
+          const key = await rpcAssetKey(d.coverUrl, d.coverKey)
+          /* пока грузили обложку, мог прийти свежий payload — старый не шлём */
+          if (discordQueued) continue
+          const act = buildActivity(d, key)
+          /* одна строка на push: без неё «в дискорде таймер, а мы его не
+             отправляли» неразличимо. сырой hex фреймов — за SEWER_RPC_DEBUG */
+          console.log('[discord] set', JSON.stringify({
+            ts: d.timestamp, playing: d.isPlaying, dur: d.duration,
+            pr: +Number(d.progress || 0).toFixed(3),
+            sent: act.startTimestamp ? 'start' : 'none',
+          }))
+          await discordClient.user.setActivity(act)
+        } catch (e) {
+          console.warn('[discord] setActivity:', e?.message || e)
+        }
       }
+    } finally {
+      discordBusy = false
     }
-    await discordClient.user.setActivity(activity)
-  } catch {}
+  })()
+}
+
+ipcMain.handle('discord-update', async (_, data) => {
+  if (!discordWanted || !data) return
+  discordPush({
+    title:     data.title,
+    artist:    data.artist,
+    duration:  Number(data.duration) || 0,
+    progress:  data.progress,
+    coverUrl:  String(data.coverUrl || ''),
+    coverKey:  String(data.coverKey || ''),
+    isPlaying: !!data.isPlaying,
+    timestamp: data.timestamp,
+  })
 })
 
 ipcMain.handle('discord-clear', async () => {
+  discordQueued = null
   if (!discordReady || !discordClient?.user) return
-  try { await discordClient.user.clearActivity() } catch {}
+  await withTimeout(discordClient.user.clearActivity(), 2000)
 })
 
 const AUDIO_EXTS = new Set(['.mp3', '.flac', '.ogg', '.wav', '.m4a', '.aac', '.opus', '.wma'])
@@ -635,7 +846,8 @@ ipcMain.handle('sc-download-track', async (_, t) => {
 app.whenReady().then(() => {
   createWindow()
   createTray()
-  initDiscord()
+  /* discord НЕ поднимается здесь: решение принимает тумблер в настройках,
+     renderer шлёт 'discord-rpc-enabled' после загрузки настроек */
   globalShortcut.register('MediaPlayPause',     () => win?.webContents.send('media-play-pause'))
   globalShortcut.register('MediaNextTrack',     () => win?.webContents.send('media-next'))
   globalShortcut.register('MediaPreviousTrack', () => win?.webContents.send('media-prev'))
@@ -644,9 +856,11 @@ app.whenReady().then(() => {
 app.once('before-quit', async (event) => {
   event.preventDefault()
   globalShortcut.unregisterAll()
+  discordWanted = false
+  if (discordRetryTimer) { clearTimeout(discordRetryTimer); discordRetryTimer = null }
   try {
-    if (discordReady && discordClient?.user) await discordClient.user.clearActivity()
-    if (discordClient) await discordClient.destroy()
+    if (discordReady && discordClient?.user) await withTimeout(discordClient.user.clearActivity(), 1500)
+    if (discordClient) await withTimeout(discordClient.destroy(), 1500)
   } catch {}
   app.exit(0)
 })

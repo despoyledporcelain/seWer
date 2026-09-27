@@ -32,5 +32,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   discordUpdate:    (data) => ipcRenderer.invoke('discord-update', data),
   discordClear:     ()     => ipcRenderer.invoke('discord-clear'),
+  /* решение на подключение, а не просто обновление присутствия: main держит
+     сокет открытым ровно пока тумблер включён (send, не invoke — ответ не нужен) */
+  discordSetEnabled: (on)  => ipcRenderer.send('discord-rpc-enabled', !!on),
+  onDiscordStatus:   (cb) => {
+    const fn = (_e, s) => cb(s);
+    ipcRenderer.on('discord-status', fn);
+    return () => ipcRenderer.removeListener('discord-status', fn);
+  },
   setLoginItem:     (enable) => ipcRenderer.invoke('set-login-item', enable),
 })
