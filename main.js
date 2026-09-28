@@ -233,13 +233,6 @@ function discordPush(data) {
           /* пока грузили обложку, мог прийти свежий payload — старый не шлём */
           if (discordQueued) continue
           const act = buildActivity(d, key)
-          /* одна строка на push: без неё «в дискорде таймер, а мы его не
-             отправляли» неразличимо. сырой hex фреймов — за SEWER_RPC_DEBUG */
-          console.log('[discord] set', JSON.stringify({
-            ts: d.timestamp, playing: d.isPlaying, dur: d.duration,
-            pr: +Number(d.progress || 0).toFixed(3),
-            sent: act.startTimestamp ? 'start' : 'none',
-          }))
           await discordClient.user.setActivity(act)
         } catch (e) {
           console.warn('[discord] setActivity:', e?.message || e)

@@ -106,7 +106,7 @@
   ::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.07); border-radius:2px; }
   .scroll-thin::-webkit-scrollbar { width:8px; }
   .scroll-thin::-webkit-scrollbar-track { background:transparent; margin:10px 0; }
-  .scroll-home::-webkit-scrollbar-track { margin-top:82px; margin-bottom:18px; }
+  .scroll-home::-webkit-scrollbar-track { margin-top:68px; margin-bottom:18px; }
   .scroll-thin::-webkit-scrollbar-thumb {
     background:rgba(255,255,255,0.09);
     border-radius:4px;
@@ -124,16 +124,17 @@
      вертикальная черта во всю высоту панели. Вместо «полосы как
      индикация» добавлены ещё градиенты по краям (mask у LyricsPanel) —
      как у VirtualTrackList в библиотеке. */
-  .scroll-fade::-webkit-scrollbar { width:6px; }
-  .scroll-fade::-webkit-scrollbar-track { background:transparent; }
-  .scroll-fade::-webkit-scrollbar-thumb {
-    background:transparent; border-radius:3px;
-    border:2px solid transparent; background-clip:content-box;
-    min-height:28px; transition:background 0.25s ease;
-  }
-  .scroll-fade.on::-webkit-scrollbar-thumb,
-  .scroll-fade:hover::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.16); }
-  .scroll-fade.on::-webkit-scrollbar-thumb:hover { background:rgba(255,255,255,0.34); }
+  /* Полосы нет вообще, но скролл живёт — панель текста песни. Раньше был
+     класс `.scroll-fade`: полоса прозрачна, вспыхивал на 900мс после скролла
+     и под курсором. Мешала читать, поэтому убрана вместе с состоянием
+     `scrolling` и таймером — они гоняли ререндер панели после каждого
+     скролла ради строчки, которой уже нет. Края теперь держит mask
+     (см. LyricsPanel) — как у VirtualTrackList в библиотеке.
+     `scrollbar-width` — стандарт, `::-webkit-scrollbar` — потому что
+     приложение всё равно на chromium. ширину НЕ обнуляем через width:0
+     (колесо и перетаскивание работают и с нулевой), а прячем через display */
+  .scroll-none { scrollbar-width:none; -ms-overflow-style:none; }
+  .scroll-none::-webkit-scrollbar { display:none; width:0; height:0; }
   input::placeholder { color:rgba(255,255,255,0.2); }
   input { caret-color:var(--accent); }
   input::selection { background:rgba(255,255,255,0.18); color:inherit; }
@@ -271,6 +272,19 @@ function cleanDiscordSettings(s) {
   s.discordTimestamp  = DISCORD_TS.includes(s.discordTimestamp)    ? s.discordTimestamp    : 'progress';
   s.discordPause      = DISCORD_PAUSE.includes(s.discordPause)     ? s.discordPause        : 'show';
   return s;
+}
+
+/* Локальные переименования sc-треков. мусор из старого/битого settings.json
+   (не-объект, пустые значения, не-строки) выкидываем: иначе в SC_TITLES
+   попадёт id → undefined и трек останется без названия */
+function cleanScTitles(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const k in raw) {
+    const v = raw[k];
+    if (typeof v === 'string' && v.trim()) out[k] = v.trim();
+  }
+  return out;
 }
 
 /* ── lyrics fetching ──────────────────────────────────────────────────────── */
@@ -937,12 +951,46 @@ function scHashColor(id) {
   return `hsl(${Math.abs(h) % 360},48%,38%)`;
 }
 
+/* Локальные переименования sc-треков: id → title.
+   Живёт на уровне модуля (приём `LIVE_ACCENT`), потому что `mapScTrack` —
+   единственная точка, где создаются треки soundcloud: лайки, поиск,
+   плейлисты, станции. Она не видит `settings`, а переименование должно
+   выживать и после перезагрузки кэша лайков, и после нового поиска.
+   В КЭШ НА ДИСК НЕ ПИШЕМ: кэш хранит то, что отдал soundcloud, иначе
+   следующая загрузка вернула бы переименованное как «настоящее» и отмена
+   правки стала бы невозможной. Это чисто локальная подмена поверх ответа. */
+const SC_TITLES = new Map();
+
+/* ⚠️ КЛЮЧ ВСЕГДА СТРОКА. id у sc-трека — ЧИСЛО (`t.id` из ответа soundcloud),
+   а в settings.json ключ объекта — строка, и `for...in` тоже даёт строки.
+   `Map` сравнивает ключи по типу: `has(2300654447)` против `'2300654447'` —
+   всегда false. Симптом был обманчив: переименование жило до перезапуска
+   (там ключ ещё число), а после — откатывалось, потому что ключ стал строкой.
+   Поэтому `String(...)` на каждом обращении, а не «где-то». */
+const scTitleKey = (id) => String(id);
+function scTitleOf(id) {
+  return SC_TITLES.get(scTitleKey(id));
+}
+
+/* Подставить переименования в готовые sc-треки.
+   Нужна там, где треки приходят МИМО mapScTrack — а это дисковый кэш
+   лайков: initScLikes кладёт его в state как есть, и без этой функции
+   переименование после перезапуска просто исчезало. */
+function applyScTitles(list) {
+  if (!SC_TITLES.size || !Array.isArray(list)) return list;
+  return list.map(t => {
+    if (!t) return t;
+    const title = scTitleOf(t.id);
+    return title ? { ...t, title } : t;
+  });
+}
+
 function mapScTrack(t, noTitle) {
   const progressive = t.media?.transcodings?.find(tc => tc.format?.protocol === 'progressive');
   const hls = t.media?.transcodings?.find(tc => tc.format?.protocol === 'hls');
   return {
     id: t.id,
-    title: t.title || noTitle || '—',
+    title: scTitleOf(t.id) || t.title || noTitle || '—',
     artist: t.publisher_metadata?.artist || t.user?.username || '',
     /* publisher_metadata.artist = настоящий исполнитель, uploader — часто
        канал/лейбл. различаем, иначе разбор «X - Y» лезет в имя трека */
@@ -1233,6 +1281,7 @@ const STRINGS = {
     likes:'Лайки', all_tracks:'Все треки',
     loading_dots:'загружаем...', updating:'обновляем...',
     search_short:'поиск',
+    search_hinted:'поиск  (Ctrl+F)',
     sort_added:'по дате', sort_artist:'по артисту', sort_title:'по названию', sort_dur:'по длине',
     welcome_title:'добро пожаловать в seWer',
     welcome_sub:'выбери папку с локальной музыкой\nили войди в soundcloud чтобы начать',
@@ -1282,6 +1331,7 @@ const STRINGS = {
     accent_off_title:'Свечения выключены', accent_off_sub:'Фоновые свечения скрыты, акцент — статичный серый',
     sec_lyrics:'Текст песен',
     sec_discord:'Discord',
+    shuffle_all:'Случайно', shuffle_empty:'Нечего перемешивать',
     lyrics_sources:'Источники текста', lyrics_sources_sub:'Сверху вниз — в этом порядке ищется текст песни',
     lyrics_off:'Выключенные', lyrics_synced:'синхронный',
     lyrics_up:'Выше по списку', lyrics_down:'Ниже по списку',
@@ -1343,6 +1393,7 @@ const STRINGS = {
     likes:'Likes', all_tracks:'All tracks',
     loading_dots:'loading...', updating:'updating...',
     search_short:'search',
+    search_hinted:'search  (Ctrl+F)',
     sort_added:'by date', sort_artist:'by artist', sort_title:'by title', sort_dur:'by length',
     welcome_title:'welcome to seWer',
     welcome_sub:'choose a local music folder\nor log in to soundcloud to start',
@@ -1392,6 +1443,7 @@ const STRINGS = {
     accent_off_title:'Glow disabled', accent_off_sub:'Background glows hidden, accent is flat gray',
     sec_lyrics:'Lyrics',
     sec_discord:'Discord',
+    shuffle_all:'Shuffle', shuffle_empty:'Nothing to shuffle',
     lyrics_sources:'Lyrics sources', lyrics_sources_sub:'Top to bottom — lyrics are searched in this order',
     lyrics_off:'Turned off', lyrics_synced:'synced',
     lyrics_up:'Move up', lyrics_down:'Move down',
@@ -2143,6 +2195,77 @@ function NavIcon({ icon, label, active, onClick, size=38, noActiveBg=false }) {
   );
 }
 
+/* Кнопка/плашка «случайно». две формы одного:
+     icon — квадратная, в ряд чипов (плейлист) и рядом с поиском в плеере
+     pill — широкая, с подписью: главный экран и шапка плеера
+   иконка assets/shuffle.png — та же, что в кнопках плеера, только ей
+   нельзя красить currentColor, поэтому фильтр brightness(0) invert(1) +
+   opacity, как у heart0/note.png. активное состояние — живой акцент. */
+function ShuffleBtn({ on, onClick, variant='icon', label, disabled, h=26, field=false, style }) {
+  const t = useLang();
+  const body = (
+    <img src="../assets/shuffle.png" style={{
+      width: variant === 'pill' ? 13 : (field ? 13 : 12), height: variant === 'pill' ? 13 : (field ? 13 : 12),
+      filter:'brightness(0) invert(1)', display:'block',
+      opacity: disabled ? 0.25 : on ? 0.8 : (field ? 0.4 : 0.5),
+      transition:'opacity 0.18s ease',
+    }}/>
+  );
+  /* вкл/выкл — ТОЛЬКО заливкой и яркостью иконки. рамка выглядела
+     чужеродно: в приложении ни одно поле не обведено, состояние везде
+     обозначают фоном. актив заливкой accent читается и без обводки.
+     заливка намеренно слабая (.10): на .20 живой акцент от обложки светил,
+     и кнопка выглядела включённой лампой и била по глазам */
+  const onBg = disabled ? 'transparent' : 'rgba(var(--accent-rgb), 0.10)';
+  if (variant === 'icon') {
+    /* field=true — рядом с поиском в плеере: та же высота, радиус и фон поля,
+       иначе кнопка выглядит мелкой заплатой на одной линии с инпутом */
+    const r = Math.round(h * 0.32);
+    const idleBg = field ? 'rgba(255,255,255,0.04)' : 'transparent';
+    const hovBg  = field ? 'rgba(255,255,255,0.065)' : 'rgba(255,255,255,0.07)';
+    return (
+      <div title={label || t('shuffle_all')} onClick={disabled ? undefined : onClick}
+        style={{
+          width:h, height:h, borderRadius:r, flexShrink:0,
+          display:'flex', alignItems:'center', justifyContent:'center',
+          cursor: disabled ? 'default' : 'pointer',
+          background: on ? onBg : idleBg,
+          transition:'background 0.18s',
+          ...style,
+        }}
+        onMouseEnter={e => { if (!disabled) e.currentTarget.style.background = on ? onBg : hovBg; }}
+        onMouseLeave={e => { e.currentTarget.style.background = on ? onBg : idleBg; }}>
+        {body}
+      </div>
+    );
+  }
+  return (
+    <div title={label || t('shuffle_all')} onClick={disabled ? undefined : onClick}
+      style={{
+        display:'flex', alignItems:'center', gap:8, flexShrink:0,
+        height:h, padding:'0 16px', borderRadius:Math.round(h * 0.32),
+        cursor: disabled ? 'default' : 'pointer', userSelect:'none',
+        background: on ? onBg : 'rgba(255,255,255,0.05)',
+        transition:'background 0.2s ease',
+        ...style,
+      }}
+      onMouseEnter={e => {
+        if (disabled) return;
+        e.currentTarget.style.background = on ? onBg : 'rgba(255,255,255,0.085)';
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.background = on ? onBg : 'rgba(255,255,255,0.05)';
+      }}>
+      {body}
+      <span style={{
+        fontSize:'var(--fs-xs)', fontWeight:500, letterSpacing:'0.03em', whiteSpace:'nowrap',
+        color: disabled ? 'rgba(255,255,255,0.18)' : on ? 'var(--accent)' : 'rgba(255,255,255,0.42)',
+        transition:'color 0.2s ease',
+      }}>{t('shuffle_all')}</span>
+    </div>
+  );
+}
+
 /* ── TrackRow ────────────────────────────────────────────────────────────── */
 const TrackRow = React.memo(function TrackRow({ track, isActive, isLoading, isError, onClick, onContextMenu }) {
   const t = useLang();
@@ -2877,8 +3000,6 @@ function LyricsPanel({ open, inPlayer, state, activeLine, onSeek, onRetry, onBac
   const userScrollRef = useRef(0);
   const autoUntilRef  = useRef(0);
   const wasOpenRef    = useRef(false);
-  const scrollHideRef = useRef(null);
-  const [scrolling, setScrolling] = useState(false);
   /* края храним в ref + чиним через счётчик: меняются они на каждом
      скролле, а ререндер ради двух булевых значений не нужен — маска
      применяется стилем, а состояние нужно только чтобы перерисовалось */
@@ -2924,7 +3045,6 @@ function LyricsPanel({ open, inPlayer, state, activeLine, onSeek, onRetry, onBac
   useEffect(() => {
     if (state?.status !== 'loading') return;
     if (bodyRef.current) { bodyRef.current.scrollTop = 0; forceEdges() }
-    setScrolling(false);
   }, [state, forceEdges]);
 
   /* края пересчитываются не только на скролле: контент мог смениться,
@@ -2944,7 +3064,7 @@ function LyricsPanel({ open, inPlayer, state, activeLine, onSeek, onRetry, onBac
     sync();
     const ro = new ResizeObserver(sync);
     ro.observe(el);
-    return () => { ro.disconnect(); clearTimeout(scrollHideRef.current) };
+    return () => { ro.disconnect() };
   }, [open, state, forceEdges]);
 
   /* при открытии — сразу к активной строке. плавно прокручивать через весь
@@ -2977,11 +3097,6 @@ function LyricsPanel({ open, inPlayer, state, activeLine, onSeek, onRetry, onBac
         forceEdges();
       }
     }
-    /* показать полосу на время скролла, потом погасить */
-    setScrolling(true);
-    clearTimeout(scrollHideRef.current);
-    scrollHideRef.current = setTimeout(() => setScrolling(false), 900);
-
     if (Date.now() < autoUntilRef.current) return;  /* это наша автопрокрутка */
     userScrollRef.current = Date.now();
   }, []);
@@ -3062,14 +3177,14 @@ function LyricsPanel({ open, inPlayer, state, activeLine, onSeek, onRetry, onBac
         </div>
       </div>
 
-      <div className={'scroll-fade' + (scrolling ? ' on' : '')} ref={bodyRef} onScroll={onBodyScroll}
+      <div className="scroll-none" ref={bodyRef} onScroll={onBodyScroll}
         style={{
           flex:1, minHeight:0, overflowY:'auto',
           display:'flex', flexDirection:'column',
           padding:'0 14px 10px', marginTop:12,
           /* градиенты у краёв — индикация «есть что прокрутить», как в
-             VirtualTrackList. полоса при этом появляется лишь на время
-             скролла, а не висит постоянно */
+             VirtualTrackList. полосы нет (`.scroll-none`), так что это
+             единственный намёк, что список продолжается */
           maskImage, WebkitMaskImage: maskImage,
           transition: 'mask-image 0.2s ease, -webkit-mask-image 0.2s ease',
         }}>
@@ -4692,6 +4807,7 @@ const PlaylistEditor = React.forwardRef(function PlaylistEditor({ visible, playl
   const [loaded, setLoaded]   = useState(false);
   const [status, setStatus]   = useState('idle');   /* idle | saving | saved | error */
   const [tab, setTab]         = useState('recs');   /* recs | search */
+  const addSearchRef          = useRef(null);       /* для focusSearch() сверху */
   const [query, setQuery]     = useState('');
   const [results, setResults] = useState([]);
   const [recs, setRecs]       = useState(null);
@@ -4926,6 +5042,13 @@ const PlaylistEditor = React.forwardRef(function PlaylistEditor({ visible, playl
   React.useImperativeHandle(ref, () => ({
     /* App зовёт это при выходе мышиной кнопкой «назад» / через вкладки */
     requestClose: () => { if (dirtyRef.current) setExitGuard(true); else onClose(); },
+    /* ctrl+f должен приезжать сюда: редактор — полноэкранный оверлей, и без
+       этого хоткей уводил фокус в невидимый поиск под ним. вкладку
+       переключаем явно: иначе фокус уедет в поле, которого ещё нет в dom */
+    focusSearch: () => {
+      setTab('search');
+      requestAnimationFrame(() => addSearchRef.current?.focus());
+    },
   }), []);
   /* удаление плейлиста: подтверждение инлайном (🗑 → «удалить? ✓ ✕») */
   const [confirmDel, setConfirmDel] = useState(false);
@@ -5233,8 +5356,8 @@ const PlaylistEditor = React.forwardRef(function PlaylistEditor({ visible, playl
                     viewBox="0 0 24 24" style={{position:'absolute', left:12, top:'50%', translate:'0 -50%', pointerEvents:'none', color:'rgba(255,255,255,0.22)'}}>
                     <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
                   </svg>
-                  <input value={query} onChange={handleInput}
-                    placeholder={t('search_short')}
+                  <input ref={addSearchRef} value={query} onChange={handleInput}
+                    placeholder={t('search_hinted')}
                     style={{width:'100%', background:'none', border:'none', outline:'none',
                       padding:'8px 14px 8px 32px', color:'rgba(255,255,255,0.78)',
                       fontSize: 'var(--fs-sm)', fontFamily:'inherit'}}/>
@@ -5545,7 +5668,7 @@ const SearchView = React.forwardRef(function SearchView({ visible, scAuth, liked
           <input
             ref={inputRef}
             value={query} onChange={handleInput}
-            placeholder={T('search_ph')}
+            placeholder={T('search_hinted')}
             style={{
               width:'100%', background:'transparent', border:'none', outline:'none',
               padding:'15px 54px',
@@ -6056,7 +6179,7 @@ function App() {
   const [settings,      setSettings]      = useState({
     autoplay:false, crossfade:0, defaultRepeat:false,
     startWithWindows:false, minimizeToTray:false, musicFolder:'', downloadsFolder:'',
-    customTitles: {}, minDuration: 30, soundcloudAuth: null,
+    customTitles: {}, scTitles: {}, minDuration: 30, soundcloudAuth: null,
     sourceMode: 'local', discordRpc: true,
     discordTimestamp: 'progress', discordPause: 'show', discordCover: true,
     accentMode: 'color', accentPreset: 'default',
@@ -6166,6 +6289,8 @@ function App() {
   const playlistActiveRef = useRef(null); /* зеркало playlistActive для хендлеров вне рендера */
   const scShuffleOrderRef = useRef([]);
   const scShuffleIdxRef   = useRef(-1);
+/* «не пересобирать порядок» для эффекта [shuffle]: см. handleShuffleStart */
+const shuffleKeepRef    = useRef(false);
   const scPlayingTrackRef = useRef(null);
   const volumeRef         = useRef(0.7);
   const settingsRef       = useRef({});
@@ -6310,8 +6435,27 @@ function App() {
             /* те же ворота для rpc: без них мусорное значение из старого файла
                настроек уезжало в main как есть (см. cleanDiscordSettings) */
             cleanDiscordSettings(m);
+            m.scTitles = cleanScTitles(m.scTitles);
             return m;
           });
+          /* SC_TITLES заполняем СРАЗУ и СИНХРОННО, до всего, что зовёт
+             mapScTrack (лайки, папка, станция). mapScTrack — функция
+             модуля и settings не видит, а подмена должна попасть в трек уже
+             в момент его создания. берём из `saved`, а не из `settings`:
+             в этом замыкании settings ещё старое состояние, слитое значение
+             живёт только внутри апдейтера */
+          SC_TITLES.clear();
+          const st0 = cleanScTitles(saved.scTitles);
+          for (const id in st0) SC_TITLES.set(scTitleKey(id), st0[id]);
+          /* Гонка: лайки грузятся из кэша своим эффектом и могут прийти
+             РАНЬШЕ, чем прочитается settings.json — оба ждут ipc. Тогда в
+             момент вызова mapScTrack Map была пуста, и переименования
+             не оказалось. Переподставляем по месту. Кэш на диске НЕ трогаем
+             (там должен лежать оригинал, см. applyScTitles) */
+          if (SC_TITLES.size) {
+            setScTracks(prev => applyScTitles(prev));
+            setScPlayingTrack(p => (p ? applyScTitles([p])[0] : p));
+          }
           if (typeof saved.volume === 'number') {
             /* громкость живёт и отдельным state (её ест audio и кроссфейд), но
                хранится в settings — иначе каждый запуск сбрасывалась на 0.7 */
@@ -6487,14 +6631,17 @@ function App() {
     const handler = (e) => {
       if (e.ctrlKey && (e.key === 'f' || e.key === 'а')) {
         e.preventDefault();
-        if (view === 'search') { searchViewRef.current?.focus(); }
+        /* редактор плейлиста — оверлей поверх всего, и его поиск единственный
+           видимый: без этой ветки ctrl+f уводил фокус под оверлей */
+        if (view === 'playlistEditor' && editingPlaylist) { plEditorRef.current?.focusSearch?.(); }
+        else if (view === 'search') { searchViewRef.current?.focus(); }
         else if (view === 'player') { libSearchRef.current?.focus(); libSearchRef.current?.select(); }
         else { homeSearchRef.current?.focus(); homeSearchRef.current?.select(); }
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [view]);
+  }, [view, editingPlaylist]);
 
   /* единственная точка сборки присутствия. раньше таких было две (эффект
      ниже + копия внутри handleSeek) — они делили ОДИН discordTimerRef,
@@ -6560,18 +6707,82 @@ function App() {
   useEffect(() => () => window.electronAPI?.discordClear?.(), []);
 
   useEffect(() => {
-    if (shuffle) {
-      const cur = scPlayingTrackRef.current;
-      if (cur) {
-        const list = stationQueueRef.current || playlistQueueRef.current || searchQueueRef.current || (searchRef.current ? filteredScRef.current : scTracksRef.current);
-        scShuffleOrderRef.current = buildScShuffle(list, cur.id);
-        scShuffleIdxRef.current = 0;
-      }
-    } else {
+    if (!shuffle) {
       scShuffleOrderRef.current = [];
       scShuffleIdxRef.current = -1;
+      shuffleKeepRef.current = false;
+      return;
+    }
+    /* handleShuffleStart уже положил готовый порядок со случайным первым
+       треком. эффект [shuffle] в этот момент как раз срабатывает (false→true)
+       и пересобрал бы порядок от ТЕКУЩЕГО трека, выбросив выбор. флаг
+       ставится только когда переключение реально будет — если shuffle уже
+       включён, setShuffle(true) это no-op, эффект не запустится, и висящий
+       флаг сломал бы следующий ручной переключатель */
+    if (shuffleKeepRef.current) { shuffleKeepRef.current = false; return; }
+    const cur = scPlayingTrackRef.current;
+    if (cur) {
+      const list = activeQueueList();
+      scShuffleOrderRef.current = buildScShuffle(list, cur.id);
+      scShuffleIdxRef.current = 0;
     }
   }, [shuffle]);
+
+  /* список, из которого реально играет next/prev — тот же приоритет, что и
+     везде: станция > плейлист > очередь поиска > лайки. нужен кнопке
+     «случайно» в плеере, чтобы она перемешивала ИМЕННО то, что играет.
+     режим берём из settingsRef, а не из замыкания: эффект [shuffle] не
+     перезапускается на смене режима и держал бы старый */
+  function activeQueueList() {
+    const s = settingsRef.current;
+    const sc = (s?.soundcloudAuth && s?.sourceMode === 'sc') ? 'sc' : 'local';
+    if (sc === 'sc') {
+      return stationQueueRef.current || playlistQueueRef.current || searchQueueRef.current
+        || (searchRef.current ? filteredScRef.current : scTracksRef.current);
+    }
+    return searchRef.current ? filteredRef.current : tracks;
+  }
+
+  /* переключатель режима, а не «перемешать ещё раз». второй клик ВЫКЛЮЧАЕТ
+     shuffle: порядок сбрасывает эффект [shuffle], и дальше next идёт в обычном
+     порядке. включение — как handleShuffleStart: случайный трек + переход в
+     плеер. список приходит с места нажатия, потому что он у всех трёх кнопок
+     разный (лайки / активная очередь / треки плейлиста) */
+  function handleShuffleToggle(list) {
+    if (shuffle) { setShuffle(false); return; }
+    handleShuffleStart(list);
+  }
+
+  /* «случайно»: перемешать переданный список, включить первый случайный трек
+     и уйти в плеер. список приходит снаружи — по нажатию не угадать, что
+     имеется в виду: с главного экрана это лайки, в плеере — активная очередь,
+     в чипе плейлиста — треки плейлиста */
+  function handleShuffleStart(list) {
+    const pool = (list || []).filter(Boolean);
+    if (!pool.length) { showToast(t('shuffle_empty')); return; }
+    if (!shuffle) shuffleKeepRef.current = true;
+    setShuffle(true);
+    const s = settingsRef.current;
+    const sc = (s?.soundcloudAuth && s?.sourceMode === 'sc') ? 'sc' : 'local';
+    if (sc === 'sc') {
+      const order = buildScShuffle(pool, null);
+      scShuffleOrderRef.current = order;
+      scShuffleIdxRef.current = 0;
+      const first = pool.find(tr => tr.id === order[0]) || pool[0];
+      handleScTrackClick(first, -1, true, 0, -1);
+    } else {
+      const cur = tracks[trackIdx];
+      let n; do { n = Math.floor(Math.random() * pool.length); } while (pool[n] === cur && pool.length > 1);
+      const at = tracks.indexOf(pool[n]);
+      if (at >= 0) { setTrackIdx(at); setIsPlaying(true); }
+    }
+    /* уводим в плеер без hero-анимации: клика по карточке не было, и
+       искать artRef для случайного трека незачем */
+    setHomeVisible(false);
+    setPlayerVisible(true);
+    setView('player');
+    setNavActive('library');
+  }
 
   function handleNext() {
     if (repeat === 'one') {
@@ -6698,13 +6909,40 @@ function App() {
     prevSearchRef.current = search;
   }, [search]);
 
+  /* Переименование sc-трека. ЛОКАЛЬНОЕ: на soundcloud ничего не уходит,
+     переименование живёт в settings.scTitles и подмешивается в mapScTrack.
+     Обновляем всё, где трек уже лежит объектом, иначе подмена видна только
+     в следующей загрузке лайков, а не сразу: текущий (он же `track` в
+     плеере и в discord rpc), сетка лайков, плейлист, станция, очередь поиска */
+  const renameScTrack = (id, title) => {
+    SC_TITLES.set(scTitleKey(id), title);
+    setSettings(s => ({ ...s, scTitles: { ...s.scTitles, [id]: title } }));
+    const withTitle = t => (t && t.id === id ? { ...t, title } : t);
+    setScPlayingTrack(p => (p ? withTitle(p) : p));
+    setScTracks(prev => prev.map(withTitle));
+    setPlaylistActive(p => (p ? { ...p, tracks: p.tracks.map(withTitle) } : p));
+    setStationActive(p => (p ? { ...p, tracks: p.tracks.map(withTitle) } : p));
+    if (searchQueueRef.current) searchQueueRef.current = searchQueueRef.current.map(withTitle);
+    if (playlistQueueRef.current) playlistQueueRef.current = playlistQueueRef.current.map(withTitle);
+    if (stationQueueRef.current)  stationQueueRef.current  = stationQueueRef.current.map(withTitle);
+    const c = scCacheMapRef.current.get(id);
+    if (c) scCacheMapRef.current.set(id, { ...c, title });
+  };
+
   const commitEdit = () => {
     const trimmed = editValue.trim();
+    /* пустая строка — отмена правки, а не «трек без названия» */
     if (trimmed) {
-      setTracks(prev => prev.map((t, i) => i === trackIdx ? { ...t, title: trimmed } : t));
-      const path = tracks[trackIdx]?.path;
-      if (path) {
-        setSettings(s => ({ ...s, customTitles: { ...s.customTitles, [path]: trimmed } }));
+      const sc = scPlayingTrackRef.current;
+      /* `track = scPlayingTrack || tracks[trackIdx]`, поэтому если играет
+         sc-трек, то и подпись в плеере, и коммит — это он. Отдельной
+         проверки «локальный ли» не нужно: у локального scPlayingTrack пуст */
+      if (sc) {
+        if (sc.title !== trimmed) renameScTrack(sc.id, trimmed);
+      } else {
+        setTracks(prev => prev.map((t, i) => i === trackIdx ? { ...t, title: trimmed } : t));
+        const path = tracks[trackIdx]?.path;
+        if (path) setSettings(s => ({ ...s, customTitles: { ...s.customTitles, [path]: trimmed } }));
       }
     }
     setEditingTitle(false);
@@ -6907,7 +7145,11 @@ function App() {
       scCacheRef.current = cache;
       scCacheMapRef.current = new Map(cache.map(t => [t.id, t]));
       const cachedCovers = await window.electronAPI.scCheckCovers(cache.map(t => t.id));
-      const withCovers = cache.map(t => cachedCovers[t.id] ? { ...t, coverUrl: cachedCovers[t.id] } : t);
+      /* applyScTitles обязателен: кэш идёт в state напрямую, минуя mapScTrack,
+         поэтому переименования в нём не было и после перезапуска название
+         откатывалось к оригиналу */
+      const withCovers = applyScTitles(
+        cache.map(t => cachedCovers[t.id] ? { ...t, coverUrl: cachedCovers[t.id] } : t));
       setScTracks(withCovers);
       setScLoading(false);
       loadScCovers(withCovers.filter(t => t.coverUrl && !t.coverUrl.startsWith('file:')));
@@ -8001,66 +8243,76 @@ function App() {
         {(
           <div ref={homeScrollRef} className="scroll-thin scroll-home" style={{
             position:'absolute', top:0, left:0, right:10, bottom:0,
-            overflowY:'auto', padding:'32px 4px 32px 36px',
+            overflowY:'auto', padding:'18px 4px 32px 36px',
             opacity: homeVisible ? 1 : 0,
             transition: 'opacity 0.18s ease',
             pointerEvents: homeVisible ? 'auto' : 'none',
           }}>
-            {!showWelcome && <div style={{display:'flex', alignItems:'center', gap:16, marginBottom:24}}>
-              <div style={{fontSize: 'var(--fs-sm)', fontWeight:500, color:'rgba(255,255,255,0.22)',
-                letterSpacing:'0.06em', textTransform:'uppercase', flexShrink:0}}>
-                {sourceMode === 'sc' ? t('likes') : t('all_tracks')}
+            {!showWelcome && <div style={{
+              display:'flex', alignItems:'center', gap:14, marginBottom:22,
+            }}>
+              {/* порядок: подпись слева, поиск по центру, действие справа */}
+              <div style={{flexShrink:0, lineHeight:1.3}}>
+                <div style={{fontSize: 'var(--fs-eyebrow)', fontWeight:500, color:'rgba(255,255,255,0.22)',
+                  letterSpacing:'0.12em', textTransform:'uppercase'}}>
+                  {sourceMode === 'sc' ? t('likes') : t('all_tracks')}
+                </div>
+                {sourceMode === 'sc' && (scLoading || scUpdating) ? (
+                  <div style={{fontSize:'var(--fs-eyebrow)', color:'rgba(255,255,255,0.32)', marginTop:2}}>
+                    {scLoading ? t('loading_dots') : t('updating')}
+                  </div>
+                ) : (sourceMode === 'sc' ? scTracks.length : tracks.length) > 0 ? (
+                  <div style={{fontSize:'var(--fs-eyebrow)', color:'rgba(255,255,255,0.16)',
+                    marginTop:2, fontVariantNumeric:'tabular-nums'}}>
+                    {sourceMode === 'sc' ? scTracks.length : tracks.length}
+                  </div>
+                ) : null}
               </div>
-              {sourceMode === 'sc' && scLoading && (
-                <div style={{fontSize: 'var(--fs-xs)', color:'rgba(255,255,255,0.32)'}}>{t('loading_dots')}</div>
-              )}
-              {sourceMode === 'sc' && !scLoading && scUpdating && (
-                <div style={{fontSize: 'var(--fs-xs)', color:'rgba(255,255,255,0.32)'}}>{t('updating')}</div>
-              )}
-              {sourceMode === 'sc' && !scLoading && !scUpdating && scTracks.length > 0 && (
-                <div style={{fontSize: 'var(--fs-xs)', color:'rgba(255,255,255,0.16)'}}>{scTracks.length}</div>
-              )}
               {sourceMode === 'sc' && scError && (
-                <div style={{fontSize: 'var(--fs-xs)', color:'rgba(255,80,60,0.75)', maxWidth:320, lineHeight:1.5, wordBreak:'break-all'}}>
+                <div style={{fontSize: 'var(--fs-xs)', color:'rgba(255,80,60,0.75)', maxWidth:240, lineHeight:1.5, wordBreak:'break-all', flexShrink:0}}>
                   {scError} — <span style={{cursor:'pointer', textDecoration:'underline'}}
                     onClick={() => loadScLikes(settings.soundcloudAuth)}>{t('retry')}</span>
                 </div>
               )}
+              {/* обёртка flex:1 центрирует поле между подписью и кнопкой —
+                  на самом инпуте flex:1 прижимал его влево */}
+              <div style={{flex:1, display:'flex', justifyContent:'center', minWidth:0}}>
               <div style={{
                 position:'relative',
                 background: searchFocused ? 'rgba(255,255,255,0.065)' : 'rgba(255,255,255,0.04)',
-                borderRadius:11, flex:1, maxWidth:240,
+                borderRadius:13, width:'100%', maxWidth:400, flexShrink:0,
                 transition:'background 0.18s',
               }}>
-                <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2"
-                  viewBox="0 0 24 24" style={{position:'absolute', left:13, top:'50%', translate:'0 -50%', pointerEvents:'none', color: searchFocused ? 'rgba(255,255,255,0.38)' : 'rgba(255,255,255,0.22)', transition:'color 0.18s'}}>
-                  <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
-                </svg>
-                <input
-                  ref={homeSearchRef}
-                  type="text"
-                  placeholder={t('search_short')}
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  onFocus={() => setSearchFocused(true)}
-                  onBlur={() => setSearchFocused(false)}
-                  style={{
-                    background:'transparent', border:'none', outline:'none',
-                    padding:'7px 32px',
-                    color:'rgba(255,255,255,0.78)', fontSize: 'var(--fs-sm)',
-                    width:'100%', userSelect:'text', fontFamily:'inherit', textAlign:'center',
-                  }}
-                />
-                {search && (
-                  <div onClick={() => setSearch('')} style={{
-                    position:'absolute', right:13, top:'50%', translate:'0 -50%',
-                    color:'rgba(255,255,255,0.28)', cursor:'pointer',
-                    fontSize: 'var(--fs-lg)', lineHeight:1, transition:'color 0.15s',
-                  }}>×</div>
-                )}
+                  <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2"
+                    viewBox="0 0 24 24" style={{position:'absolute', left:13, top:'50%', translate:'0 -50%', pointerEvents:'none', color: searchFocused ? 'rgba(255,255,255,0.38)' : 'rgba(255,255,255,0.22)', transition:'color 0.18s'}}>
+                    <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+                  </svg>
+                  <input
+                    ref={homeSearchRef}
+                    type="text"
+                    placeholder={t('search_hinted')}
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    onFocus={() => setSearchFocused(true)}
+                    onBlur={() => setSearchFocused(false)}
+                    style={{
+                      background:'transparent', border:'none', outline:'none',
+                      padding:'10px 34px',
+                      color:'rgba(255,255,255,0.78)', fontSize: 'var(--fs-sm)',
+                      width:'100%', userSelect:'text', fontFamily:'inherit', textAlign:'center',
+                    }}
+                  />
+                  {search && (
+                    <div onClick={() => setSearch('')} style={{
+                      position:'absolute', right:14, top:'50%', translate:'0 -50%',
+                      color:'rgba(255,255,255,0.28)', cursor:'pointer',
+                      fontSize: 'var(--fs-lg)', lineHeight:1, transition:'color 0.15s',
+                    }}>×</div>
+                  )}
+              </div>
               </div>
               {sourceMode !== 'sc' && (
-                <div style={{display:'flex', gap:3, marginLeft:'auto'}}>
+                <div style={{display:'flex', gap:3, flexShrink:0}}>
                   {[['added',t('sort_added')],['artist',t('sort_artist')],['title',t('sort_title')],['duration',t('sort_dur')]].map(([k,label]) => (
                     <button key={k} onClick={() => setSort(k)} style={{
                       background: sort===k ? 'rgba(255,255,255,0.07)' : 'none',
@@ -8074,6 +8326,9 @@ function App() {
                   ))}
                 </div>
               )}
+              <ShuffleBtn variant="pill" h={38} on={shuffle} style={{alignSelf:'center'}}
+                onClick={() => handleShuffleToggle(sourceMode === 'sc' ? scTracks : tracks)}
+                disabled={(sourceMode === 'sc' ? scTracks.length : tracks.length) === 0}/>
             </div>}
             {showWelcome ? (
               <div style={{
@@ -8303,6 +8558,9 @@ function App() {
                     overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
                   }}>{playlistActive.playlist.title}</div>
                 </div>
+                <ShuffleBtn variant="icon" on={shuffle} title={t('shuffle_all')}
+                  onClick={() => handleShuffleToggle(playlistActive.tracks)}
+                  disabled={!playlistActive.tracks.length}/>
                 {playlistActive.playlist.isOwn && (
                   <div onClick={() => handleOpenPlEditor(playlistActive.playlist, 'player')}
                     title={t('pl_edit')} style={{
@@ -8339,8 +8597,12 @@ function App() {
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               transition={{ duration: 0.16 }}
               style={{padding:'12px 10px 8px', flexShrink:0}}>
+              {/* поиск + кнопка «случайно» в ряд. поиск отдал ей ширину
+                  (flex:1 при фиксированной кнопке справа) — колонка 260px,
+                  иначе инпут сжимался бы в ничто */}
+              <div style={{display:'flex', alignItems:'center', gap:6}}>
               <div style={{
-                position:'relative',
+                position:'relative', flex:1, minWidth:0,
                 background: searchFocused ? 'rgba(255,255,255,0.065)' : 'rgba(255,255,255,0.04)',
                 borderRadius:11,
                 transition:'background 0.18s',
@@ -8355,9 +8617,9 @@ function App() {
                   onChange={e=>setSearch(e.target.value)}
                   onFocus={() => setSearchFocused(true)}
                   onBlur={() => setSearchFocused(false)}
-                  placeholder={t('search_short')}
+                  placeholder={t('search_hinted')}
                   style={{width:'100%', background:'none', border:'none', outline:'none',
-                          padding:'9px 32px',
+                          padding:'10px 34px',
                           color:'rgba(255,255,255,0.78)', fontSize: 'var(--fs-sm)', fontFamily:'inherit', textAlign:'center'}}/>
                 {search && (
                   <div onClick={() => setSearch('')} style={{
@@ -8366,6 +8628,8 @@ function App() {
                     fontSize: 'var(--fs-lg)', lineHeight:1, transition:'color 0.15s',
                   }}>×</div>
                 )}
+              </div>
+              <ShuffleBtn variant="icon" field h={38} on={shuffle} onClick={() => handleShuffleToggle(activeQueueList())}/>
               </div>
             </motion.div>
           )}

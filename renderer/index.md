@@ -6,6 +6,30 @@
 - **Tab отключён** (`window keydown → preventDefault`) — фокус-рамка не бегает по вкладкам/кнопкам, десктоп-поведение
 - **нативный drag выключен** (`* { -webkit-user-drag: none }`) — обложки/иконки/кнопки не таскаются; `*:focus { outline: none }` — без обводок после клика
 
+### проверка правок JSX (обязательно, ловит невидимое)
+
+**1. `/>` дважды подряд = текст на экране.** `Babel.transform` такого **не**
+считает ошибкой: лишний `/>` после самозамкнутого элемента попадает в
+`children` как текстовый узел и **рисуется на экране** — выглядит как
+«закрывающий тег вылез». компиляция проходит чисто, глазами в 8000 строк
+не видно. ловится только grep: `Select-String -Pattern '/>/>'` → пусто.
+на этом уже один раз «поехала» вёрстка плеера.
+
+**2. лишний/недостающий `</div>` = «Adjacent JSX elements must be wrapped in
+an enclosing tag»**, и babel указывает на **следующий** элемент, а не на
+место поломки. при правке «обернуть в div / снять обёртку» это первое, что
+ломается. сверять баланс: `open - close` по ходу файла должен вернуться в 0.
+
+**3. длинный `{/* … */}` комментарий (6+ строк) — риск.** при правке шапки
+главного экрана многострочный jsx-комментарий дал
+`Adjacent JSX elements must be wrapped` на элементе через 10 строк ниже, при
+идеально сбалансированных тегах. воспроизводилось нестабильно: тот же текст
+после соседней правки компилировался. вывод: длинные объяснения — в **эту
+карту**, в файле оставлять короткий комментарий. и **не** извлекать скрипт
+на проверку без явного `-Encoding UTF8`: `Get-Content -Raw` по умолчанию
+читает в однобайтовой кодировке и портит кириллицу, после чего падает уже
+не тот код.
+
 ### скрытые слои и hit-testing (инвариант)
 
 оба view (`home`/`player`) и все оверлеи **всегда смонтированы**, видимость — через `opacity` + `pointerEvents`. отсюда правило, которое легко нарушить:
@@ -62,7 +86,7 @@
 
 **анимации:** `breathe`, `spin`, `fadeInUp`, `fadeOutDown`, `artEntrance` (легаси — частично заменены Motion-компонентами), `likePop`+`likeGlow` (пружинный pop + accent-glow при лайке, классы `.like-pop .like-glow`; HomeCard/SearchTrackRow — remount по key, правило `.like-pop.like-glow` играет оба сразу; `body.glow-off` глушит glow-часть; в PlayerLikeBtn заменено на Motion — см. компонент), `stEq` (мини-эквалайзер станции, класс `.st-eq`, 3 столбика `var(--accent)`), `shimmer` (скелетоны, класс `.skel`, псевдоэлемент-свип, стаггер через `--skel-delay`)
 
-**скроллбары:** `.scroll-thin` (8px зона, 2px визуально), `.scroll-home` (отступы под хедер сетки), `.scroll-fade` (6px зона, полоса **прозрачна по умолчанию** — видна только на 900мс после скролла по классу `.on` или под курсором; используется в панели текста песни)
+**скроллбары:** `.scroll-thin` (8px зона, 2px визуально), `.scroll-home` (отступы под хедер сетки), `.scroll-none` (полосы нет вовсе, скролл живёт — панель текста песни)
 
 шрифт: **Proxima Soft** (`renderer/fonts/ProximaSoft-Bold.ttf`)
 
@@ -293,7 +317,69 @@ useLang()      — хук: возвращает t(key), читает LangContext
 компоненты вызывают `const t = useLang()` внутри себя.
 **исключение**: `SearchView` использует `const T = useLang()` — буква `t` занята переменной трека в `.map(t => ...)`.
 
-ключи добавленные в сессиях: `back`, `subscribe`, `subscribed`, `artist_label`, `follow_err`, `unfollow_err`, `copy_link`, `link_copied`, `copy_link_err`, `start_station`, `station_for`, `station_exit`, `station_label`, `station_err`, `accent_title`, `accent_sub`, `accent_default/lavender/mint/rose/amber/cover`, `accent_cover_sub`, `nav_playlists`, `playlists_empty`, `playlists_empty_sub`, `accent_seg_off`, `accent_seg_color`, `accent_off_title`, `accent_off_sub`, `pl_new_title`, `pl_create_err`, `pl_edit`, `pl_login_hint`, `ed_saving`, `ed_saved`, `ed_save_err`, `ed_add`, `ed_add_search`, `ed_add_recs`, `ed_added`, `ed_empty`, `ed_recs_empty`, `ed_rec_loading`, `ed_track_del`, `pl_count_1/2/5`, `add_to_pl`, `add_pl_new`, `added_to`, `pl_add_err`, `pl_list_err`, `ed_title_ph`, `ed_art_pick`, `ed_art_err`, `removed_from`, `pl_rm_err`, `pl_in`, `pl_out`, `pl_in_loading`, `sec_lyrics`, `lyrics_sources`, `lyrics_sources_sub`, `lyrics_off`, `lyrics_synced`, `lyrics_up`, `lyrics_down`, `lyrics_title`, `lyrics_back`, `lyrics_loading`, `lyrics_notfound`, `lyrics_notfound_sub`, `lyrics_err`, `lyrics_err_sub`, `lyrics_plain`, `lyrics_tap_line`, `lyrics_retry`, `lyrics_all_off`, `dl_save`, `dl_folder`, `dl_change`, `dl_name`, `dl_no_dir`, `dl_no_auth`, `dl_no_stream`, `dl_resolve`, `dl_not_audio`, `dl_resolving`, `dl_err`, `dl_wait`, `dl_ok`, `dl_no_tags`.
+ключи добавленные в сессиях: `back`, `subscribe`, `subscribed`, `artist_label`, `follow_err`, `unfollow_err`, `copy_link`, `link_copied`, `copy_link_err`, `start_station`, `station_for`, `station_exit`, `station_label`, `station_err`, `accent_title`, `accent_sub`, `accent_default/lavender/mint/rose/amber/cover`, `accent_cover_sub`, `nav_playlists`, `playlists_empty`, `playlists_empty_sub`, `accent_seg_off`, `accent_seg_color`, `accent_off_title`, `accent_off_sub`, `pl_new_title`, `pl_create_err`, `pl_edit`, `pl_login_hint`, `ed_saving`, `ed_saved`, `ed_save_err`, `ed_add`, `ed_add_search`, `ed_add_recs`, `ed_added`, `ed_empty`, `ed_recs_empty`, `ed_rec_loading`, `ed_track_del`, `pl_count_1/2/5`, `add_to_pl`, `add_pl_new`, `added_to`, `pl_add_err`, `pl_list_err`, `ed_title_ph`, `ed_art_pick`, `ed_art_err`, `removed_from`, `pl_rm_err`, `pl_in`, `pl_out`, `pl_in_loading`, `sec_lyrics`, `lyrics_sources`, `lyrics_sources_sub`, `lyrics_off`, `lyrics_synced`, `lyrics_up`, `lyrics_down`, `lyrics_title`, `lyrics_back`, `lyrics_loading`, `lyrics_notfound`, `lyrics_notfound_sub`, `lyrics_err`, `lyrics_err_sub`, `lyrics_plain`, `lyrics_tap_line`, `lyrics_retry`, `lyrics_all_off`, `dl_save`, `dl_folder`, `dl_change`, `dl_name`, `dl_no_dir`, `dl_no_auth`, `dl_no_stream`, `dl_resolve`, `dl_not_audio`, `dl_resolving`, `dl_err`, `dl_wait`, `dl_ok`, `dl_no_tags`, `sec_discord`, `shuffle_all`, `shuffle_empty`, `search_hinted`.
+
+### переименование трека (shift+клик по названию в плеере)
+
+`commitEdit` раздваивается по источнику:
+
+- **локальный** — по `path` в `settings.customTitles`, применение при скане
+  папки и при загрузке настроек
+- **sc** — по `id` в `settings.scTitles`, применение в **`mapScTrack`**
+
+`SC_TITLES` — module-level `Map` (`id → title`), приём `LIVE_ACCENT`.
+причина именно в модуле: `mapScTrack` — **единственная** точка, где
+создаются треки soundcloud (лайки, поиск, плейлисты, станции), и она не
+видит `settings`. подмена попадает в трек в момент его создания, поэтому
+переживает перезагрузку кэша лайков и любой новый поиск.
+
+⚠️ **в кэш на диск переименование НЕ пишется.** кэш хранит то, что отдал
+soundcloud; иначе следующая загрузка вернула бы переименованное как
+«настоящее» и отмена правки стала бы невозможной. это чисто локальная
+подмена поверх ответа, на самом soundcloud ничего не меняется.
+
+⚠️ **`id` у sc-трека — ЧИСЛО, а ключ в `settings.json` — СТРОКА. это стоило
+двух неверных «починок».** `SC_TITLES` — `Map`, а `Map` сравнивает ключи **по
+типу**: `has(2300654447)` против ключа `'2300654447'` — всегда `false`.
+симптом обманчив: переименование живо **до перезапуска** (ключ в Map ещё
+число, положен руками), а **после** — откатывается, потому что `for...in` по
+json-объекту даёт строки. поэтому все обращения идут через
+`scTitleKey(id) = String(id)` и `scTitleOf(id)`. сырых `SC_TITLES.get/set/has`
+в коде быть не должно.
+
+⚠️ **`mapScTrack` покрывает НЕ весь поток.** `initScLikes` при валидном кэше
+кладёт треки в state **напрямую** (`cache.map(...)` → `setScTracks`), не звая
+`mapScTrack` — а это самый частый путь (запуск с готовым кэшем). поэтому есть
+ещё `applyScTitles(list)` — подстановка в готовые треки; зовётся в ветке кэша
+и после гидратации `SC_TITLES`. **любой новый путь создания sc-треков обязан
+либо звать `mapScTrack`, либо `applyScTitles`.**
+
+проверка перед «готово»: `settings.json` содержит `scTitles` (запись живая) И
+`sc_likes.json` содержит **оригинальные** названия (подмена не затесалась в
+кэш). если в кэше уже переименованные — фикс сломан.
+
+`renameScTrack(id, title)` обновляет всё, где трек уже лежит объектом, иначе
+подмена видна только в следующей загрузке лайков: `scPlayingTrack` (он же
+`track` в плеере и в discord rpc), сетка лайков, `playlistActive.tracks`,
+`stationActive.tracks`, `searchQueueRef`, `playlistQueueRef`,
+`stationQueueRef`, `scCacheMapRef`. в discord попадает само собой: у
+`pushDiscord` в deps `pushDiscord`, он пересобирается на новом объекте трека.
+
+гидратация `SC_TITLES` при старте — **синхронно, до** любого `await` в
+загрузке настроек, иначе первый запуск покажет исходные названия. читать
+`saved.scTitles`, а **не** `settings.scTitles`: в том замыкании `settings`
+ещё старое состояние, слитое значение живёт только внутри апдейтера.
+
+плюс **страховка от гонки**: лайки грузятся своим эффектом и могут прийти из
+кэша раньше, чем прочитается `settings.json` (оба ждут ipc). тогда `Map` была
+пуста, и после заполнения переподставляем `applyScTitles` в `scTracks` и
+`scPlayingTrack`. кэш на диске при этом не трогаем.
+
+`cleanScTitles(raw)` — по образцу `cleanLyricsSources`: не-объект/массив → `{}`,
+пустые и не-строковые значения выкидываются (иначе `Map` получил бы
+`id → undefined` и трек остался бы без названия).
+
+**пустая строка = отмена правки**, а не «трек без названия» — `if (trimmed)`.
 
 ## ipc-мост (обновление)
 
@@ -354,6 +440,95 @@ div-based pill bar. высота **10px → 14px** при hover/drag (spring ove
 - каждый слой — **canvas**: кавер рисуется в битмап с уже скруглёнными углами (`ctx.roundRect(16*dpr)` + `clip` + `drawImage` cover-fit с запасом 1px, размер в device pixels). CSS-клипов на нём нет вообще — композитным слоям и растеризации нечего недоклипить, белые искорки в углах невозможны физически (углы битмапа прозрачные). перерисовка при ресайзе (ResizeObserver + window resize). битмапу не страшен image-cache eviction — visibilitychange-форсерелоад не нужен.
 - **retry до 2 раз** с задержкой 0.5с/1с при ошибке (cache-bust query string), после — слой удаляется, виден нижний/placeholder
 - eviction-защита не нужна: canvas-битмап не пропадает из кэша (это касалось только `<img>`).
+
+### `ShuffleBtn`
+`{ on, onClick, variant='icon'|'pill', label, disabled, h=26, field=false, style }`.
+иконка `assets/shuffle.png` — та же, что в кнопках плеера; картинке нельзя
+покрасить `currentColor`, поэтому `brightness(0) invert(1)` + `opacity`
+(приём `note.png`). активное состояние — живой акцент: фон
+`rgba(var(--accent-rgb),.16)`, бордер `.34`, подпись `var(--accent)`.
+
+- **pill** — 38px с подписью, главный экран
+- **icon** — квадрат в ряд чипов. `h` задаёт и размер, и радиус
+  (`round(h*0.32)`): у чипа это 26px/r8, у поля поиска 38px/r12
+- **field** (только с `icon`) — фон поля ввода вместо прозрачного. кнопка встаёт
+  в один ряд с поиском в плеере, и без этого читалась как мелкая заплата на
+  более высокой линии. по умолчанию `false` — в чипе плейлиста кнопка «тихая»
+
+### `App` — кнопка «случайно»
+
+**`handleShuffleToggle(list)`** — то, что стоит на всех трёх кнопках: это
+переключатель режима, а не «перемешать ещё раз». второй клик **выключает**
+shuffle (порядок сбрасывает эффект `[shuffle]`, дальше next идёт в обычном
+порядке), первый — включает через `handleShuffleStart`.
+
+`handleShuffleStart(list)` — перемешать переданный список, включить первый
+случайный трек, уйти в плеер **без hero-анимации** (клика по карточке не было,
+искать `artRef` незачем). список приходит снаружи, потому что по нажатию не
+угадать контекст:
+
+| где                | список                                        |
+|--------------------|-----------------------------------------------|
+| главный экран      | `scTracks` / `tracks` — **поиск игнорируется** |
+| плеер, у поиска    | `activeQueueList()`                           |
+| чип плейлиста      | `playlistActive.tracks`                       |
+
+`activeQueueList()` — тот же приоритет, что у `next`/`prev`:
+`станция > плейлист > очередь поиска > лайки`, иначе локальный список.
+режим (`sc`/`local`) читается из `settingsRef`, **не** из замыкания: эффект
+`[shuffle]` не перезапускается на смене режима и держал бы старый.
+
+⚠️ **`shuffleKeepRef` — обязателен.** эффект `[shuffle]` на `false→true`
+пересобирает порядок от **текущего** трека (`buildScShuffle(list, cur.id)`) и
+выбросил бы случайный старт. кнопка кладёт готовый порядок и поднимает флаг,
+эффект его съедает и выходит. флаг ставится **только если shuffle выключен**:
+при включённом `setShuffle(true)` это no-op, эффект не запустится, и висящий
+флаг сломал бы следующий ручной переключатель.
+
+**видимый порядок в списке не меняется** — перемешивается только порядок
+воспроизведения (список отсортирован своим сортом, и он продолжает им
+пользоваться). индикатор — сама плашка и подсветка кнопки shuffle в controls.
+
+**шапка главного экрана** — порядок `подпись+счётчик (слева) → поиск (по
+центру) → сортировка → «случайно» (справа)`. центрирование даёт обёртка
+`flex:1 + justifyContent:center` вокруг поля: на самом инпуте `flex:1`
+прижимал его влево. счётчик — **под** надписью (в одну строку «ЛАЙКИ 1315»
+читалось как одно слово). отступ сверху `18px` (было 32 — пустовато под
+тайтлбаром), у скроллбара correspondingly `margin-top:68px`.
+
+**высота поля поиска** — `padding:'10px 34px'` → ~38px, радиус 13. кнопки
+шафла подогнаны под ту же высоту: `h={38}`, радиус `round(h*0.32)`.
+
+**вкл/выкл у `ShuffleBtn` — только заливкой и яркостью иконки, без рамки.**
+рамка с `borderColor` выглядела чужеродно: в приложении ни одно поле не
+обведено, состояние везде обозначают фоном. выкл — `rgba(255,255,255,0.05)`
+и иконка `opacity .5`, вкл — `rgba(var(--accent-rgb), .10)` и иконка `.8`.
+
+⚠️ **заливка активного состояния держится на `.10`, и это не опечатка.** на
+`.20` живой акцент от обложки светил так, что кнопка выглядела включённой
+лампой и била по глазам. акцент тут берётся из цвета обложки, то есть
+может быть любым и очень ярким — поэтому активный фон намеренно еле
+заметный, а различает состояние в основном яркость иконки.
+
+**скроллбар панели текста песни** — класса `.scroll-none`: полосы нет
+(`scrollbar-width:none` + `::-webkit-scrollbar{display:none}`), скролл колесом
+работает. бывший `.scroll-fade` (полоса вспыхивала на 900мс после скролла и
+под курсором) удалён вместе со состоянием `scrolling`, `scrollHideRef` и
+таймером: они ререндерили панель после каждого скролла ради строчки, которой
+больше нет. границы прокрутки показывает `mask` — как у `VirtualTrackList`.
+
+### горячие клавиши
+
+**ctrl+f** (и русская «а») — фокус на поиск. маршрут по `view`:
+`playlistEditor` → `plEditorRef.focusSearch()` (через `useImperativeHandle`:
+переключает вкладку на «Поиск» и фокусит в rAF, потому что поля в dom ещё
+нет) / `search` → `searchViewRef` / `player` → `libSearchRef` / иначе
+`homeSearchRef`. ⚠️ без ветки редактора хоткей уводил фокус в **невидимый**
+поиск под полноэкранным оверлеем.
+
+в `placeholder` всех четырёх поисков — `search_hinted` («поиск  (Ctrl+F)»).
+подсказка стоит только там, где хоткей реально доезжает, поэтому работает на
+всех четырёх.
 
 ### `MagBtn`
 `{onClick, active, children, size=52}`. **motion.button** с `whileTap={{scale:0.82}}`, spring (600/22/0.4).
@@ -930,10 +1105,16 @@ discordQueued / discordBusy — буфер последней activity + сер�
 не помог, поэтому режим оставлен как есть, а не «починен» наугад. чинить
 иначе нечем: сброса состояния на стороне RPC-клиента нет.
 
-`[discord] set` — одна строка на push (`ts`/`playing`/`dur`/`pr`/`sent`).
-без неё «в дискорде таймер, а мы его не отправляли» и «отправляем, а он не
-рисует» неразличимы, и приходится гадать. сырой hex фреймов — только за
-`SEWER_RPC_DEBUG`.
+в консоль пишется **только ошибки** (`console.warn` на провале логина, на
+загрузке обложки, на `setActivity`). успешных пушей не логирует: на каждый
+`setActivity` строка в консоли — это шум, а толку в проде ноль. полный
+protocol-дамп (сырой hex каждого фрейма) — за `SEWER_RPC_DEBUG=1`, по
+умолчанию молчит.
+
+диагностика, которой здесь не хватало, делалась одноразово логом
+`[discord] set` (`ts`/`playing`/`dur`/`pr`/`sent`) — с ним сразу стало видно,
+что при `ts:'none'` payload чистый, а таймер рисует клиент. лог убран, вывод
+вписан в раздел про таймстемпы.
 
 **локальные обложки** (`rpcAssetKey`) — `INITIATE_IMAGE_UPLOAD` → POST →
 `largeImageKey = 'external:' + upload_filename`. ⚠️ команда **недокументированная**
