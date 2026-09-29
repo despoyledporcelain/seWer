@@ -2,7 +2,8 @@ const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('electronAPI', {
   minimize:          () => ipcRenderer.send('win-minimize'),
-  maximize:          () => ipcRenderer.send('win-maximize'),
+  /* разворачивания нет: окно фиксированного размера (resizable:false,
+     fullscreenable:false, maximizable:false) */
   close:             () => ipcRenderer.send('win-close'),
   selectMusicFolder: ()       => ipcRenderer.invoke('dialog-select-folder'),
   scanMusicFolder:   (folder, minDuration) => ipcRenderer.invoke('scan-music-folder', folder, minDuration),
