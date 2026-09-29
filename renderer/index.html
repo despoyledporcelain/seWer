@@ -67,10 +67,30 @@
      перерисовывался прямоугольник во всё окно ради пустого низа.
      Теперь бокс ограничен верхними 62% — та же картинка, вдвое меньше
      растрируемой площади. */
+  /* ❌ было `radial-gradient(ellipse 115% 115% at 50% -8%, accent 7%, …)`.
+     Это читалось как БЛОБ: пятно с центром в середине шапки, widest — по
+     центру, и на тёмном фоне оно выглядело не «светом сверху», а грязным
+     пятном, тем более что под ним сразу стоят иконки навигации.
+     светить нужно ОТ КРАЯ, а не из центра: линейный градиент от верхней
+     кромки вниз читается как верхняя подсветка, а узкая полоса в 1.5px —
+     как чёткая линия, а не размытость. оба приёма вместе дают цвет, но
+     без пятна. */
   #accent-top {
     position:absolute; left:0; right:0; top:0; height:62%;
     z-index:0; pointer-events:none;
-    background: radial-gradient(ellipse 115% 115% at 50% -8%, rgba(var(--accent-rgb), 0.07) 0%, transparent 52%);
+    background:
+      /* чёткая линия у самого верха — «цвет» как элемент, а не как засветка */
+      linear-gradient(to right,
+        transparent 0%,
+        rgba(var(--accent-rgb), 0.55) 18%,
+        rgba(var(--accent-rgb), 0.55) 82%,
+        transparent 100%) top / 100% 1.5px no-repeat,
+      /* мягкая подсветка сверху вниз: максимум у кромки, ноль к 46% */
+      linear-gradient(to bottom,
+        rgba(var(--accent-rgb), 0.085) 0%,
+        rgba(var(--accent-rgb), 0.038) 22%,
+        rgba(var(--accent-rgb), 0.012) 40%,
+        transparent 58%);
     opacity:0; transition:opacity 0.6s ease;
   }
   body.in-player:not(.glow-off) #accent-top { opacity:1; }
@@ -1464,6 +1484,32 @@ function prepareArtwork({ dataUrl, name }) {
   });
 }
 
+/* Разделитель артистов в SoundCloud часто без пробелов: «a,b», «a&b».
+   Раньше это уезжало в интерфейс как есть, и подряд стоящие имена
+   читались как одно («@emo3ater2000,@nowagz»). Разбирать строку заново
+   НЕЛЬЗЯ: `splitArtists` считает точку и амперсанд разделителями
+   (на проверенных примерах «R&B» → R + B, «Dr. Dre» → Dr + Dre, «A.B» → A
+   + B), то есть он годится для разбора кредитов, а не для показа имени.
+   Поэтому здесь только КОСМЕТИКА: ставим пробел вокруг запятой и ничего
+   больше не трогаем.
+
+   ⚠️ `&` и `.` намеренно НЕ трогаем. «R&B» — это одно название, и любая
+   попытка вставить пробел вокруг амперсанда разорвёт его надвое; в точке
+   сразу «Dr. Dre», «A.B.», номера вроде «S1.E2». Только запятая: в
+   отличие от них, перед запятой артист всегда заканчивается. */
+function formatArtistDisplay(str) {
+  return String(str || '')
+    /* серия запятых (пустой сегмент между ними) схлопывается в одну:
+       иначе «A,,B» превратилось бы в «A, , B» — висячая запятая посреди
+       строки выглядит хуже, чем было изначально */
+    .replace(/(?:\s*,\s*){2,}/g, ', ')
+    .replace(/\s*,\s*/g, ', ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+    /* запятая в конце строки — просто мусор, её убираем */
+    .replace(/,\s*$/, '');
+}
+
 function splitArtists(str) {
   if (!str) return [{ name: '', sep: null }];
   const re = /(\s*[&×,.]\s*|\s+(?:ft\.?|feat\.?|with|vs\.?)\s+)/gi;
@@ -2671,7 +2717,7 @@ const TrackRow = React.memo(function TrackRow({ track, isActive, isLoading, isEr
         <div style={{fontSize: 'var(--fs-sm)', fontWeight: isActive ? 700 : 500,
           color: isActive ? 'var(--accent)' : 'rgba(255,255,255,0.78)',
           whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{track.title}</div>
-        <div style={{fontSize: 'var(--fs-xs)', color:'rgba(255,255,255,0.26)', marginTop:1}}>{track.artist}</div>
+        <div style={{fontSize: 'var(--fs-xs)', color:'rgba(255,255,255,0.26)', marginTop:1}}>{formatArtistDisplay(track.artist)}</div>
       </div>
       <div style={{display:'flex', alignItems:'center', gap:7, flexShrink:0}}>
         <div style={{
@@ -3704,7 +3750,7 @@ const HomeCard = React.memo(function HomeCard({ track, onSelect, artRef, artHidd
         borderRadius:'16px 16px 0 0',
       }}>
         <div style={{fontSize: 'var(--fs-xs)', color:'rgba(255,255,255,0.3)', marginBottom:2,
-          whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{track.artist}</div>
+          whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{formatArtistDisplay(track.artist)}</div>
         <div style={{fontSize: 'var(--fs-sm)', fontWeight:500, color:'rgba(255,255,255,0.88)',
           whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{track.title}</div>
       </div>
@@ -5018,7 +5064,7 @@ function SearchTrackRow({ track, isLiked, onLike, onClick, onCoverClick, isLoadi
       {/* title + artist */}
       <div style={{flex:1, minWidth:0, cursor:'pointer'}} onClick={onClick}>
         <div style={{fontSize: 'var(--fs-md)', color:'rgba(255,255,255,0.86)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{track.title}</div>
-        <div style={{fontSize: 'var(--fs-xs)', color:'rgba(255,255,255,0.3)', marginTop:2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{track.artist}</div>
+        <div style={{fontSize: 'var(--fs-xs)', color:'rgba(255,255,255,0.3)', marginTop:2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{formatArtistDisplay(track.artist)}</div>
       </div>
       {/* stats — plays + duration */}
       <div style={{display:'flex', alignItems:'center', gap:14, flexShrink:0}}>
@@ -9560,7 +9606,7 @@ const shuffleKeepRef    = useRef(false);
                         </React.Fragment>
                       );
                     })
-                  : <span style={{ color:'rgba(255,255,255,0.28)' }}>{track.artist}</span>
+                  : <span style={{ color:'rgba(255,255,255,0.28)' }}>{formatArtistDisplay(track.artist)}</span>
                 }
               </div>
               {/* title */}
