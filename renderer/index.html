@@ -479,6 +479,111 @@ function titleVariants(artist, rawTitle) {
   for (const [a, t] of trackQueries(artist, rawTitle)) add(a ? `${a} ${t}` : t);
   for (const c of titleCandidates(rawTitle)) add(c);
   add(String(rawTitle || '').trim());   /* СЫРОЕ: с тире и эмодзи — иногда матчится лучше */
+
+  /* 🚨 ЛАТИНСКИЕ ТРАКТОВКИ идут ПОСЛЕ кириллических и со СВОИМ потолком.
+     Если сайт записал трек по-кириллице, первые запросы уже ответят и до
+     этих дело не дойдёт. А если по-латинице — до кириллических очередь
+     не дойдёт никогда, и без этого блока запросов трек не находится
+     вовсе. Свой потолок, а не общий TITLE_QUERY_CAP: иначе транскрипции
+     вытесняли бы собой исходные варианты, которые могут сработать лучше,
+     и мы бы теряли качество ради случая, который иначе не ловился бы
+     вообще. */
+  const LATIN_QUERY_CAP = 4;
+  const base = out.slice();
+  let latin = 0;
+  const addLatin = s => {
+    if (latin >= LATIN_QUERY_CAP) return;
+    const v = String(s || '').replace(/\s+/g, ' ').trim();
+    if (!v || base.includes(v) || out.includes(v)) return;
+    /* защита от бессмыслицы: строка без гласных — не название */
+    if (!/[aeiouy]/i.test(v.replace(/\P{L}/gu, ''))) return;
+    out.push(v); latin++;
+  };
+  for (const [a, t] of pairVariants(trackQueries(artist, rawTitle))) {
+    if (a) addLatin(`${a} ${t}`); else addLatin(t);
+  }
+  for (const c of titleCandidates(rawTitle)) for (const l of latinVariants(c)) addLatin(l);
+  return out;
+}
+
+/* ── Кириллица → латиница для поиска текста ────────────────────────────────
+   Проблема: в треке артист «@седьмоенебо», а на сайте он записан как
+   «@sedmoenebo». Ни один из трёх подходов по отдельности это не чинит:
+     • послать как есть — сайт не находит;
+     • транслитерировать только запрос — сайт найдёт, но `trackScore`
+       сравнивает результат с КИРИЛЛИЧЕСКИМ названием, `geniusNorm` оставляет
+       `\p{L}`, получается 0, и гейт `s > 0` отбрасывает ПРАВИЛЬНЫЙ трек;
+     • заменить кириллицу в самом треке — портит название, показываемое
+       пользователю, и ломает поиск по сайту, где кириллица есть.
+   Поэтому латиница добавляется как ЕЩЁ ОДНА ТРАКТОВКА трека — ровно так же,
+   как уже сделано с перевёрнутой расстановкой «артист/название». */
+const CYR_LATIN = {
+  'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'e','ж':'zh','з':'z',
+  'и':'i','й':'i','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r',
+  'с':'s','т':'t','у':'u','ф':'f','х':'kh','ц':'ts','ч':'ch','ш':'sh',
+  'щ':'shch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya',
+};
+/* Вторая схема отличается РОВНО ОДНИМ символом: «х» → h вместо kh.
+   В официальной транслитерации — kh, но в вокале/на обложках/в базах
+   LRCLib «х» пишут как h. Одной схемы на всё не хватает, а различает их
+   ровно одна буква, поэтому вторая схема почти ничего не стоит.
+   Проверено: «седьмоенебо» → sedmoenebo (совпадает с написанием на сайте),
+   «Королевский XVII» → korolevskii XVII, «Щедрик» → shchedrik,
+   «Съезд» → sezd (твёрдый знак схлопывается, как и на сайте). */
+const CYR_LATIN_H = { ...CYR_LATIN, 'х':'h' };
+/* ДВЕ регулярки, намеренно, а не одна с `g`:
+   • `CYR_RE_G` — с `g`, только для `replace` (иначе заменяется ПЕРВЫЙ
+     символ, а не все: «седьмоенебо» выходило «sедьмоенебо»);
+   • `CYR_RE` — БЕЗ `g`, только для `.test()`.
+   ⚠️ ровно поэтому их нельзя объединять: у регулярки с `g` состояние
+   `lastIndex` переживает вызов, и `.test()` начинает через раз возвращать
+   false на одной и той же строке — транслитерация молча включалась бы и
+   выключалась сама. */
+const CYR_RE_G = /[Ѐ-ӿ]/g;
+const CYR_RE   = /[Ѐ-ӿ]/;
+
+function translitCyr(s, map) {
+  return String(s || '').replace(CYR_RE_G, ch => {
+    const m = map[ch.toLowerCase()];
+    return m === undefined ? ch : m;
+  });
+}
+/* Латинские варианты строки. Пусто, если кириллицы нет — тогда строка уже
+   в том виде, в каком она на сайте, и трактовка ничего не добавит. */
+function latinVariants(s) {
+  const src = String(s || '');
+  if (!CYR_RE.test(src)) return [];
+  const out = [];
+  for (const v of [translitCyr(src, CYR_LATIN), translitCyr(src, CYR_LATIN_H)]) {
+    if (v && v !== src && !out.includes(v)) out.push(v);
+  }
+  return out;
+}
+/* Пара «артист / название» вместе с латинскими трактовками.
+   ⚠️ ПОРЯДОК: СНАЧАЛА ВСЕ исходные пары, и только потом латинские.
+   Порядок тут не косметика — `fetchLrclib` берёт первые N пар, и при
+   чередовании (базовая, её перевод, её перевод, следующая базовая…) в этот
+   срез попали бы три варианта ОДНОЙ пары, а выпала бы перевёрнутая
+   расстановка «название/артист» — ровно та, ради которой список и строится.
+   Знак @ и прочая пунктуация НЕ трогаются: на сайте артист именно
+   «@sedmoenebo», а для /api/get у LRCLib совпадение по имени точное. */
+function pairVariants(pairs) {
+  const out = [];
+  const seen = new Set();
+  const add = (a, t) => {
+    if (!a || !t) return;
+    const k = a + '/' + t;
+    if (seen.has(k)) return;
+    seen.add(k); out.push([a, t]);
+  };
+  for (const [a, t] of pairs) add(a, t);
+  for (const [a, t] of pairs) {
+    for (const ta of latinVariants(a)) for (const tt of latinVariants(t)) add(ta, tt);
+    /* случай «артист кириллицей, название латиницей» (и наоборот) — самый
+       частый на практике: переводят только одно из двух */
+    for (const ta of latinVariants(a)) add(ta, t);
+    for (const tt of latinVariants(t)) add(a, tt);
+  }
   return out;
 }
 
@@ -559,7 +664,20 @@ async function fetchLrclib(artist, title, duration) {
   /* Те же варианты, что и для Genius, но ТОЛЬКО ПЕРВЫЕ ДВА. /api/search у
      lrclib и так нечёткий, третий и четвёртый вариант почти ничего не дают,
      а стоят 2 запроса каждый: на висящем lrclib это до 96с ожидания. */
-  for (const [qa, qt] of trackQueries(artist, title).slice(0, 3)) {
+  /* Сначала 3 исходные трактовки (как было), затем до 2 латинских.
+     Порядок в pairVariants гарантирует, что в срез попадают именно
+     исходные, а не три варианта одной пары. Общий потолок вырос с 3 до 5:
+     это 10 запросов в худшем случае вместо 6, но идёт под общим дедлайном
+     fetchLyrics (9с), поэтому висящий источник всё равно не съест панель.
+     Без латинских пар трек вида «@седьмоенебо» не находится здесь вообще:
+     /api/get у LRCLib требует ТОЧНОГО имени, а не нечёткого совпадения. */
+  const lrPairs = pairVariants(trackQueries(artist, title));
+  const LRC_BASE = 3, LRC_LATIN = 2;
+  const lrcList = [
+    ...lrPairs.slice(0, LRC_BASE),
+    ...lrPairs.slice(LRC_BASE).filter(([a, t]) => CYR_RE.test(a + t)).slice(0, LRC_LATIN),
+  ];
+  for (const [qa, qt] of lrcList) {
     const params = new URLSearchParams({
       track_name: qt,
       artist_name: qa,
@@ -621,11 +739,15 @@ function geniusWordOverlap(a, b) {
 }
 /* Лучший score кандидата по ВСЕМ трактовкам трека. При развороте
    «Артист — Название» роли меняются местами, и сравнивать кандидата только с
-   исходными полями бессмысленно — он получит 0 вопреки точному совпадению. */
+   исходными полями бессмысленно — он получит 0 вопреки точному совпадению.
+   🚨 сюда обязаны входить и ЛАТИНСКИЕ транскрипции (pairVariants): сайт
+   записал артиста как «@sedmoenebo», а у нас он «@седьмоенебо». Без них
+   geniusScore честно возвращает 0 (строки не равны, слов нет), и гейт
+   `s > 0` в fetchGenius отбрасывает именно тот трек, который мы нашли. */
 function trackScore(cand, artist, title) {
   if (!cand) return 0;
   let best = 0;
-  for (const [a, t] of trackQueries(artist, title)) {
+  for (const [a, t] of pairVariants(trackQueries(artist, title))) {
     const s = geniusScore(cand, geniusNorm(a), geniusNorm(t));
     if (s > best) best = s;
   }
