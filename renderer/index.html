@@ -75,8 +75,25 @@
      кромки вниз читается как верхняя подсветка, а узкая полоса в 1.5px —
      как чёткая линия, а не размытость. оба приёма вместе дают цвет, но
      без пятна. */
+  /* Акцент верхней панели. ТРИ итерации до читаемого вида:
+     1) `radial-gradient(ellipse 115% 115% at 50% -8%)` — пятно с центром в
+        середине шапки, самое широкое ровно там, где иконки навигации.
+        Читалось не как свет сверху, а как грязное пятно.
+     2) линейный градиент ОТ КРОМКИ вниз — уже не пятно, а подсветка. но
+        бокс остался `height:62%` от высоты ОКНА, то есть ~430px при окне
+        700px: края уходили далеко в содержимое, и верх панели читался
+        единым полем с интерфейсом под ним.
+     3) элемент перенесён ВНУТРЬ `#titlebar` и ограничен `inset:0` — за
+        пределы панели он теперь не выходит физически, сколько бокс ни
+        растягивай.
+
+     ⚠️ ГРАДИЕНТ ГАСНЕТ ДО 100%, а не на 100% — по требованию: подсветка
+     не должна доходить до `border-bottom` и упираться в него. Ноль
+     альфы достигается на 78% высоты панели, а оставшиеся 22% — чистый
+     `--bg`. Иначе свет подходил вплотную к линии и панель выглядела
+     обрезанной по снизу. */
   #accent-top {
-    position:absolute; left:0; right:0; top:0; height:62%;
+    position:absolute; inset:0;
     z-index:0; pointer-events:none;
     background:
       /* чёткая линия у самого верха — «цвет» как элемент, а не как засветка */
@@ -85,12 +102,12 @@
         rgba(var(--accent-rgb), 0.55) 18%,
         rgba(var(--accent-rgb), 0.55) 82%,
         transparent 100%) top / 100% 1.5px no-repeat,
-      /* мягкая подсветка сверху вниз: максимум у кромки, ноль к 46% */
+      /* подсветка сверху вниз, обнуление на 78% — не доходит до границы */
       linear-gradient(to bottom,
         rgba(var(--accent-rgb), 0.085) 0%,
-        rgba(var(--accent-rgb), 0.038) 22%,
-        rgba(var(--accent-rgb), 0.012) 40%,
-        transparent 58%);
+        rgba(var(--accent-rgb), 0.045) 40%,
+        rgba(var(--accent-rgb), 0.014) 64%,
+        transparent 78%);
     opacity:0; transition:opacity 0.6s ease;
   }
   body.in-player:not(.glow-off) #accent-top { opacity:1; }
@@ -104,9 +121,13 @@
     border-bottom:1px solid rgba(255,255,255,0.018);
     transition: background 0.6s ease;
   }
+  /* ⚠️ контент панели — обязательно над подсветкой. `#titlebar` непрозрачен,
+     а `#accent-top` теперь его ребёнок: без `z-index:1` здесь абсолютно
+     позиционированный слой с `z-index:0` накрыл бы иконки и кнопки окон. */
   #topbar-slot {
     flex:1; height:100%; min-width:0;
     display:flex; align-items:center;
+    position:relative; z-index:1;
   }
   /* десктоп-поведение: ничего не таскается нативным drag'ом (обложки/иконки),
      фокус после клика не рисует обводок */
@@ -120,6 +141,8 @@
     display:flex; align-items:center; justify-content:center;
     color:rgba(255,255,255,0.22);
     transition:background 0.15s, color 0.15s;
+    /* над #accent-top, который теперь ребёнок #titlebar (см. выше) */
+    position:relative; z-index:1;
   }
   .win-btn:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.7); }
   .win-btn.close:hover { background:rgba(255,80,80,0.18); color:#ff6060; }
@@ -240,8 +263,8 @@
 <body>
 
 <div id="app-shell">
-<div id="accent-top"></div>
 <div id="titlebar">
+  <div id="accent-top"></div>
   <div id="topbar-slot"></div>
   <button class="win-btn" onclick="window.electronAPI.minimize()" title="Свернуть">
     <svg width="10" height="2" viewBox="0 0 10 2" fill="currentColor"><rect width="10" height="2" rx="1"/></svg>
