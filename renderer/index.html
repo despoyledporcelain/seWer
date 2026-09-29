@@ -8016,10 +8016,22 @@ const shuffleKeepRef    = useRef(false);
     const artEl = findArt();
     const par = playerArtRef.current?.getBoundingClientRect();
 
+    /* Клик по карточке того трека, что УЖЕ играет: НЕ перезапускать.
+       раньше здесь звался `startPlay()` безусловно, и для локального трека
+       это `progressRef.current = 0; setIsPlaying(true)` — то есть клик по
+       СЕБЕ перематывал трек в начало. для sc — полный резолв стрима и
+       перезагрузка `audio.src`. теперь только hero + переход, воспроизведение
+       не трогаем вообще (даже scPlayingTrack не сбрасываем).
+       `activeListPlayingId` — id играющего трека ВНУТРИ активного списка:
+       для sc это scPlayingTrack?.id, для local — track?.id при null
+       scPlayingTrack. если играет трек из ДРУГОГО источника (например в
+       режиме local выбран sc-трек), сигнал null и клик честно переключает. */
+    const isCurrent = t.id === activeListPlayingId;
+    if (!isCurrent) startPlay();
+
     if (artEl && par) {
       const startRect = artEl.getBoundingClientRect();
       const targetRect = { left: par.left, top: par.top, size: par.width };
-      startPlay();
       setHero({ track: t, startRect, targetRect, corners: cssCorners(artEl) });
       setHomeVisible(false);
       setPlayerVisible(true);
@@ -8031,7 +8043,6 @@ const shuffleKeepRef    = useRef(false);
       setTimeout(() => { setHero(null); setHeroExiting(false); }, HERO_DUR_MS - 80 + HERO_FADE_MS + 20);
     } else {
       // refs not ready — skip hero, just switch view
-      startPlay();
       setHomeVisible(false);
       setPlayerVisible(true);
       setView('player');
