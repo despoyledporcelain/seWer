@@ -440,39 +440,6 @@ ipcMain.handle('sc-cache-cover', (_, id, url) => new Promise((resolve) => {
 ipcMain.handle('load-settings', () => loadSettings())
 ipcMain.handle('save-settings', (_, data) => saveSettings(data))
 
-/* Жалоба на неправильный текст песни — пишется ЛОКАЛЬНО, в userData.
-   Смысл: пользователь видит, что текст не тот, жмёт кнопку, и получает
-   готовый разбор (что искали, какими запросами, что ответил каждый
-   источник, что показали) в файле, который можно просто открыть и
-   переслать — без копирования экрана и без DevTools.
-
-   Файл markdown, а не json: он читается и человеком, и без всякой
-   обработки, а разбор читается сверху вниз. Имя фиксированное
-   (lyrics-report.md) — дописываем, а не плодим файлы: иначе на
-   двадцатом клике в папке будет двадцать разных имён.
-
-   ⚠️ размер ограничен. Разбор небольшой, но «перезагрузил пять раз» даёт
-   пять отчётов по 3кБ, и за пару месяцев активной отладки файл успел бы
-   вырасти до мегабайта. При превышении листа начинаем заново, а прошлый
-   уводим в .1 — чтобы свежие жалобы не терялись. */
-const LYRICS_REPORT_MAX = 256 * 1024
-ipcMain.handle('lyrics-report', (_, payload) => {
-  const file = path.join(app.getPath('userData'), 'lyrics-report.md')
-  try {
-    const header = `\n\n---\n\n${payload && payload.text ? String(payload.text) : '(пусто)'}\n`
-    let size = 0
-    try { size = fs.statSync(file).size } catch {}
-    if (size + header.length > LYRICS_REPORT_MAX) {
-      /* предыдущий лист уводим в .1, чтобы не потерять совсем */
-      try { fs.renameSync(file, file + '.1') } catch {}
-    }
-    fs.appendFileSync(file, header, 'utf8')
-    return { ok: true, path: file }
-  } catch (e) {
-    return { ok: false, error: String(e && e.message || e) }
-  }
-})
-
 const scLikesFile = () => path.join(app.getPath('userData'), 'sc_likes.json')
 
 ipcMain.handle('sc-clear-covers-cache', () => {

@@ -10,8 +10,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectImage:       ()        => ipcRenderer.invoke('dialog-select-image'),
   loadSettings:      ()       => ipcRenderer.invoke('load-settings'),
   saveSettings:      (data)   => ipcRenderer.invoke('save-settings', data),
-  /* жалоба на неправильный текст песни: локальный отчёт в userData */
-  reportLyrics:      (text)   => ipcRenderer.invoke('lyrics-report', { text }),
   onMediaPlayPause:  (cb) => ipcRenderer.on('media-play-pause', () => cb()),
   onMediaNext:       (cb) => ipcRenderer.on('media-next',       () => cb()),
   onMediaPrev:       (cb) => ipcRenderer.on('media-prev',       () => cb()),
