@@ -8586,7 +8586,16 @@ const shuffleKeepRef    = useRef(false);
 
   /* тянем текст только пока панель открыта — незачем грузить то, чего не видно.
      lyricsReqRef защищает от гонки: сменился трек/порядок, старый ответ
-     пришёл последним и затёр бы новый */
+     пришёл последним и затёр бы новый
+
+     ⚠️ `track.title` в deps — ОБЯЗАТЕЛЬНО, не лишняя зависимость.
+     `fetchLyrics` ищет по `track.title`, а не по имени файла и не по id.
+     переименование меняет ТОЛЬКО title: id локального трека — это индекс
+     скана (`id: i + 1`), у sc-трека id не меняется вовсе, а `lyricsNonce`
+     растёт только от кнопки «повторить». без title в deps переименование при
+     ОТКРЫТОЙ панели оставляло текст, найденный по старому названию.
+     Строка, а не объект: `track` пересоздаётся на каждом списке sc, и
+     ссылка в deps гоняла бы перезапросы. */
   useEffect(() => {
     if (!lyricsOpen) return;
     const req = ++lyricsReqRef.current;
@@ -8602,7 +8611,7 @@ const shuffleKeepRef    = useRef(false);
       console.warn('[lyrics] fetch failed', e);
       setLyrics({ status: 'error', tried: [], why: String(e?.message || e) });
     });
-  }, [lyricsOpen, track.id, lyricsNonce]);
+  }, [lyricsOpen, track.id, track.title, lyricsNonce]);
 
   /* активная строка. rAF нужен только чтобы догонять play/pause/seek, но
      setState с bailout'ом не даёт ререндерить App каждый кадр: значение
