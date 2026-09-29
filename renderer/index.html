@@ -156,8 +156,15 @@
     50%,68% { transform:translateX(var(--mq-d)); }
     100%    { transform:translateX(0); }
   }
-  .home-card { transform:scale(1); transition:transform 0.35s cubic-bezier(0.34,1.56,0.64,1); }
-  .home-card:hover { transform:scale(1.03); }
+  /* ⚠️ здесь НЕ БЫЛО `transform`/`transition` и `:hover { transform }` —
+     они были, и не работали НИ РАЗУ. корень карточки — `motion.div`,
+     который анимирует `scale`, то есть после входной анимации Motion
+     оставляет инлайновый `transform`, а он приоритетнее любого css-правила
+     класса. `:hover` просто не применялся, подъёма карточки не было.
+     теперь подъём живёт в `whileHover` у HomeCard/PlaylistCard.
+     Потомки (`.home-card-overlay`, `.home-card-play`, `.home-card-like`)
+     работают как раньше: это opacity, а корень инлайновый opacity не
+     перекрывает — он и не мешает селектору по потомку. */
   .home-card-overlay { opacity:0; transition:opacity 0.2s ease; }
   .home-card:hover .home-card-overlay { opacity:1; }
   .home-card-like { opacity:0; transition:opacity 0.18s ease; }
@@ -893,18 +900,45 @@ function extractAccentColor(url) {
   });
 }
 
+/* Плавный скролл с перехватом пользователем. ⚠️ раньше анимацию было
+   невозможно прервать: колесо мыши во время автоскролла (переход к треку
+   из библиотеки, ведение по тексту песни) — список 420-480мс «убегал»
+   из-под руки, потому что rAF продолжал перезаписывать `scrollTop`.
+   плюс два вызова подряд (быстрое next/prev) писали в один scrollTop
+   ДВУМЯ циклами, и порог был `if (!delta)` — только на точное равенство
+   нулю, то есть при delta 0.4px анимация 420мс рисовала нулевое изменение. */
+const _smoothScrolls = new WeakMap();
 function smoothScroll(el, targetTop, duration) {
+  stopSmoothScroll(el);
   const startTop = el.scrollTop;
   const delta    = targetTop - startTop;
-  if (!delta) return;
+  if (Math.abs(delta) < 1) return;   /* субпиксель — анимировать нечего */
   const t0 = performance.now();
-  function ease(x) { return x < 0.5 ? 2*x*x : 1 - Math.pow(-2*x + 2, 2)/2; }
-  function tick(now) {
+  const ease = x => x < 0.5 ? 2*x*x : 1 - Math.pow(-2*x + 2, 2)/2;
+  const tick = now => {
     const p = Math.min((now - t0) / duration, 1);
     el.scrollTop = startTop + delta * ease(p);
-    if (p < 1) requestAnimationFrame(tick);
-  }
-  requestAnimationFrame(tick);
+    if (p < 1) _smoothScrolls.set(el, requestAnimationFrame(tick));
+    else _smoothScrolls.delete(el);
+  };
+  _smoothScrolls.set(el, requestAnimationFrame(tick));
+}
+function stopSmoothScroll(el) {
+  const h = _smoothScrolls.get(el);
+  if (h) { cancelAnimationFrame(h); _smoothScrolls.delete(el); }
+}
+/* пользователь перехватывает автоскролл. вешается на сам скроллер */
+function bindScrollInterrupt(el) {
+  const stop = () => stopSmoothScroll(el);
+  el.addEventListener('wheel', stop, { passive: true });
+  el.addEventListener('touchstart', stop, { passive: true });
+  el.addEventListener('pointerdown', stop);
+  return () => {
+    el.removeEventListener('wheel', stop);
+    el.removeEventListener('touchstart', stop);
+    el.removeEventListener('pointerdown', stop);
+    stopSmoothScroll(el);
+  };
 }
 
 
@@ -2174,28 +2208,36 @@ function AlbumArt({ track }) {
 }
 
 /* ── AmbientGlow ─────────────────────────────────────────────────────────── */
-/* glow за обложкой. Раньше здесь стоял filter: blur(42px) на элементе с
-   inset:-30% вокруг обложки до clamp(320px,54vw,760px) — то есть два
-   прохода блюра по ~1000×1000 px. Так как градиент и так уходил в ноль
-   к 90%, размытие почти ничего не добавляло, но перерисовывалось на
-   каждом кадре лерпа --accent-rgb, на ресайзе и на каждой смене трека.
-   Блюр убран, мягкость перенесена в стопы градиента, а элемент поднят в
-   отдельный композитируемый слой: дальше двигается только opacity. */
+/* glow за обложкой. Без `filter: blur()` — он стоил двух проходов блюра по
+   ~1000×1000 px и перерисовывался на каждом кадре лерпа --accent-rgb.
+   Но просто «убрать блюр и оставить тот же градиент» нельзя, и вот почему:
+   `filter` применяется ПОСЛЕ обрезки `border-radius`, то есть блюр
+   размазывал обрезанный круг НАРУЖУ на ~42px — именно это и давало видимый
+   ореол (и заодно замазывало стык обрезки). Без него остаётся только то,
+   что в градиенте.
+   ⚠️ и вот тут была вторая ошибка: при inset:-30% бокс = 1.6× обложки,
+   край обложки попадает на 62% радиуса градиента, где альфа ~0.1 —
+   всё яркое сидит ЗА обложкой, наружу торчит только прозрачный хвост,
+   и блоба не видно вообще. лечится двумя ручками:
+   1) `closest-side` — доводит градиент ровно до нуля на РЕБРЕ бокса, то
+      есть ровно там, где его режет border-radius. без размера circle =
+      farthest-corner, ноль приходит на УГЛАХ, а режет круг по СЕРЕДИНАМ
+      РЁБЕР → чёткая граница круга
+   2) `inset:-50%` вместо -30% — блок в 2× обложки, край обложки уходит
+      на 50% радиуса вместо 62%, и наружу остаётся читаемая альфа (~0.26) */
 function AmbientGlow({ visible, off }) {
   if (off) return null;
   return (
     <div style={{
-      position:'absolute', inset:'-30%', borderRadius:'50%',
-      /* ⚠️ `closest-side` — обязателен, и это не вкусовое решение.
-         без размера `circle` = `farthest-corner`, то есть градиент уходит в
-         ноль на УГЛАХ квадрата, а `border-radius:50%` режет круг по СЕРЕДИНАМ
-         РЁБЕР. на углах альфа 0, на рёбрах ещё ~0.02 → обрезка даёт чёткую
-         границу круга. раньше её замазывал `filter: blur(42px)`.
-         `closest-side` доводит градиент ровно до нуля на ребре — там, где
-         его и режет скругление, — поэтому блюр больше не нужен.
-         хвост у 100% идёт очень полого (0.05 → 0.012 → 0.002 → 0), иначе
-         на самой границе круга всё равно остаётся заметный ободок. */
-      background: 'radial-gradient(circle closest-side at center, rgba(var(--accent-rgb),0.5) 0%, rgba(var(--accent-rgb),0.34) 22%, rgba(var(--accent-rgb),0.2) 40%, rgba(var(--accent-rgb),0.1) 56%, rgba(var(--accent-rgb),0.05) 70%, rgba(var(--accent-rgb),0.02) 82%, rgba(var(--accent-rgb),0.008) 90%, rgba(var(--accent-rgb),0.002) 96%, rgba(var(--accent-rgb),0) 100%)',
+      position:'absolute', inset:'-50%', borderRadius:'50%',
+      /* ⚠️ хвост после 60% намеренно сжат. У скруглённой обложки за дугой
+         каждого угла остаётся просвет, и в него видно glow. Углы квадрата
+         лежат на 0.707 радиуса градиента, а середины рёбер — на 0.5, так
+         что дальнюю зону можно гасить независимо от ореола у самой
+         обложки: 0.26 на 50% (ореол) оставлено как было, а на 70% вместо
+         ~0.135 теперь ~0.068. без этого в просветах углов на секунду
+         вспыхивало цветное пятно — glow-то как раз в этот момент гас. */
+      background: 'radial-gradient(circle closest-side at center, rgba(var(--accent-rgb),0.42) 0%, rgba(var(--accent-rgb),0.36) 25%, rgba(var(--accent-rgb),0.26) 50%, rgba(var(--accent-rgb),0.14) 62%, rgba(var(--accent-rgb),0.06) 72%, rgba(var(--accent-rgb),0.024) 82%, rgba(var(--accent-rgb),0.008) 91%, rgba(var(--accent-rgb),0.002) 97%, rgba(var(--accent-rgb),0) 100%)',
       opacity: visible ? 1 : 0, transition:'opacity 0.6s ease',
       willChange:'opacity', transform:'translateZ(0)',
       pointerEvents:'none', zIndex:0,
@@ -2994,10 +3036,12 @@ function VirtualTrackList({ items, activeId, loadingId, errorId, onClickItem, on
       });
     };
     el.addEventListener('scroll', onScroll, { passive: true });
+    const unbind = bindScrollInterrupt(el);   /* колесо прерывает автоскролл */
     const ro = new ResizeObserver(() => updateRangeRef.current?.());
     ro.observe(el);
     return () => {
       el.removeEventListener('scroll', onScroll);
+      unbind();
       ro.disconnect();
       cancelAnimationFrame(scrollRafRef.current);
     };
@@ -3146,9 +3190,10 @@ function LyricsPanel({ open, inPlayer, state, activeLine, onSeek, onRetry, onBac
       }
     };
     sync();
+    const unbind = bindScrollInterrupt(el);   /* колесо прерывает ведение */
     const ro = new ResizeObserver(sync);
     ro.observe(el);
-    return () => { ro.disconnect() };
+    return () => { unbind(); ro.disconnect() };
   }, [open, state, forceEdges]);
 
   /* при открытии — сразу к активной строке. плавно прокручивать через весь
@@ -3373,6 +3418,7 @@ const HomeCard = React.memo(function HomeCard({ track, onSelect, artRef, artHidd
     <motion.div className="home-card" onClick={handleClick}
       initial={{ opacity: 0, scale: 0.92 }}
       animate={{ opacity: 1, scale: 1 }}
+      whileHover={{ scale: 1.03 }}
       exit={{ opacity: 0, scale: 0.88 }}
       transition={{ type:'spring', stiffness: 380, damping: 32, mass: 0.6 }}
       style={{
@@ -3521,11 +3567,20 @@ function HeroClone({ hero, exiting, reverse = false }) {
       contain:'layout style paint',
     }}>
       {hero.track.coverUrl ? (
-        /* без clip-path: обрезает родитель (overflow:hidden + borderRadius) */
+        /* без clip-path: обрезает родитель (overflow:hidden + borderRadius).
+           ⚠️ `-1px / +2px` — НЕ косметика, а подгонка кадра под реальную
+           обложку. `CoverLayer.draw` рисует картинку в битмапе с запасом
+           `w + 2*dpr` (защита от волосяной щели на прямых краях), т.е.
+           картинка на 2 css-px шире бокса, по 1px за каждую сторону.
+           клон раньше был `inset:0, width:100%` — то есть кадр на 2px
+           мельче, и в момент подмены кадр прыгал: обложка «обрезалась»
+           сразу после прилёта. здесь ровно тот же кадр, что у AlbumArt;
+           лишний px срезает overflow:hidden родителя. */
         <img src={hero.track.coverUrl}
           loading="eager" decoding="sync"
           style={{
-            position:'absolute', inset:0, width:'100%', height:'100%',
+            position:'absolute', left:-1, top:-1,
+            width:'calc(100% + 2px)', height:'calc(100% + 2px)',
             objectFit:'cover', display:'block',
           }}
           onError={e=>{e.currentTarget.style.display='none'}}/>
@@ -4731,6 +4786,7 @@ function PlaylistCard({ playlist, onOpen, onEdit }) {
     <motion.div className="home-card"
       onClick={() => onOpen(playlist)}
       initial={{ opacity: 0, scale: 0.92 }} animate={{ opacity: 1, scale: 1 }}
+      whileHover={{ scale: 1.03 }}
       exit={{ opacity: 0, scale: 0.88 }}
       transition={{ type:'spring', stiffness: 380, damping: 32, mass: 0.6 }}
       style={{borderRadius:16, cursor:'pointer'}}>
@@ -7989,6 +8045,56 @@ const shuffleKeepRef    = useRef(false);
   selectTrackRef.current = selectTrack;
   const selectTrackStable = useCallback((t) => selectTrackRef.current(t), []);
 
+  /* клик по строке библиотеки. ⚠️ раньше это был инлайновый стрелочный
+     проп прямо в JSX, то есть НОВАЯ функция на каждом рендере App.
+     `TrackRow` обёрнут в React.memo, а `onContextMenu` в него приходит
+     напрямую (`onContextMenuItem`), так что identity ломался у обеих
+     пропсов — и любое состояние App (ввод в поиск, lyricsActive, volume,
+     toast, searchFocused) перерендеривало ВСЕ ~35 видимых строк целиком.
+     обёртка через ref держит identity постоянной и не требует перечислять
+     deps (тело читает stationActive/playlistActive/tracks/trackIdx) */
+  const libClickRef = useRef(null);
+  libClickRef.current = t => {
+    if (stationActive) { handleScTrackClick(t, -1); return; }
+    if (playlistActive) {
+      searchQueueRef.current = null;
+      handleScTrackClick(t, -1);
+      return;
+    }
+    if (sourceMode === 'sc') {
+      searchQueueRef.current = null;
+      handleScTrackClick(t, scTracksRef.current.indexOf(t));
+      return;
+    }
+    const idx = tracks.indexOf(t);
+    if (idx < 0) return;
+    setScPlayingTrack(null);
+    if (idx === trackIdx) {
+      /* Клик по уже загруженному треку. Раньше здесь был
+         `setIsPlaying(true); return` — и это был ПОЛНЫЙ no-op, если
+         трек уже играет: клик по первой строке (trackIdx = 0 из
+         коробки, до первого запуска) не давал вообще ничего — ни
+         звука, ни перемотки, ни смены кадра. Плюс progressRef
+         обнулялся без audio.currentTime, и шкала прыгала в ноль
+         поверх продолжавшей играть дорожки. Теперь это честный
+         «переиграть с начала», как в любом плеере. */
+      const audio = audioRef.current;
+      if (audio && audio.src) {
+        if (audio.currentTime > 0.05) audio.currentTime = 0;
+        progressRef.current = 0;
+        startFadeIn(audio);
+        audio.play().catch(() => setIsPlaying(false));
+      }
+      setIsPlaying(true);
+      return;
+    }
+    setTrackIdx(idx);
+    progressRef.current = 0;
+    setIsPlaying(true);
+  };
+  const libClickStable = useCallback(t => libClickRef.current(t), []);
+  const libCtxStable   = useCallback((tr, x, y) => setTrackMenu({ track: tr, x, y }), []);
+
   const likedIds = useMemo(() => new Set(scTracks.map(t => t.id)), [scTracks]);
 
   const handleLike = useCallback(async (track) => {
@@ -8760,51 +8866,10 @@ const shuffleKeepRef    = useRef(false);
             activeId={stationActive || playlistActive ? (scPlayingTrack ? scPlayingTrack.id : null) : activeListPlayingId}
             loadingId={loadingTrackId}
             errorId={errorTrackId}
-            onClickItem={t => {
-              if (stationActive) {
-                handleScTrackClick(t, -1);
-                return;
-              }
-              if (playlistActive) {
-                searchQueueRef.current = null;
-                handleScTrackClick(t, -1);
-                return;
-              }
-              if (sourceMode === 'sc') {
-                searchQueueRef.current = null;
-                handleScTrackClick(t, scTracksRef.current.indexOf(t));
-              } else {
-                const idx = tracks.indexOf(t);
-                if (idx < 0) return;
-                setScPlayingTrack(null);
-                if (idx === trackIdx) {
-                  /* Клик по уже загруженному треку. Раньше здесь был
-                     `setIsPlaying(true); return` — и это был ПОЛНЫЙ no-op, если
-                     трек уже играет: клик по первой строке (trackIdx = 0 из
-                     коробки, до первого запуска) не давал вообще ничего — ни
-                     звука, ни перемотки, ни смены кадра. Плюс progressRef
-                     обнулялся без audio.currentTime, и шкала прыгала в ноль
-                     поверх продолжавшейся играть дорожки. Теперь это честный
-                     «переиграть с начала», как в любом плеере. */
-                  const audio = audioRef.current;
-                  if (audio && audio.src) {
-                    if (audio.currentTime > 0.05) audio.currentTime = 0;
-                    progressRef.current = 0;
-                    startFadeIn(audio);
-                    audio.play().catch(() => setIsPlaying(false));
-                  }
-                  setIsPlaying(true);
-                  return;
-                }
-                setTrackIdx(idx);
-                progressRef.current = 0;
-                setIsPlaying(true);
-              }
-            }}
+            onClickItem={libClickStable}
             scrollToActive={libScrollTrigger}
             scrollTargetId={libScrollTargetId}
-            onContextMenuItem={(tr, x, y) => setTrackMenu({ track: tr, x, y })}
-            
+            onContextMenuItem={libCtxStable}
           />
           </div>
           <LyricsPanel open={lyricsOpen} inPlayer={playerVisible} state={lyrics} activeLine={lyricsActive}
