@@ -677,6 +677,11 @@ async function fetchLrclib(artist, title, duration) {
     ...lrPairs.slice(0, LRC_BASE),
     ...lrPairs.slice(LRC_BASE).filter(([a, t]) => CYR_RE.test(a + t)).slice(0, LRC_LATIN),
   ];
+  /* ⚠️ запоминаем пару, которой ответили, и то, что источник назвал сам.
+     у LRCLib в ответе лежат `trackName`/`artistName` — то есть источник
+     ПРЯМО отдаёт, что он считает нужным треком, и это можно положить в
+     отчёт рядом с нашим запросом. расхождение видно сразу глазами */
+  let won = null;
   for (const [qa, qt] of lrcList) {
     const params = new URLSearchParams({
       track_name: qt,
@@ -701,16 +706,30 @@ async function fetchLrclib(artist, title, duration) {
         } catch {}
       }
     }
-    if (hit) break;
+    if (hit) {
+      /* та же страховка, что в fetchGenius: однословное название не
+         различает трек. у LRCLib она почти не срабатывает — /api/get
+         требует точного имени, — но /api/search нечёткий и проверка
+         бесплатна: `hit.artistName` источник уже отдал */
+      if (titleIsAmbiguous(title) && cleanTrackName(artist)) {
+        if (!artistMatches(hit.artistName, artist)) { hit = null; continue; }
+      }
+      won = {
+        query: `${qa} — ${qt}`, score: null,
+        trackName: hit.trackName, artistName: hit.artistName,
+        url: hit.id ? `https://lrclib.net/api/get/${hit.id}` : '',
+      };
+      break;
+    }
   }
   if (!hit) return null;
 
   if (hit.syncedLyrics && hit.syncedLyrics.trim()) {
     const lines = parseLrc(hit.syncedLyrics);
-    if (lines.length) return { lines, synced: true };
+    if (lines.length) return { lines, synced: true, won };
   }
   if (hit.plainLyrics && hit.plainLyrics.trim())
-    return { lines: parsePlainLyrics(hit.plainLyrics), synced: false };
+    return { lines: parsePlainLyrics(hit.plainLyrics), synced: false, won };
   return null;
 }
 
@@ -737,6 +756,55 @@ function geniusWordOverlap(a, b) {
   for (const w of A) if (b.includes(w)) hit++;
   return Math.round((hit / A.size) * 100);
 }
+/* 🚨 Название НЕ различает трек, если это одно короткое слово.
+   `carnival`, `skeleton`, `halo`, `fade` — их тысячи, и поиск отдаёт
+   первую попавшуюся одноимённую песню. порог 12 символов: «Soul»,
+   «Scream» и «Breathe» — короткие, но встречаются с артистом в
+   уникальном сочетании; а вот короткая абракадавра (`kkk`, `mvt`)
+   у нас и не появится, потому что `plausibleTitle` требует буквы, а
+   чистка съедает цифры. длинное название — с пробелом — само по себе
+   достаточно различающее, и требование артиста там только мешало бы. */
+const GENERIC_TITLE_MAX_LEN = 12;
+function titleTooGeneric(t) {
+  const s = String(t || '').trim();
+  if (!s) return false;
+  if (/\s/.test(s)) return false;      /* несколько слов — не generic */
+  return s.length <= GENERIC_TITLE_MAX_LEN;
+}
+
+/* 🚨 Название НЕОДНОЗНАЧНО, только если ОДНОСЛОВНЫЕ ВСЕ кандидаты.
+   Первый вариант считал признак по `cleanTrackName(rawTitle)` — и это была
+   ошибка: чистка обрезает название ПО ТИРЕ, так что у
+   «skeleton - im not Alex G, and ur not Sarah» остаётся `skeleton`, одно
+   слово, и страховка резала честную находку (настоящий перезалив с чужим
+   uploader). поймано тестом на живом треке.
+   правильно — спрашивать у разбора: если хоть один кандидат длинный,
+   название различает трек достаточно, и артист не обязателен. */
+function titleIsAmbiguous(rawTitle) {
+  const cands = titleCandidates(rawTitle);
+  if (!cands.length) return false;
+  return cands.every(titleTooGeneric);
+}
+
+/* 🚨 Совпадает ли артист источника с нашим — С УЧЁТОМ КИРИЛЛИЦЫ.
+   сравнивать «как есть» нельзя: на сайте артист «@sedmoenebo», а у нас
+   «@седьмоенебо» — они не равны и не вложены друг в друга, и страховка
+   для однословных названий сама собой убивала бы всю транскрипцию,
+   то есть ломала бы ровно тот случай, ради которого она и писалась.
+   (это поймал тест, а не размышление: без неё однословное название
+   переставало находиться ВООБЩЕ) */
+function artistMatches(candArtist, artist) {
+  const ca = geniusNorm(candArtist || '');
+  if (!ca) return false;
+  const base = cleanTrackName(artist);
+  for (const form of [base, ...latinVariants(base)]) {
+    const oa = geniusNorm(form);
+    if (!oa) continue;
+    if (ca === oa || ca.includes(oa) || oa.includes(ca)) return true;
+  }
+  return false;
+}
+
 /* Лучший score кандидата по ВСЕМ трактовкам трека. При развороте
    «Артист — Название» роли меняются местами, и сравнивать кандидата только с
    исходными полями бессмысленно — он получит 0 вопреки точному совпадению.
@@ -746,8 +814,16 @@ function geniusWordOverlap(a, b) {
    `s > 0` в fetchGenius отбрасывает именно тот трек, который мы нашли. */
 function trackScore(cand, artist, title) {
   if (!cand) return 0;
+  let pairs = pairVariants(trackQueries(artist, title));
+  /* ⚠️ трек БЕЗ артиста раньше вообще не мог найтись на Genius, и это не
+     поломка страховки, а давний баг: `trackQueries` отдаёт пустой список
+     (пары отбрасываются по `a && t`, а артиста нет), цикл не делал ни
+     одной итерации, score был 0 для ЛЮБОГО кандидата. запрос-то
+     отправлялся — `titleVariants` умеет искать по одному названию, — но
+     гейт его тут же отбрасывал. */
+  if (!pairs.length) pairs = [['', cleanTrackName(title)]];
   let best = 0;
-  for (const [a, t] of pairVariants(trackQueries(artist, title))) {
+  for (const [a, t] of pairs) {
     const s = geniusScore(cand, geniusNorm(a), geniusNorm(t));
     if (s > best) best = s;
   }
@@ -781,6 +857,12 @@ async function fetchGenius(artist, rawTitle) {
         Genius artist «королевский XVII», title «charles de gaulle»).
         Здесь title — СЫРОЕ, разбор внутри trackQueries. */
   let id = null;
+  /* ⚠️ запоминаем, КАКОЙ запрос выиграл, с каким счётом и какой трек вернули.
+     без этого жалоба «текст не тот» неразрешима: в отчёте видно, что победил
+     genius, но не видно, совпало название точно, через `includes` или через
+     порог `geniusWordOverlap` — а от этого совсем разные причины и разные
+     фиксы. имена полей взяты те же, что у LRCLib, чтобы отчёт был единым */
+  let won = null;
   for (const v of titleVariants(artist, rawTitle)) {
     try {
       const r = await netGet(`https://genius.com/api/search/multi?q=${encodeURIComponent(v)}`);
@@ -790,7 +872,38 @@ async function fetchGenius(artist, rawTitle) {
       const scored = hits
         .map(h => ({ h, s: trackScore(h.result, artist, rawTitle) }))
         .sort((a, b) => b.s - a.s);
-      if (scored[0]?.s > 0) { id = scored[0].h.result?.id; break }
+      if (scored[0]?.s > 0) {
+        const top = scored[0];
+        const res = top.h.result || {};
+        const candArtist = res.primary_artist_names || res.primary_artist?.name;
+        /* 🚨 ОДНОСЛОВНОЕ название + чужой артист = это другая песня.
+           гейт `s > 0` засчитывает 100 баллов за одно только совпадение
+           названия (артист сверху лишь бонус +40), и для названий вроде
+           `carnival` или `skeleton` это находит первую попавшуюся
+           одноимённую песню чужого артиста. проверено на живой жалобе:
+           «carnival» от @седьмоенебо отдал Playboi Carti.
+
+           артист поэтому обязателен РОВНО для коротких однословных
+           названий, и только когда он у нас вообще есть:
+           • длинное название само по себе различает достаточно — там
+             требование сломало бы честные находки;
+           • перезаливы с чужим uploader бывают (об этом написано выше в
+             geniusScore), но у однословного названия без артиста нет ни
+             одного различающего признака.
+           не отвергаем насовсем, а ПРОБУЕМ СЛЕДУЮЩИЙ ВАРИАНТ запроса —
+           следующий обычно уже с артистом и отсеется правильно. */
+        if (titleIsAmbiguous(rawTitle) && cleanTrackName(artist)) {
+          if (!artistMatches(candArtist, artist)) continue;
+        }
+        id = res.id;
+        won = {
+          query: v, score: top.s,
+          trackName: res.title,
+          artistName: candArtist,
+          url: id ? `https://genius.com/songs/${id}` : '',
+        };
+        break;
+      }
     } catch {}
   }
   if (!id) return null;
@@ -812,7 +925,7 @@ async function fetchGenius(artist, rawTitle) {
         ).trim();
         if (chunk) txt += chunk + '\n';
       }
-      if (txt.trim()) return { lines: parsePlainLyrics(txt), synced: false };
+      if (txt.trim()) return { lines: parsePlainLyrics(txt), synced: false, won };
     }
   } catch {}
 
@@ -821,7 +934,7 @@ async function fetchGenius(artist, rawTitle) {
     const r = await netGet(`https://genius.com/api/songs/${id}`);
     if (r.status === 200) {
       const txt = JSON.parse(r.body)?.response?.song?.lyrics;
-      if (txt?.trim()) return { lines: parsePlainLyrics(txt), synced: false };
+      if (txt?.trim()) return { lines: parsePlainLyrics(txt), synced: false, won };
     }
   } catch {}
   return null;
@@ -996,6 +1109,39 @@ function buildLyricsReport({ track, isSc, order, state }) {
     }
   } else {
     L.push('- (панель ещё грузится — отчёт снят в этот момент)');
+  }
+
+  /* 🚳 САМОЕ ВАЖНОЕ. Без этого «текст не тот» неразрешим: видно, что
+     победил genius, но не видно, совпало название ТОЧНО, через `includes`
+     или через порог `geniusWordOverlap` — а это три разные причины.
+     `sourceArtist` сравнивается с нашим артистом прямо здесь, и при
+     расхождении печатается явный флаг: на живой жалобе именно это и
+     оказалось причиной (одиночное слово «carnival» нашлось, артист при
+     этом не совпал ни с кем, и гейт `s > 0` это пропустил). */
+  const won = st.won;
+  L.push('');
+  L.push('### какой запрос победил');
+  L.push('');
+  if (won) {
+    L.push(`- **запрос:** \`${reportOneLine(won.query)}\``);
+    L.push(`- **счёт:** ${won.score == null ? '— (у LRCLib скоринга нет)' : won.score}`);
+    L.push(`- **источник назвал трек:** ${reportOneLine(won.trackName) || '—'}`);
+    L.push(`- **источник назвал артиста:** ${reportOneLine(won.artistName) || '—'}`);
+    L.push(`- **ссылка:** ${reportOneLine(won.url) || '—'}`);
+    /* сравнение через artistMatches — с транскрипциями, иначе отчёт
+       врал бы «артист не совпал» на ровно тех треках, ради которых
+       транскрипция и добавлена (сайт пишет @sedmoenebo) */
+    const srcA = won.artistName || '';
+    const same = !srcA || !cleanTrackName(rawArtist) || artistMatches(srcA, rawArtist);
+    L.push(`- **артист совпал:** ${same ? 'да' : '🚳 НЕТ — источник отдал трек другого артиста'}`);
+    if (!same) {
+      L.push('');
+      L.push('> 🚳 **это и есть причина.** Название сошлось, артист — нет: гейт');
+      L.push('> `s > 0` засчитывает совпадение по одному названию, и при');
+      L.push('> однословном названии вроде `carnival` это чаще другая песня.');
+    }
+  } else {
+    L.push('- (источник не сообщил — текст не найден либо отчёт снят в момент загрузки)');
   }
 
   L.push('');
