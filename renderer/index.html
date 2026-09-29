@@ -61,10 +61,16 @@
     content:''; position:absolute; inset:0; z-index:0; pointer-events:none;
     background: radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,0.5) 100%);
   }
-  /* акцентная подсветка сверху — только в плеере (body.in-player) и при вкл. свечениях */
+  /* Акцентная подсветка сверху — только в плеере (body.in-player) и при
+     вкл. свечениях. Градиент прозрачен уже к ~235px, а элемент раньше
+     занимал inset:0, то есть на каждом кадре лерпа --accent-rgb
+     перерисовывался прямоугольник во всё окно ради пустого низа.
+     Теперь бокс ограничен верхними 62% — та же картинка, вдвое меньше
+     растрируемой площади. */
   #accent-top {
-    position:absolute; inset:0; z-index:0; pointer-events:none;
-    background: radial-gradient(ellipse 115% 80% at 50% -8%, rgba(var(--accent-rgb), 0.07) 0%, transparent 52%);
+    position:absolute; left:0; right:0; top:0; height:62%;
+    z-index:0; pointer-events:none;
+    background: radial-gradient(ellipse 115% 115% at 50% -8%, rgba(var(--accent-rgb), 0.07) 0%, transparent 52%);
     opacity:0; transition:opacity 0.6s ease;
   }
   body.in-player:not(.glow-off) #accent-top { opacity:1; }
@@ -1329,6 +1335,7 @@ const STRINGS = {
     accent_cover_sub:'Динамически меняется под обложку трека',
     accent_seg_off:'Выкл', accent_seg_color:'Цвет',
     accent_off_title:'Свечения выключены', accent_off_sub:'Фоновые свечения скрыты, акцент — статичный серый',
+    art_glow:'Мягкое свечение за обложкой', art_glow_sub:'Цветное пятно вокруг обложки в плеере. Меньше нагрузки на видеокарту, чем настоящее размытие',
     sec_lyrics:'Текст песен',
     sec_discord:'Discord',
     shuffle_all:'Случайно', shuffle_empty:'Нечего перемешивать',
@@ -1441,6 +1448,7 @@ const STRINGS = {
     accent_cover_sub:'Dynamically follows the current track artwork',
     accent_seg_off:'Off', accent_seg_color:'Color',
     accent_off_title:'Glow disabled', accent_off_sub:'Background glows hidden, accent is flat gray',
+    art_glow:'Soft glow behind artwork', art_glow_sub:'Colored halo around the cover in the player. Cheaper for the GPU than a real blur',
     sec_lyrics:'Lyrics',
     sec_discord:'Discord',
     shuffle_all:'Shuffle', shuffle_empty:'Nothing to shuffle',
@@ -1575,13 +1583,13 @@ function PlayerLikeBtn({ liked, onLike, style: extraStyle }) {
 }
 
 /* ── Progress Bar ────────────────────────────────────────────────────────── */
-function ProgressBar({ progressRef, total, onSeek, isPlaying, visible }) {
+function ProgressBar({ progressRef, audioRef, total, onSeek, isPlaying, visible }) {
   const trackRef         = useRef(null);
   const fillRef          = useRef(null);
   const thumbRef         = useRef(null);
+  const glowRef          = useRef(null);
   const rafRef           = useRef(null);
   const progRef          = useRef(progressRef.current);
-  const dispProg         = useRef(progressRef.current);
   const dragging         = useRef(false);
   const visibleRef       = useRef(visible);
   const elapsedSpanRef   = useRef(null);
@@ -1593,6 +1601,23 @@ function ProgressBar({ progressRef, total, onSeek, isPlaying, visible }) {
   const [hover, setHover]   = useState(false);
   const [active, setActive] = useState(false);
   const [tip, setTip] = useState({ x: 0, t: 0, show: false });
+
+  /* стартовое значение прогресса для jsx. дальше transform перезаписывает
+     rAF каждый кадр, а константа в style нужна, чтобы react не «восстановил»
+     своё значение при ререндере: react пишет в стиль только если значение
+     ИЗМЕНИЛОСЬ, поэтому неизменная константа переживает любой ререндер App */
+  const initP = useRef(progressRef.current).current;
+
+  /* альфы свечения — ровно те, что раньше были зашиты прямо в три строки
+     box-shadow. насыщенность на ховере даёт transition по box-shadow, а
+     прогресс едет через opacity: если бы rAF писал ещё и силу свечения,
+     переход при наведении перестал бы работать */
+  const GLOW_A = { idle: 0.18, soft: 0.2, hover: 0.30, active: 0.42 };
+
+  /* ширина дорожки в css-px. кэшируется, потому что читать offsetWidth
+     в rAF — это принудительный layout каждый кадр. меняется только на
+     ресайзе, ловится ResizeObserver'ом */
+  const trackWRef = useRef(0);
 
   const drawRef = useRef(null);
   const kick = () => {
@@ -1610,31 +1635,66 @@ function ProgressBar({ progressRef, total, onSeek, isPlaying, visible }) {
   useEffect(() => { kick(); }, [isPlaying]);
 
   useEffect(() => {
+    let lastRaw = -1;
     const draw = () => {
-      progRef.current = progressRef.current;
-      const diff = progRef.current - dispProg.current;
-      if (!isPlayingRef.current && !dragging.current && Math.abs(diff) < 0.001) {
-        dispProg.current = progRef.current;
-      } else {
-        dispProg.current += diff * 0.12;
-      }
-      const p = dispProg.current;
-      if (fillRef.current)  fillRef.current.style.width = (p * 100).toFixed(3) + '%';
-      if (thumbRef.current) thumbRef.current.style.left = (p * 100).toFixed(3) + '%';
+      /* ЦЕЛЬ БЕРЁТСЯ ИЗ САМОГО audio, а не из progressRef.
+         progressRef обновляется событием timeupdate, а оно в html5-аудио
+         шлётся примерно 4 раза в секунду, а не каждый кадр. раньше бар
+         догонял эту «лестницу» экспоненциальным сглаживанием — отсюда и
+         ощущение, что он едет «покадрово»: цель прыгала на 0.25с, а
+         сглаживание лишь размазывало прыжок, не убирая его.
+         audio.currentTime читается в каждом кадре непрерывно, поэтому
+         сглаживать больше нечего и не нужно — плавность получается сама. */
+      const audio = audioRef?.current;
+      const raw = (audio && audio.duration) ? audio.currentTime / audio.duration : progressRef.current;
+      progRef.current = raw;
+      const p = Math.max(0, Math.min(1, raw));
+      /* ТОЛЬКО transform/opacity. Раньше здесь стояло
+         `fill.style.width = p%` и `thumb.style.left = p%` — оба layout-свойства,
+         то есть layout+paint на каждом кадре вместо композиции.
+         thumb позиционируется через translate в пикселях от кэшированной
+         ширины дорожки, потому что translateX в процентах считается от
+         ШИРИНЫ САМОГО THUMB'а, а не дорожки. */
+      if (fillRef.current)  fillRef.current.style.transform = `scaleX(${p.toFixed(5)})`;
+      /* ⚠️ `- 50%` по X обязателен: без него ЛЕВЫЙ край шарика встаёт на
+         точку прогресса и он уезжает на половину своей ширины вправо.
+         раньше это делало css-свойство `translate: -50% -50%`, отдельное от
+         transform, — при переезде позиции в transform оно потерялось */
+      if (thumbRef.current) thumbRef.current.style.transform =
+        `translate(calc(${(p * trackWRef.current).toFixed(2)}px - 50%), -50%)`;
+      /* глоу едет через CSS-переменную, а не через opacity: у слоя есть
+         гейт выключенных свечений (--glow-opacity) в calc, и прямое
+         присваивание opacity его бы перекрыло.
+         раньше ширина глоу бралась из progressRef.current НА РЕНДЕРЕ,
+         то есть в rAF не попадала никогда: без ререндера App шкала не
+         едет, а у глоу остаётся светящееся пятно у левого края */
+      if (glowRef.current)  glowRef.current.style.setProperty('--pb-glow', p.toFixed(5));
       const dur = totalRef.current || 0;
       const de = Math.floor(p * dur);
       if (elapsedSpanRef.current)   elapsedSpanRef.current.textContent   = fmt(de);
       if (remainingSpanRef.current) remainingSpanRef.current.textContent = '-' + fmt(dur - de);
       if (!visibleRef.current) { rafRef.current = null; return; }
-      if (!isPlayingRef.current && !dragging.current
-          && Math.abs(progRef.current - dispProg.current) < 0.001) {
+      /* остановка на паузе: цель перестала меняться. сравнение с прошлым
+         кадром, а не «сблизились два числа» — сглаживания больше нет */
+      if (!isPlayingRef.current && !dragging.current && raw === lastRaw) {
         rafRef.current = null; return;
       }
+      lastRaw = raw;
       rafRef.current = requestAnimationFrame(draw);
     };
     drawRef.current = draw;
+    /* ширина дорожки — для translate thumb'а. меряем здесь и на ресайзе,
+       в rAF НЕ меряем: offsetWidth там = принудительный layout каждый кадр */
+    const measure = () => { trackWRef.current = trackRef.current?.offsetWidth || 0; };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (trackRef.current) ro.observe(trackRef.current);
     if (visibleRef.current) rafRef.current = requestAnimationFrame(draw);
-    return () => { cancelAnimationFrame(rafRef.current); rafRef.current = null; };
+    return () => {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+      ro.disconnect();
+    };
   }, []);
 
   const getVal = (e) => {
@@ -1709,35 +1769,37 @@ function ProgressBar({ progressRef, total, onSeek, isPlaying, visible }) {
               transition: 'height 0.22s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.2s ease',
             }}
           >
+            {/* fill: полная ширина + scaleX. почему — в index.md */}
             <div ref={fillRef} style={{
               position:'absolute', left:0, top:0,
-              height:'100%',
-              width: (progressRef.current * 100).toFixed(3) + '%',
+              height:'100%', width:'100%',
+              transformOrigin:'left center',
+              transform: 'scaleX(' + initP.toFixed(5) + ')',
               borderRadius: '0 999px 999px 0',
               background: 'linear-gradient(90deg, rgba(var(--accent-rgb),0.88), color-mix(in srgb, rgb(var(--accent-rgb)) 86%, white))',
               pointerEvents:'none',
-              transition:'background 0.18s linear',
             }}/>
           </div>
-          {/* glow layer (outside track so it isn't clipped) */}
-          <div style={{
-            position:'absolute', left:0, top:'50%', translate:'0 -50%',
-            height: TRACK_H, width: `${(progressRef.current * 100).toFixed(3)}%`,
+          {/* glow: полной ширины, едет opacity. почему — в index.md */}
+          <div ref={glowRef} style={{
+            position:'absolute', left:0, right:0, top:'50%', translate:'0 -50%',
+            height: TRACK_H,
             borderRadius: 999,
-            opacity:'var(--glow-opacity, 1)',
+            /* гейт «свечения выключены» живёт в calc: opacity теперь
+               перезаписывает rAF, простое значение перекрыло бы его */
+            opacity: 'calc(var(--pb-glow, 0) * var(--glow-opacity, 1))',
             boxShadow: (() => {
-              if (active) return '0 0 20px rgba(var(--accent-rgb),0.42), 0 0 7px rgba(var(--accent-rgb),0.3)';
-              if (hover)  return '0 0 16px rgba(var(--accent-rgb),0.3), 0 0 5px rgba(var(--accent-rgb),0.2)';
-              return '0 0 10px rgba(var(--accent-rgb),0.18)';
+              if (active) return '0 0 20px rgba(var(--accent-rgb),' + GLOW_A.active + '), 0 0 7px rgba(var(--accent-rgb),' + GLOW_A.hover + ')';
+              if (hover)  return '0 0 16px rgba(var(--accent-rgb),' + GLOW_A.hover + '), 0 0 5px rgba(var(--accent-rgb),' + GLOW_A.soft + ')';
+              return '0 0 10px rgba(var(--accent-rgb),' + GLOW_A.idle + ')';
             })(),
             pointerEvents:'none',
-            transition: 'box-shadow 0.18s linear, height 0.22s cubic-bezier(0.34,1.56,0.64,1), opacity 0.3s ease',
+            transition: 'box-shadow 0.18s linear, height 0.22s cubic-bezier(0.34,1.56,0.64,1)',
           }}/>
-          {/* thumb — outside track so it isn't clipped */}
+          {/* thumb: left 0, позиция приходит translate'ом в px (см. draw) */}
           <div ref={thumbRef} style={{
-            position:'absolute', top:'50%',
-            left: (progressRef.current * 100).toFixed(3) + '%',
-            translate: '-50% -50%',
+            position:'absolute', top:'50%', left:0,
+            transform: 'translate(0, -50%)',
             width: THUMB_SZ, height: THUMB_SZ,
             borderRadius: '50%',
             background: '#fff',
@@ -2112,19 +2174,30 @@ function AlbumArt({ track }) {
 }
 
 /* ── AmbientGlow ─────────────────────────────────────────────────────────── */
-/* glow за обложкой: два слоя crossfade'ятся по opacity при смене accent —
-   композитится на gpu, без покадрового перерасчёта blur (в отличие от
-   transition:background, который дёргал слайд) */
+/* glow за обложкой. Раньше здесь стоял filter: blur(42px) на элементе с
+   inset:-30% вокруг обложки до clamp(320px,54vw,760px) — то есть два
+   прохода блюра по ~1000×1000 px. Так как градиент и так уходил в ноль
+   к 90%, размытие почти ничего не добавляло, но перерисовывалось на
+   каждом кадре лерпа --accent-rgb, на ресайзе и на каждой смене трека.
+   Блюр убран, мягкость перенесена в стопы градиента, а элемент поднят в
+   отдельный композитируемый слой: дальше двигается только opacity. */
 function AmbientGlow({ visible, off }) {
-  // градиент на CSS-переменной: анимированный lerp --accent-rgb
-  // перетекает покадрово без ререндеров и без crossfade-слоёв
   if (off) return null;
   return (
     <div style={{
       position:'absolute', inset:'-30%', borderRadius:'50%',
-      background: 'radial-gradient(circle at center, rgba(var(--accent-rgb),0.55) 0%, rgba(var(--accent-rgb),0.26) 36%, rgba(var(--accent-rgb),0.08) 64%, rgba(var(--accent-rgb),0) 90%)',
-      filter:'blur(42px)',
+      /* ⚠️ `closest-side` — обязателен, и это не вкусовое решение.
+         без размера `circle` = `farthest-corner`, то есть градиент уходит в
+         ноль на УГЛАХ квадрата, а `border-radius:50%` режет круг по СЕРЕДИНАМ
+         РЁБЕР. на углах альфа 0, на рёбрах ещё ~0.02 → обрезка даёт чёткую
+         границу круга. раньше её замазывал `filter: blur(42px)`.
+         `closest-side` доводит градиент ровно до нуля на ребре — там, где
+         его и режет скругление, — поэтому блюр больше не нужен.
+         хвост у 100% идёт очень полого (0.05 → 0.012 → 0.002 → 0), иначе
+         на самой границе круга всё равно остаётся заметный ободок. */
+      background: 'radial-gradient(circle closest-side at center, rgba(var(--accent-rgb),0.5) 0%, rgba(var(--accent-rgb),0.34) 22%, rgba(var(--accent-rgb),0.2) 40%, rgba(var(--accent-rgb),0.1) 56%, rgba(var(--accent-rgb),0.05) 70%, rgba(var(--accent-rgb),0.02) 82%, rgba(var(--accent-rgb),0.008) 90%, rgba(var(--accent-rgb),0.002) 96%, rgba(var(--accent-rgb),0) 100%)',
       opacity: visible ? 1 : 0, transition:'opacity 0.6s ease',
+      willChange:'opacity', transform:'translateZ(0)',
       pointerEvents:'none', zIndex:0,
     }}/>
   );
@@ -2292,7 +2365,6 @@ const TrackRow = React.memo(function TrackRow({ track, isActive, isLoading, isEr
         display:'flex', alignItems:'center', gap:10, padding:'8px 10px', borderRadius:9,
         cursor:'pointer', position:'relative', zIndex:1,
         height: 50, overflow:'hidden',
-        contentVisibility:'auto', containIntrinsicSize:'auto 50px',
       }}>
       <div style={{
         width:34, height:34, borderRadius:7, flexShrink:0,
@@ -2931,15 +3003,19 @@ function VirtualTrackList({ items, activeId, loadingId, errorId, onClickItem, on
     };
   }, []);
 
-  const maskImage = (() => {
-    if (!edges.top && !edges.bottom) return 'none';
-    const parts = [];
-    parts.push(edges.top ? `transparent 0` : `black 0`);
-    parts.push(edges.top ? `black ${FADE}px` : `black 0`);
-    parts.push(edges.bottom ? `black calc(100% - ${FADE}px)` : `black 100%`);
-    parts.push(edges.bottom ? `transparent 100%` : `black 100%`);
-    return `linear-gradient(to bottom, ${parts.join(', ')})`;
-  })();
+  /* Градиенты по краям — ОТДЕЛЬНЫМИ слоями ПОВЕРХ скроллера, а не mask'ом
+     на нём. Маска на скроллируемом элементе заставляет chromium каждый кадр
+     скролла перерастрировать содержимое в замаскированный слой, а
+     transition по mask-image сверху запускал вторую интерполяцию градиента
+     ровно в тот момент, когда список уже поехал. Здесь скроллер чистый,
+     а края — обычная композиция с дешёвым transition по opacity. */
+  const edgeFade = {
+    position:'absolute', left:0, right:0, height: FADE,
+    pointerEvents:'none', zIndex:2,
+    transition:'opacity 0.2s ease',
+  };
+  const fadeTop = { ...edgeFade, top:0,    background:'linear-gradient(to bottom, var(--bg), transparent)', opacity: edges.top ? 1 : 0 };
+  const fadeBot = { ...edgeFade, bottom:0, background:'linear-gradient(to top,    var(--bg), transparent)', opacity: edges.bottom ? 1 : 0 };
 
   useEffect(() => {
     if (!scrollToActive || !ref.current) return;
@@ -2958,10 +3034,10 @@ function VirtualTrackList({ items, activeId, loadingId, errorId, onClickItem, on
   const offsetTop = range.start * ROW_H;
 
   return (
+    /* обёртка ради двух слоёв градиента, скроллер внутри без маски */
+    <div style={{position:'relative', flex:1, minHeight:0, display:'flex', flexDirection:'column'}}>
     <div ref={ref} className="scroll-thin" style={{
-      flex:1, overflowY:'auto', padding:'2px 6px 10px', position:'relative',
-      maskImage: maskImage, WebkitMaskImage: maskImage,
-      transition: 'mask-image 0.2s ease, -webkit-mask-image 0.2s ease',
+      flex:1, minHeight:0, overflowY:'auto', padding:'2px 6px 10px', position:'relative',
     }}>
       {activeIdx >= 0 && (
         <div style={{
@@ -2986,6 +3062,9 @@ function VirtualTrackList({ items, activeId, loadingId, errorId, onClickItem, on
           ))}
         </div>
       </div>
+    </div>
+    <div style={fadeTop}/>
+    <div style={fadeBot}/>
     </div>
   );
 }
@@ -3020,19 +3099,20 @@ function LyricsPanel({ open, inPlayer, state, activeLine, onSeek, onRetry, onBac
      само поле `state.synced` по-прежнему нужно — по нему App гоняет rAF
      подсветки (см. эффект активной строки) */
 
-  /* Маска по краям контента: градиент там, где контент обрезан.
-     Если контент влез целиком — маски нет (как в VirtualTrackList) */
+  /* Градиенты по краям контента — ОТДЕЛЬНЫМИ слоями поверх скроллера, а не
+     mask'ом на нём: маска заставляет chromium перерастрировать содержимое
+     в замаскированный слой на каждом кадре скролла, а transition по
+     mask-image запускал вторую интерполяцию градиента в момент, когда
+     список уже едет (то же, что в VirtualTrackList) */
   const EDGE_FADE = 20;
   const edges = edgesRef.current;
-  const maskImage = (() => {
-    if (!edges.top && !edges.bottom) return 'none';
-    const parts = [];
-    parts.push(edges.top ? 'transparent 0' : 'black 0');
-    parts.push(edges.top ? `black ${EDGE_FADE}px` : 'black 0');
-    parts.push(edges.bottom ? `black calc(100% - ${EDGE_FADE}px)` : 'black 100%');
-    parts.push(edges.bottom ? 'transparent 100%' : 'black 100%');
-    return `linear-gradient(to bottom, ${parts.join(', ')})`;
-  })();
+  const edgeFade = {
+    position:'absolute', left:0, right:0, height: EDGE_FADE,
+    pointerEvents:'none', zIndex:2,
+    transition:'opacity 0.2s ease',
+  };
+  const fadeTop = { ...edgeFade, top:0,    background:'linear-gradient(to bottom, var(--bg), transparent)', opacity: edges.top ? 1 : 0 };
+  const fadeBot = { ...edgeFade, bottom:0, background:'linear-gradient(to top,    var(--bg), transparent)', opacity: edges.bottom ? 1 : 0 };
 
   const scrollToActive = useCallback((smooth) => {
     const el   = bodyRef.current;
@@ -3181,16 +3261,13 @@ function LyricsPanel({ open, inPlayer, state, activeLine, onSeek, onRetry, onBac
         </div>
       </div>
 
+      {/* обёртка ради слоёв градиента по краям, скроллер внутри без маски */}
+      <div style={{position:'relative', flex:1, minHeight:0, display:'flex', flexDirection:'column'}}>
       <div className="scroll-none" ref={bodyRef} onScroll={onBodyScroll}
         style={{
           flex:1, minHeight:0, overflowY:'auto',
           display:'flex', flexDirection:'column',
           padding:'0 14px 10px', marginTop:12,
-          /* градиенты у краёв — индикация «есть что прокрутить», как в
-             VirtualTrackList. полосы нет (`.scroll-none`), так что это
-             единственный намёк, что список продолжается */
-          maskImage, WebkitMaskImage: maskImage,
-          transition: 'mask-image 0.2s ease, -webkit-mask-image 0.2s ease',
         }}>
         {/* Раньше здесь была строка «без таймкодов — подсветки не будет».
             Убрана: она съедала 12px сверху текста на каждом треке без
@@ -3280,6 +3357,10 @@ function LyricsPanel({ open, inPlayer, state, activeLine, onSeek, onRetry, onBac
             в верхней строке (вместо бывшей плашки «ТЕКСТ ПЕСНИ»), здесь
             ничего — иначе один и тот же список рисовался дважды. */}
       </div>
+      {/* градиенты по краям — индикация «есть что прокрутить» */}
+      <div style={fadeTop}/>
+      <div style={fadeBot}/>
+      </div>
     </div>
   );
 }
@@ -3296,7 +3377,6 @@ const HomeCard = React.memo(function HomeCard({ track, onSelect, artRef, artHidd
       transition={{ type:'spring', stiffness: 380, damping: 32, mass: 0.6 }}
       style={{
         borderRadius:16, cursor:'pointer',
-        contentVisibility:'auto', containIntrinsicSize:'auto 180px',
       }}>
       <div style={{
         padding:'8px 8px 7px', textAlign:'center',
@@ -3350,9 +3430,17 @@ const HomeCard = React.memo(function HomeCard({ track, onSelect, artRef, artHidd
 });
 
 /* ── Hero clone ──────────────────────────────────────────────────────────── */
-const HERO_DUR_MS  = 380;
+const HERO_DUR_MS  = 430;
 const HERO_FADE_MS = 140;
-const HERO_EASE    = 'expo.inOut';
+/* ⚠️ было `expo.inOut` — и это была ровно та резкость, на которую жаловались.
+   expo.inOut держит пол пути в середине: между 25% и 75% времени проходит
+   ~97% дистанции. обложка будто стоит на месте, потом р��зко пролетает
+   экран, потом снова стоит — «хлёсткий» перелёт.
+   power3.inOut в той же середине проходит ~87%, и он симметричен, поэтому
+   разгон и торможение читаются плавно. `sine.inOut` мягче ещё, но на
+   длинной дистанции обложка начинает «плыть» — если покажется вяло,
+   двигать сюда, а не трогать остальное. */
+const HERO_EASE    = 'power3.inOut';
 /* 4 радиуса углов элемента [tl,tr,br,bl] из computed style */
 function cssCorners(el) {
   try {
@@ -3378,23 +3466,26 @@ function HeroClone({ hero, exiting, reverse = false }) {
   const corners = hero.corners || [16,16,16,16];
   const BR4     = '16px 16px 16px 16px';
   const BR_END  = corners.map(c => (c / sc) + 'px').join(' ');
-  const CLIP4   = 'inset(0 round 16px)';
-  const CLIP_END = `inset(0 round ${BR_END})`;
   const DUR = HERO_DUR_MS / 1000;
 
   // run the timeline BEFORE first paint so there is no flash in the target rect
   useLayoutEffect(() => {
     const el = cloneRef.current;
     if (!el) return;
-    const img = el.querySelector('img');
     const tl = gsap.timeline({ defaults: { force3D: true, ease: HERO_EASE, duration: DUR } });
     if (reverse) {
       tl.fromTo(el, { x: 0, y: 0, scale: 1, borderRadius: BR4 }, { x: dx, y: dy, scale: sc, borderRadius: BR_END }, 0);
-      if (img) tl.fromTo(img, { clipPath: CLIP4 }, { clipPath: CLIP_END }, 0);
     } else {
       tl.fromTo(el, { x: dx, y: dy, scale: sc, borderRadius: BR_END }, { x: 0, y: 0, scale: 1, borderRadius: BR4 }, 0);
-      if (img) tl.fromTo(img, { clipPath: CLIP_END }, { clipPath: CLIP4 }, 0);
     }
+    /* ❌ раньше здесь параллельно анимировался `clip-path: inset(0 round …)`
+       на <img> — «в такт радиусу родителя». это было ИЗБЫЧНО: у контейнера
+       `overflow:hidden` и анимируемый `borderRadius` с тем же радиусом, то
+       есть картинка и так обрезается скруглением родителя. вторая
+       растеризация той же кривой (плюс на масштабированной картинке)
+       стоила кадра на каждом шаге, а дропы кадров читаются как
+       дёргасть — то есть добавляли ровно ту «резкость», которую
+       убирали. теперь скругление ведёт только родитель. */
     return () => tl.kill();
   }, []);
 
@@ -3430,11 +3521,12 @@ function HeroClone({ hero, exiting, reverse = false }) {
       contain:'layout style paint',
     }}>
       {hero.track.coverUrl ? (
+        /* без clip-path: обрезает родитель (overflow:hidden + borderRadius) */
         <img src={hero.track.coverUrl}
           loading="eager" decoding="sync"
           style={{
             position:'absolute', inset:0, width:'100%', height:'100%',
-            objectFit:'cover', display:'block', clipPath: reverse ? CLIP4 : CLIP_END,
+            objectFit:'cover', display:'block',
           }}
           onError={e=>{e.currentTarget.style.display='none'}}/>
       ) : (
@@ -4118,6 +4210,27 @@ function SettingsView({ settings, onSettings, visible, onScanTracks, onClearFold
               </>
             );
           })()}
+
+          {/* тумблер пятна за обложкой — в этой же карточке, а не в «Интерфейсе» */}
+          <div style={{
+            display:'flex', alignItems:'center', justifyContent:'space-between', gap:12,
+            marginTop:16, paddingTop:14,
+            /* инлайн, а не через константу `div`: она объявлена в
+               LyricsSettings, в SettingsView её нет (ReferenceError) */
+            borderTop: settings.hideDividers ? 'none' : '1px solid rgba(255,255,255,0.045)',
+            opacity: settings.accentMode === 'off' ? 0.4 : 1,
+            transition:'opacity 0.2s ease',
+          }}>
+            <div style={{minWidth:0}}>
+              <div style={{fontSize: 'var(--fs-md)', color:'rgba(255,255,255,0.75)'}}>
+                {t('art_glow')}
+              </div>
+              <div style={{fontSize: 'var(--fs-xs)', color:'rgba(255,255,255,0.28)', marginTop:2, lineHeight:1.45}}>
+                {t('art_glow_sub')}
+              </div>
+            </div>
+            <Toggle k="ambientGlow"/>
+          </div>
         </div>
       </Card>
       <Card title={t('card_interface')}>
@@ -4620,7 +4733,7 @@ function PlaylistCard({ playlist, onOpen, onEdit }) {
       initial={{ opacity: 0, scale: 0.92 }} animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.88 }}
       transition={{ type:'spring', stiffness: 380, damping: 32, mass: 0.6 }}
-      style={{borderRadius:16, cursor:'pointer', contentVisibility:'auto', containIntrinsicSize:'auto 180px'}}>
+      style={{borderRadius:16, cursor:'pointer'}}>
       <div style={{padding:'8px 8px 7px', background:'rgba(255,255,255,0.05)', borderRadius:'16px 16px 0 0'}}>
         <div style={{fontSize: 'var(--fs-xs)', opacity:0.3, overflow:'hidden', textOverflow:'ellipsis',
           whiteSpace:'nowrap', marginBottom:2}}>{playlist.ownerName}</div>
@@ -6187,6 +6300,7 @@ function App() {
     sourceMode: 'local', discordRpc: true,
     discordTimestamp: 'progress', discordPause: 'show', discordCover: true,
     accentMode: 'color', accentPreset: 'default',
+    ambientGlow: true,   /* пятно за обложкой в плеере; false = не рисуем вовсе */
     lyricsSources: LYRICS_SOURCE_IDS.slice(),  /* включённые источники, сверху вниз */
     volume: 0.7,   /* gain 0..1 (не позиция ползунка) — переживает перезапуск */
   });
@@ -6439,6 +6553,9 @@ const shuffleKeepRef    = useRef(false);
             /* те же ворота для rpc: без них мусорное значение из старого файла
                настроек уезжало в main как есть (см. cleanDiscordSettings) */
             cleanDiscordSettings(m);
+            /* булев гейт по образцу cleanDiscordSettings: мусор из старого
+               файла настроек не должен превращать тумблер в «включено» */
+            m.ambientGlow = m.ambientGlow !== false;
             m.scTitles = cleanScTitles(m.scTitles);
             return m;
           });
@@ -8794,7 +8911,8 @@ const shuffleKeepRef    = useRef(false);
                 position:'relative',
               }}>
                 {/* ambient glow blob — uses app accent (cover-derived or preset) */}
-                <AmbientGlow off={settings.accentMode==='off'} visible={!((hero && !heroExiting) || reverseHero)}/>
+                <AmbientGlow off={settings.accentMode==='off' || settings.ambientGlow === false}
+                  visible={!((hero && !heroExiting) || reverseHero)}/>
                 <div id="player-album-art" ref={playerArtRef}
                   style={{opacity: ((hero && !heroExiting) || reverseHero) ? 0 : 1, position:'relative', zIndex:1}}>
                   <div ref={artEntranceRef}>
@@ -8809,7 +8927,7 @@ const shuffleKeepRef    = useRef(false);
               transform: playerVisible ? 'translateY(0)' : 'translateY(10px)',
               transition: playerVisible ? 'opacity 0.36s ease 0.28s, transform 0.48s cubic-bezier(0.22,1,0.36,1) 0.28s' : 'opacity 0.1s ease, transform 0.1s ease',
             }}>
-              <ProgressBar progressRef={progressRef} total={track.duration || 0}
+              <ProgressBar progressRef={progressRef} audioRef={audioRef} total={track.duration || 0}
                 onSeek={handleSeek} isPlaying={isPlaying} visible={playerVisible}
                 />
             {(()=>{ const P = { spring:0.055, damping:0.84, clamp:10 }; const SIDE = 'clamp(40px, 5.2vw, 58px)'; return (

@@ -80,9 +80,24 @@ an enclosing tag»**, и babel указывает на **следующий** э
 
 `--accent` / `--accent-rgb` **динамически анимируются** через `useEffect` в `App` при смене `accentMode` или extracted цвета обложки: rAF-лерп по RGB (easeInOutCubic, 400мс) от текущего анимируемого значения к целевому. все места с `var(--accent)` / `var(--accent-rgb)` перетекают покадрово без ререндеров React.
 
+⚠️ **цена перетекания — перерисовка, а не только стиль.** каждый кадр лерпа
+`setProperty` на `:root` инвалидирует краску всех 25 потребителей
+`--accent-rgb`, и стоимость у каждого своя. правило при выборе, куда вешать
+цвет: **в `background`/`box-shadow`/`filter` — только на маленьком элементе.**
+Дорогое (и было дорогим) убрано:
+
+- `AmbientGlow` — **без `filter: blur(42px)`**. размытие почти ничего не
+  добавляло к градиенту, который и так уходил в ноль, но два прохода блюра
+  шли по ~1000×1000 px. мягкость перенесена в стопы градиента, элемент поднят
+  в отдельный слой (`will-change: opacity` + `translateZ(0)`)
+- `#accent-top` — бокс ограничен верхними `62%` вместо `inset:0`. градиент
+  прозрачен уже к ~235px, то есть нижняя часть окна растрировалась впустую
+- glow-слой `ProgressBar` — **полной ширины и статичный**, едет только
+  `opacity` (см. компонент). тень растрируется один раз
+
 **live accent store** (module-level): `LIVE_ACCENT {r,g,b}` + `onAccentChange(fn)` подписка. App обновляет `LIVE_ACCENT` и звенит подписчикам каждый кадр анимации. canvas-компоненты (`ThinVolumeSlider`) подписываются и перерисовываются в такт.
 
-**гейт свечений**: `LIVE_GLOW {on}` (module-level) + `--glow-opacity` (CSS var, 0/1) + `body.glow-off` (класс). App ставит всё это в `useEffect [settings.accentMode]` при `accentMode==='off'` и дёргает `_accentSubs` для перерисовки canvas. глушат: `#accent-top` (`body.in-player:not(.glow-off)`), titlebar-градиент (эффект пропускает background), `AmbientGlow` (проп `off` → null), glow-слой ProgressBar (`opacity: var(--glow-opacity)`), shadowBlur слайдера громкости (`LIVE_GLOW.on`), `.like-glow` (`body.glow-off .like-glow { animation:none }` — pop остаётся).
+**гейт свечений**: `LIVE_GLOW {on}` (module-level) + `--glow-opacity` (CSS var, 0/1) + `body.glow-off` (класс). App ставит всё это в `useEffect [settings.accentMode]` при `accentMode==='off'` и дёргает `_accentSubs` для перерисовки canvas. глушат: `#accent-top` (`body.in-player:not(.glow-off)`), titlebar-градиент (эффект пропускает background), `AmbientGlow` (проп `off` → null), glow-слой ProgressBar (`opacity: calc(var(--pb-glow) * var(--glow-opacity))` — **именно calc**, потому что opacity теперь перезаписывает rAF, и простое значение его бы перекрыло), shadowBlur слайдера громкости (`LIVE_GLOW.on`), `.like-glow` (`body.glow-off .like-glow { animation:none }` — pop остаётся).
 
 **анимации:** `breathe`, `spin`, `fadeInUp`, `fadeOutDown`, `artEntrance` (легаси — частично заменены Motion-компонентами), `likePop`+`likeGlow` (пружинный pop + accent-glow при лайке, классы `.like-pop .like-glow`; HomeCard/SearchTrackRow — remount по key, правило `.like-pop.like-glow` играет оба сразу; `body.glow-off` глушит glow-часть; в PlayerLikeBtn заменено на Motion — см. компонент), `stEq` (мини-эквалайзер станции, класс `.st-eq`, 3 столбика `var(--accent)`), `shimmer` (скелетоны, класс `.skel`, псевдоэлемент-свип, стаггер через `--skel-delay`)
 
@@ -317,7 +332,7 @@ useLang()      — хук: возвращает t(key), читает LangContext
 компоненты вызывают `const t = useLang()` внутри себя.
 **исключение**: `SearchView` использует `const T = useLang()` — буква `t` занята переменной трека в `.map(t => ...)`.
 
-ключи добавленные в сессиях: `back`, `subscribe`, `subscribed`, `artist_label`, `follow_err`, `unfollow_err`, `copy_link`, `link_copied`, `copy_link_err`, `start_station`, `station_for`, `station_exit`, `station_label`, `station_err`, `accent_title`, `accent_sub`, `accent_default/lavender/mint/rose/amber/cover`, `accent_cover_sub`, `nav_playlists`, `playlists_empty`, `playlists_empty_sub`, `accent_seg_off`, `accent_seg_color`, `accent_off_title`, `accent_off_sub`, `pl_new_title`, `pl_create_err`, `pl_edit`, `pl_login_hint`, `ed_saving`, `ed_saved`, `ed_save_err`, `ed_add`, `ed_add_search`, `ed_add_recs`, `ed_added`, `ed_empty`, `ed_recs_empty`, `ed_rec_loading`, `ed_track_del`, `pl_count_1/2/5`, `add_to_pl`, `add_pl_new`, `added_to`, `pl_add_err`, `pl_list_err`, `ed_title_ph`, `ed_art_pick`, `ed_art_err`, `removed_from`, `pl_rm_err`, `pl_in`, `pl_out`, `pl_in_loading`, `sec_lyrics`, `lyrics_sources`, `lyrics_sources_sub`, `lyrics_off`, `lyrics_synced`, `lyrics_up`, `lyrics_down`, `lyrics_title`, `lyrics_back`, `lyrics_loading`, `lyrics_notfound`, `lyrics_notfound_sub`, `lyrics_err`, `lyrics_err_sub`, `lyrics_plain`, `lyrics_tap_line`, `lyrics_retry`, `lyrics_all_off`, `dl_save`, `dl_folder`, `dl_change`, `dl_name`, `dl_no_dir`, `dl_no_auth`, `dl_no_stream`, `dl_resolve`, `dl_not_audio`, `dl_resolving`, `dl_err`, `dl_wait`, `dl_ok`, `dl_no_tags`, `sec_discord`, `shuffle_all`, `shuffle_empty`, `search_hinted`.
+ключи добавленные в сессиях: `art_glow`, `art_glow_sub`, `back`, `subscribe`, `subscribed`, `artist_label`, `follow_err`, `unfollow_err`, `copy_link`, `link_copied`, `copy_link_err`, `start_station`, `station_for`, `station_exit`, `station_label`, `station_err`, `accent_title`, `accent_sub`, `accent_default/lavender/mint/rose/amber/cover`, `accent_cover_sub`, `nav_playlists`, `playlists_empty`, `playlists_empty_sub`, `accent_seg_off`, `accent_seg_color`, `accent_off_title`, `accent_off_sub`, `pl_new_title`, `pl_create_err`, `pl_edit`, `pl_login_hint`, `ed_saving`, `ed_saved`, `ed_save_err`, `ed_add`, `ed_add_search`, `ed_add_recs`, `ed_added`, `ed_empty`, `ed_recs_empty`, `ed_rec_loading`, `ed_track_del`, `pl_count_1/2/5`, `add_to_pl`, `add_pl_new`, `added_to`, `pl_add_err`, `pl_list_err`, `ed_title_ph`, `ed_art_pick`, `ed_art_err`, `removed_from`, `pl_rm_err`, `pl_in`, `pl_out`, `pl_in_loading`, `sec_lyrics`, `lyrics_sources`, `lyrics_sources_sub`, `lyrics_off`, `lyrics_synced`, `lyrics_up`, `lyrics_down`, `lyrics_title`, `lyrics_back`, `lyrics_loading`, `lyrics_notfound`, `lyrics_notfound_sub`, `lyrics_err`, `lyrics_err_sub`, `lyrics_plain`, `lyrics_tap_line`, `lyrics_retry`, `lyrics_all_off`, `dl_save`, `dl_folder`, `dl_change`, `dl_name`, `dl_no_dir`, `dl_no_auth`, `dl_no_stream`, `dl_resolve`, `dl_not_audio`, `dl_resolving`, `dl_err`, `dl_wait`, `dl_ok`, `dl_no_tags`, `sec_discord`, `shuffle_all`, `shuffle_empty`, `search_hinted`.
 
 ### переименование трека (shift+клик по названию в плеере)
 
@@ -425,11 +440,19 @@ json-объекту даёт строки. поэтому все обращен�
 
 ### `ProgressBar` (бывш. WaveProgressBar)
 `{progressRef, total, onSeek, isPlaying, visible}`.
-div-based pill bar. высота **10px → 14px** при hover/drag (spring overshoot). external padding 10px = hit-zone ~30px. rAF обновляет `fillRef.style.transform = scaleX(p)` + thumb `left = p*100%` + текстовые таймкоды.
-- **fill gradient** на `rgba(var(--accent-rgb),...)` + `color-mix(... 86%, white)` — перетекает с глобальной акцент-анимацией; `transition: background 0.18s linear` как low-pass
-- **glow layer** (отдельный div, не клиппится track-overflow) — accent box-shadow (`var(--accent-rgb)`) усиливается на hover/drag
-- **thumb** — белый круг 14→16px, opacity 0 при idle, появляется при hover/drag, центрирован через `translate: -50% -50%`
+div-based pill bar. высота **10px → 14px** при hover/drag (spring overshoot). external padding 10px = hit-zone ~30px. rAF обновляет **только композитные свойства** + текстовые таймкоды.
+- 🚨 **никаких layout-свойств в rAF.** раньше стояло `fillRef.style.width = p%` и `thumbRef.style.left = p%` — оба заставляют chromium пересчитать раскладку и перерисовать на каждом кадре. теперь: fill `transform: scaleX(p)` от левого края, thumb `transform: translate(<px>, -50%)`, глоу `--pb-glow`
+- **thumb позиционируется в пикселях от кэшированной ширины дорожки** (`trackWRef`, `ResizeObserver` по `trackRef`). `translateX` в процентах считается от ширины САМОГО thumb'а, а не дорожки, поэтому процентами его вести нельзя; читать `offsetWidth` в rAF тоже нельзя — это принудительный layout каждый кадр
+- **fill gradient** на `rgba(var(--accent-rgb),...)` + `color-mix(... 86%, white)` — перетекает с глобальной акцент-анимацией. `transition: background` **убран**: значение менялось каждый кадр лерпа, то есть transition постоянно перезапускался и давал не сглаживание, а отставание
+- **glow layer** (отдельный div, не клиппится track-overflow) — **полной ширины, статичный**, едет только прозрачностью: `opacity: calc(var(--pb-glow) * var(--glow-opacity))`. тень с альфами `GLOW_A {idle .18, soft .2, hover .30, active .42}` всегда размазана по всей дорожке, прогресс подмешивается в неё прозрачностью. так тень растрируется один раз и дальше только композитится. ⚠️ **так было не всегда:** ширина глоу бралась из `progressRef.current` НА РЕНДЕРЕ, а не в rAF, и App не ререндерится от прогресса (это ref) — то есть глоу не двигался ВООБЩЕ, а у левого края шкалы висело светящееся пятно
+- **thumb** — белый круг 14→16px, opacity 0 при idle, появляется при hover/drag
 - **time tooltip** — при hover/drag над курсором показывается dark pill с `fmt(time)`
+
+⚠️ **значение в style, которое перезаписывает rAF, должно быть КОНСТАНТОЙ.**
+react пишет в стиль только если значение ИЗМЕНИЛОСЬ, поэтому `transform:
+'scaleX(<initP>)'` в jsx переживает любой ререндер App, а `transform:
+scaleX(progressRef.current)` — нет: он менялся бы и затирал бы живое
+значение. отсюда `initP = useRef(progressRef.current).current`.
 
 ### `ThinVolumeSlider`
 `{volume, onChange, onLiveChange}`. `volume` — это **gain 0..1** (то, что ест `audio.volume`), а внутри слайдер работает в **позициях 0..1** и на границе наружу конвертит: `volPosToGain` / `volGainToPos`, `VOL_GAMMA = 2.2` (ползунок линеен по позиции, gain = pos^2.2 — `audio.volume` линейна по амплитуде, слух нет, и без степени полезный диапазон жался в самый низ ползунка; верх по-прежнему 100%). canvas TW=28px, вертикальный. drag вверх = больше. fill рисуется из `LIVE_ACCENT` (подписка `onAccentChange` → перерисовка в такт акцент-анимации), glow, без thumb. `onLiveChange` — каждый кадр драга в audio без ререндера App, `onChange` — один раз на mouseup.
@@ -533,7 +556,7 @@ shuffle (порядок сбрасывает эффект `[shuffle]`, даль�
 работает. бывший `.scroll-fade` (полоса вспыхивала на 900мс после скролла и
 под курсором) удалён вместе со состоянием `scrolling`, `scrollHideRef` и
 таймером: они ререндерили панель после каждого скролла ради строчки, которой
-больше нет. границы прокрутки показывает `mask` — как у `VirtualTrackList`.
+больше нет. границы прокрутки показывают слои-градиенты — как у `VirtualTrackList`.
 
 ### горячие клавиши
 
@@ -564,18 +587,21 @@ shuffle (порядок сбрасывает эффект `[shuffle]`, даль�
 
 ### `VirtualTrackList`
 `{items, activeId, loadingId, errorId, onClickItem, onContextMenuItem, scrollToActive, scrollTargetId}`.
-ROW_H=50. `content-visibility:auto`. абсолютный пилл с transition. `onContextMenuItem` пробрасывается в `TrackRow`.
-- **edge fade-out**: `mask-image: linear-gradient(...)` динамически из state `edges={top,bottom}`. top fade видим если `scrollTop > 4`, bottom — если есть скрытый контент снизу. transition `mask-image 0.2s ease`. если содержимое влезает целиком — mask='none'.
+ROW_H=50. абсолютный пилл с transition. `onContextMenuItem` пробрасывается в `TrackRow`. **обёртка** `position:relative; flex:1; minHeight:0` — существует только ради двух слоёв градиента, сам скроллер стоит внутри.
+- 🚨 **`content-visibility:auto` УБРАН** (и в `TrackRow`, и в карточках сетки — см. `HomeCard`). список и так виртуализирован, ~35 строк из тысячи, экономить нечего; на быстром скролле строки на границе приходили пустыми (картинка не успевала отрисоваться) и дорисовывались через кадр. в сетке `auto-fill` он был вдобавок вреден: `contain-intrinsic-size: auto 180px` ≠ реальной высоте карточки (подпись + квадратная обложка = ширина колонки), то есть **высота строки сетки менялась прямо во время скролла**
+- **edge fade-out — ДВА СЛОЯ ПОВЕРХ скроллера, а не `mask-image` на нём.** `fadeTop`/`fadeBot`: `position:absolute; left/right:0; height:FADE(18px); pointer-events:none; zIndex:2`, `background: linear-gradient(…, var(--bg), transparent)`, `opacity` 0/1 из state `edges={top,bottom}`, `transition: opacity 0.2s ease`. top видим если `scrollTop > 4`, bottom — если есть скрытый контент снизу. ⚠️ маска на скроллируемом элементе заставляет chromium перерастрировать содержимое в замаскированный слой на каждом кадре скролла, а `transition: mask-image` сверху запускал вторую интерполяцию градиента ровно тогда, когда список уже поехал. скроллер остаётся чистым, края — обычная композиция
 
 ### `HomeCard`
-`{track, onSelect, artRef, artHidden, isLiked, onLike}`. **motion.div** с entry/exit spring (380/32/0.6): `scale 0.92→1`, `opacity 0→1`, exit `scale 0.88`. **layout prop убран** — был perf-bottleneck на больших гридах.
+`{track, onSelect, artRef, artHidden, isLiked, onLike}`. **motion.div** с entry/exit spring (380/32/0.6): `scale 0.92→1`, `opacity 0→1`, exit `scale 0.88`. **layout prop убран** — был perf-bottleneck на больших гридах. **`content-visibility:auto` убран** (см. `VirtualTrackList` — в сетке он менял высоту строки прямо во время скролла).
 - hover-оверлей: затемнение + прозрачная play-иконка 26px (`.home-card-play`, spring-in scale 0.6→1 по cubic-bezier(0.34,1.56,0.64,1), без подложки)
 - лайк-круг: `LikeHeart` 13px, при лайке pop+glow
 
 ### `HeroClone` ⚡
-`{hero, exiting, reverse=false}`. portal → document.body. **GSAP timeline** `expo.inOut`, `force3D:true`.
-- **одиночный div** (без inner): `overflow:hidden`, `border-radius` **анимируется** по 4 углам от `16px×4` (scale 1, плеер) до `corners/sc` (визуально ровно углы карточки-цели на приземлении — без щелчка углов). `corners [tl,tr,br,bl]` читаются хелпером `cssCorners(artEl)` при создании hero и передаются в объекте.
-- animation **transform** (translate3d + scale) + borderRadius; img внутри — параллельно анимируется `clip-path: inset(0 round …)` в такт радиусу родителя
+`{hero, exiting, reverse=false}`. portal → document.body. **GSAP timeline** `power3.inOut`, `force3D:true`, **430мс**.
+- 🚨 **ease был `expo.inOut` — это и была жалоба на «резко».** expo.inOut держит пол пути в середине: между 25% и 75% времени проходит ~97% дистанции, то есть обложка будто стоит, потом хлёстко пролетает экран, потом снова стоит. `power3.inOut` в той же середине проходит ~87% и симметричен. если покажется вяло — `sine.inOut` мягче ещё, но на длинной дистанции обложка «плывёт»
+- ⚠️ **`clip-path` на `<img>` УБРАН — он был ИЗБЫТОЧЕН.** родитель и так режет картинку (`overflow:hidden` + анимируемый `borderRadius` с тем же радиусом), то есть была вторая растеризация той же кривой, причём на масштабированной картинке. стоила кадра на каждом шаге, а дропы кадров читаются как дёргасть — добавляли ровно ту резкость, которую убирали
+- **одиночный div** (без inner): `overflow:hidden`, `border-radius` **анимируется** по 4 углам от `16px×4` (scale 1, плеер) до `corners/sc` (визуально ровно углы карточки-цели на приземлении — без щелчка углов). `corners [tl,tr,br,bl]` читаются хелпером `cssCorners(artEl)` при создании hero и передаются в объекте
+- animation **transform** (translate3d + scale) + borderRadius
 - `useLayoutEffect` + pre-paint inline `transform: translate3d(dx,dy,0) scale(sc)` → no flash при mount
 - exit: `gsap.to(opacity:0)` с `power2.out` 140мс
 - `contain:'layout style paint'` + `backface-visibility:hidden` — изоляция от соседнего DOM, sub-pixel AA
@@ -602,7 +628,7 @@ ROW_H=50. `content-visibility:auto`. абсолютный пилл с transition
 - **строка**: активная — `var(--accent)` + 600 + сдвиг `translateX(2px)`, остальные `rgba(255,255,255,0.34)`/500. переход 0.28с. клик по строке с таймкодом → `onSeek(t)`; без таймкода курсор `default` и клик игнорится
 - **`!synced`** — над текстом тихая строка `lyrics_plain`. подсветки не будет, и честнее сказать об этом, чем сделать вид
 - **скролл**: класс **`.scroll-fade`**, не `.scroll-thin`. полоса **прозрачна по умолчанию** и появляется только на 900мс после скролла (класс `.on`) или под курсором (`:hover`), `transition 0.25s`. в колонке 260px постоянно висящая полоса читалась как тяжёлая вертикальная черта во всю высоту
-- **индикация вместо постоянной полосы — градиенты по краям**, как у `VirtualTrackList`: `mask-image: linear-gradient(...)` с `EDGE_FADE = 20px`, градиент рисуется там, где контент обрезан; если контент влез целиком — `mask:'none'`. края считаются в `edgesRef` + `forceEdges()` через счётчик `edgesTick`: значения меняются на каждом скролле, а ререндер ради двух булевых не нужен, маска применяется стилем
+- **индикация вместо постоянной полосы — градиенты по краям**, как у `VirtualTrackList`: `fadeTop`/`fadeBot` отдельными слоями `pointer-events:none` поверх скроллера, `EDGE_FADE = 20px`, непрозрачны только там, где контент обрезан (те же `edgesRef` + `forceEdges()`/`edgesTick`, что раньше кормили `mask-image` — теперь они кормят `opacity`). ⚠️ **маска на скролл-контейнере убрана** — она ломала плавность скролла текста песни по той же причине, что и в библиотеке
 - края пересчитываются не только на скролле: `ResizeObserver` на контейнере (смена трека, открытие панели, ресайз окна) + сброс `scrollTop = 0` при `status === 'loading'`
 - **автопрокрутка**: `scrollToActive(smooth)` ставит `line.offsetTop - clientHeight/2 + line.offsetHeight/2`. **при открытии — сразу (`scrollTop`, без анимации)**: плавно прокручивать через весь текст от начала зрелищно и долго. дальше подсветка ведёт плавно (`smoothScroll` 480мс). **4 секунды после ручного скролла панель не дёргается** — иначе вырывает текст из-под читателя. свой скролл от автоскролла отличается окном `autoUntilRef` (700мс после старта), а не флагом: `smoothScroll` шлёт события пачками и флаг не успевает сброситься
 - `lineRefs.current` обнуляется на каждом рендере перед `.map` — иначе после смены трека остаются протухшие ноды
@@ -1150,8 +1176,27 @@ protocol-дамп (сырой hex каждого фрейма) — за `SEWER_R
 - порядок: playerInfoRef (артист → название) → slideWrapRef (обложка + **ambient glow blob**) → ProgressBar → controls
 - **ambient glow** (за обложкой, `zIndex:0`, opacity 1 кроме hero):
   - `position:absolute inset:-30%, borderRadius:50%`
-  - `background: radial-gradient` на `var(--accent-rgb)` (4 stops: 0.55 → 0.26 → 0.08 → 0) — перетекает с глобальной акцент-анимацией покадрово, crossfade-слои не нужны
-  - `filter: blur(42px)`
+  - `background: radial-gradient(circle closest-side at center, …)` на `var(--accent-rgb)` (10 stops: 0.5 → … → 0) — перетекает с глобальной акцент-анимацией покадрово, crossfade-слои не нужны
+  - 🚨 **`filter: blur(42px)` УБРАН, и заменить его градиентом НЕЛЬЗЯ было «просто так».** элемент с `inset:-30%` вокруг обложки до `clamp(320px,54vw,760px)` — это ~1000×1000 px в два прохода блюра, перерисовывалось на каждом кадре лерпа акцента, на ресайзе и на каждой смене трека
+  - ⚠️ **но блюр делал одну важную работу, и сначала это упустили.** `circle` без размера = `farthest-corner`: градиент уходит в ноль на УГЛАХ квадрата, а `border-radius:50%` режет круг по СЕРЕДИНАМ РЁБЕР. на углах альфа 0, на рёбрах ~0.02 → обрезка даёт чёткую границу круга, и её замазывал блюр. сняли блюр — блоб стал «кругом с резким краем»
+  - **правильно: `closest-side`.** доводит градиент ровно до нуля на ребре, то есть ровно там, где его режет скругление → стыка нет, блюр не нужен. хвост у 100% идёт очень полого (0.05 → 0.02 → 0.008 → 0.002 → 0), иначе на границе круга остаётся заметный ободок
+  - `will-change: opacity` + `transform: translateZ(0)` — отдельный композитируемый слой, дальше двигается только `opacity`
+  - **тумблер `settings.ambientGlow`** (дефолт `true`) в карточке «Акцент и свечение» → Оформление, строкой под сегментом режима, ключи `art_glow` / `art_glow_sub`. выключенный = компонент возвращает `null` вообще, то есть элемент не в DOM. в `AmbientGlow` гейт составной: `off = accentMode==='off' || ambientGlow===false` — при режиме «Выкл» тумблер гаснет (`opacity 0.4`), потому что блоб и так не рисуется, и настройка была бы ложью. нормализация при загрузке — `m.ambientGlow = m.ambientGlow !== false`, по образцу `cleanDiscordSettings` (мусор из старого файла настроек не должен включать тумблер)
+
+🚨 **про константу `div` — она ЛОКАЛЬНАЯ для `LyricsSettings`, не для `SettingsView`.**
+`const div = settings.hideDividers ? 'none' : '1px solid …'` объявлена
+внутри `LyricsSettings` и используется там же (в строках источников).
+`SettingsView` — **другая функция** и её этой константы не видно: обращение
+даёт `ReferenceError: div is not defined` при рендере, а это роняет
+**весь** `App` (настройки смонтированы всегда, падение в них гасит всё
+окно, включая главный экран).
+
+**общее правило для этого файла:** константа, объявленная внутри
+одной функции, не видна соседней, даже если объявлена в 20 строках выше.
+перед тем как использовать имя в соседнем компоненте, надо проверить
+**в какой функции оно объявлено** — grep по имени файла этого не даёт.
+(`Row` в `SettingsView` поэтому инлайнит `settings.hideDividers`, а не
+берёт `div`.)
   - `transition: opacity 0.6s ease`
 - **обложка**: `width: min(100%, clamp(320px, 54vw, 760px), clamp(240px, 58vh, 760px))`
 - **прогресс-бар**: `width: min(100%, clamp(260px, 34vw, 520px))`
