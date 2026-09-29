@@ -1973,10 +1973,10 @@ function ThinVolumeSlider({ volume, onChange, onLiveChange }) {
    после load+decode плавно проявляется (0.45s), старая остаётся под ней до
    конца кроссфейда — тёмной вспышки и «пустого бокса» при смене трека нет */
 function CoverLayer({ url, onLoaded, onFailed }) {
-  /* кавер рисуется в canvas с уже скруглёнными углами (roundRect + clip в
-     битмап при загрузке): CSS-клипов нет вообще — композитным слоям нечего
-     обрезать по-кривому, белые пиксели обложки физически не могут выйти за
-     скругление. углы битмапа прозрачные, под ними фон контейнера */
+  /* кавер рисуется в canvas ПЛОСКИМ прямоугольником, без клипа по скруглению.
+     скругление делает контейнер (border-radius + overflow:hidden). вторая
+     растеризация той же кривой внутри битмапа давала на стыке светлый шов
+     в углах — на почти чёрных обложках это были белые пиксели. см. draw() */
   const canvasRef = useRef(null);
   const imgRef    = useRef(null);
   const retryRef  = useRef(0);
@@ -1991,16 +1991,20 @@ function CoverLayer({ url, onLoaded, onFailed }) {
     if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
     const ctx = cv.getContext('2d');
     ctx.clearRect(0, 0, w, h);
-    ctx.save();
-    ctx.beginPath();
-    ctx.roundRect(0, 0, w, h, 16 * dpr);
-    ctx.clip();
-    /* cover-fit с запасом 1px: край битмапа картинки за пределами скругления */
+    /* БЕЗ roundRect/clip — намеренно. Кант режет контейнер своими
+       `border-radius` + `overflow:hidden`, и это ЕДИНСТВЕННАЯ растеризация
+       кривой. Скругление в битмапе давало вторую, и на стыке двух
+       растеризаций в углу проступал фон контейнера: у контейнера #111116,
+       а у почти чёрных обложек (Fallen Angel и подобные) пиксели арта
+       3,3,3 — на 4 пикселя в каждом углу было светлее, чем сама обложка.
+       измерено: угол 17,17,22 вместо 3,3,3.
+       здесь альфа 255 по всему битмапу, проступить просто нечему */
+    /* запас 2px остаётся: битмап масштабируется в css-бокс, и без запаса
+       на прямых краях возможна волосяная щель от округления размера */
     const bw = w + 2 * dpr, bh = h + 2 * dpr;
     const sc = Math.max(bw / im.naturalWidth, bh / im.naturalHeight);
     const dw = im.naturalWidth * sc, dh = im.naturalHeight * sc;
     ctx.drawImage(im, (w - dw) / 2, (h - dh) / 2, dw, dh);
-    ctx.restore();
   }, []);
 
   /* загрузка → decode → отрисовка → fade-in → ready */
