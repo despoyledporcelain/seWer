@@ -147,15 +147,13 @@
   input[type=number]::-webkit-inner-spin-button,
   input[type=number]::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
   input[type=number] { -moz-appearance:textfield; }
-  @keyframes breathe    { 0%,100%{opacity:0.38;transform:scale(1)} 50%{opacity:0.62;transform:scale(1.1)} }
+  /* ❌ УДАЛЕНЫ как мёртвые: `breathe`, `fadeOutDown`, `marqueeScroll`.
+     ни один не имел ни одного `animation:`/`animation-name` — бегущая
+     строка у них перебивалась короче или компонент писал transform инлайном.
+     `marqueeScroll` — самая коварная из них: переменная `--mq-d` есть
+     только у marquee-элемента, а сам marquee давно ездит на JS. */
   @keyframes spin       { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
   @keyframes fadeInUp   { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
-  @keyframes fadeOutDown{ from{opacity:1;transform:translateY(0)} to{opacity:0;transform:translateY(5px)} }
-  @keyframes marqueeScroll {
-    0%,18%  { transform:translateX(0); }
-    50%,68% { transform:translateX(var(--mq-d)); }
-    100%    { transform:translateX(0); }
-  }
   /* ⚠️ здесь НЕ БЫЛО `transform`/`transition` и `:hover { transform }` —
      они были, и не работали НИ РАЗУ. корень карточки — `motion.div`,
      который анимирует `scale`, то есть после входной анимации Motion
@@ -1945,6 +1943,8 @@ function ThinVolumeSlider({ volume, onChange, onLiveChange }) {
   const TW = 28;
 
   const drawRef = useRef(null);
+  /* метка времени последнего кадра — для нормализации сглаживания на dt */
+  const lastT = useRef(0);
   const kick = () => {
     if (rafRef.current == null && drawRef.current) {
       rafRef.current = requestAnimationFrame(drawRef.current);
@@ -1983,12 +1983,22 @@ function ThinVolumeSlider({ volume, onChange, onLiveChange }) {
     ro.observe(wrap);
 
     const draw = () => {
+      /* ⚠️ сглаживание нормализовано на ВРЕМЯ, а не на кадр.
+         было `volDisp += diff * 0.09` — доля от разницы за КАДР. на 144Гц
+         она съедала разницу вчетверо быстрее, чем на 60Гц, и «догоняющий»
+         бегунок выглядел по-разному на разных мониторах. k = 1-(1-k)^(dt/16.7)
+         даёт одну и ту же кривую при любой частоте кадров. */
       const speed = dragging.current ? 0.09 : 0.04;
+      const now = performance.now();
+      const dt = Math.min(64, lastT.current ? now - lastT.current : 16.7);
+      lastT.current = now;
+      const frames = dt / 16.7;
+      const k = 1 - Math.pow(1 - speed, frames);
       const diff = volActual.current - volDisp.current;
       if (!dragging.current && Math.abs(diff) < 0.001) {
         volDisp.current = volActual.current;
       } else {
-        volDisp.current += diff * speed;
+        volDisp.current += diff * k;
       }
       const v = volDisp.current;
 
@@ -2177,8 +2187,16 @@ function AlbumArt({ track, instant, onReady }) {
   useEffect(() => {
     if (url === topUrl) return;
     if (pruneTimer.current) { clearTimeout(pruneTimer.current); pruneTimer.current = null; }
-    setLayers(url ? [...layers, { url }] : []);
-  }, [url]);
+    /* 🚨 раньше здесь было `setLayers(url ? [...layers, { url }] : [])`.
+       `layers` здесь — ЗАМЫКАНИЕ эффекта, а его deps = [url]. если смена
+       обложки приходит в том же батче, что и другая (быстрое переключение
+       треков), эффект запускается с УСТАРЕВШИМ layers и затирает `ready`
+       у слоя, который уже прогрузился: сверху оказывался неготовый слой,
+       и клон/кроссфейд ждал уже несуществующей готовности.
+       функциональный апдейтер берёт актуальное prev, поэтому порядок
+       применения неважен. */
+    setLayers(prev => (url ? [...prev, { url }] : []));
+  }, [url, topUrl]);
 
   /* верхний слой проявился → срезаем нижние после кроссфейда */
   useEffect(() => {
@@ -3489,6 +3507,34 @@ const HomeCard = React.memo(function HomeCard({ track, onSelect, artRef, artHidd
   );
 });
 
+/* Сетка главного экрана — ОТДЕЛЬНЫЙ мемоизированный компонент.
+   🚨 инлайн она была причиной ~150ms блокировки на КАЖДЫЙ клик (INP 264ms).
+   список лайков — это сотни карточек, и каждое состояние App (клик по треку,
+   смена тома, открытие меню) пересоздавало их элементы заново: React
+   проходил по всем, плюс `AnimatePresence` со `PresenceChild` на каждой
+   карточке (хук на карточку) — всё это заново на каждый рендер App.
+   теперь список/лайки/коллбеки стабильны (useMemo/useCallback), а
+   artHidden приходит ПРИМИТИВАМИ (heroId/reverseId), а не выражением с
+   замыканием — иначе React.memo сравнивал бы по ссылке на новый объект
+   и пропускал бы всегда. Мемоизация работает только когда ВСЕ пропы
+   стабильны: список, Set лайков, три коллбека и два примитива. */
+const HomeGrid = React.memo(function HomeGrid({ list, likedIds, onLike, onSelect, getArtRef, heroId, reverseId }) {
+  return (
+    <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(128px, 1fr))', gap:18}}>
+      <AnimatePresence initial={false}>
+        {list.map(t => (
+          <HomeCard key={t.id} track={t}
+            artRef={getArtRef(t.id)}
+            onSelect={onSelect}
+            artHidden={(reverseId != null && t.id === reverseId) || (heroId != null && t.id === heroId)}
+            isLiked={likedIds ? likedIds.has(t.id) : false}
+            onLike={onLike}/>
+        ))}
+      </AnimatePresence>
+    </div>
+  );
+});
+
 /* ── Hero clone ──────────────────────────────────────────────────────────── */
 const HERO_DUR_MS  = 430;
 const HERO_FADE_MS = 140;
@@ -3561,7 +3607,7 @@ function HeroClone({ hero, exiting, reverse = false }) {
     const A = rNums(from.br), B = rNums(to.br);
     const brS = { p: 0 };
     tl.fromTo(brS, { p: 0 }, {
-      p: 1, ease: HERO_EASE, duration: DUR * BR_MORPH, force3D: false,
+      p: 1, ease: HERO_EASE, duration: DUR * BR_MORPH,
       onUpdate: () => {
         const k = brS.p;
         el.style.borderRadius = (A[0]+(B[0]-A[0])*k).toFixed(0) + 'px '
@@ -5924,7 +5970,11 @@ const SearchView = React.forwardRef(function SearchView({ visible, scAuth, liked
             position:'absolute', left:0, right:10,
             top:'calc(8% + 76px)', bottom:0,
             overflowY:'auto', padding:'16px 52px 32px',
-            willChange:'transform',
+            /* ❌ был `willChange:'transform'`, хотя transform у этого
+               элемента НИКОГДА не меняется — он просто скроллится.
+               подсказка браузеру «готовь слой под transform» тут
+               бессмысленна: держала лишний слой на всю область
+               результатов поиска на всё время её жизни. */
           }}>
           {users.length > 0 && (
             <div style={{marginBottom:22}}>
@@ -6471,6 +6521,24 @@ function App() {
   const hlsRef        = useRef(null);
   const handleNextRef  = useRef(null);
   const handlePrevRef  = useRef(null);
+  /* для медиа-панели ОС: seek/позиция нужны вне рендера, из обработчиков
+     setActionHandler, которые регистрируются ОДИН раз на пустой deps */
+  const handleSeekRef  = useRef(null);
+  const trackRef       = useRef(null);
+  /* для History API: обработчик popstate читает ТЕКУЩИЙ view, чтобы понять,
+     куда вообще возвращаемся. нужен ref, а не замыкание — эффект подписан
+     один раз и не должен переподписываться на каждый view.
+     ⚠️ само присваивание handleNavRef.current — НИЖЕ по файлу, сразу после
+     определения handleNav: здесь он ещё в TDZ и чтение упало бы */
+  const viewRef        = useRef('home');
+  const handleNavRef   = useRef(null);
+  /* в какой view нас должен был привести popstate. сверяется по ФАКТУ
+     достижения, а не гасится флагом: handleNav умеет не переключить view
+     (гард редактора плейлиста), и флаг в этом случае залипал бы навсегда,
+     тихо отключив запись в истории навсегда */
+  const popTargetRef   = useRef(null);
+  /* монтирование ≠ переход: первый прогон эффекта истории запись не пушит */
+  const histInitRef    = useRef(false);
   const artEntranceRef    = useRef(null);
   const playerInfoRef  = useRef(null);
   const isPlayingRef   = useRef(false);
@@ -6963,6 +7031,124 @@ const shuffleKeepRef    = useRef(false);
     [pushDiscord, track?.id, track?.coverUrl, track?.duration, isPlaying, scPlayingTrack,
      settings.discordRpc, settings.discordTimestamp, settings.discordPause, settings.discordCover]);
 
+  /* ── Медиа-панель ОС (Windows «Сейчас играет» / громкость) ────────────────
+     ⚠️ ЭТО НЕ ДУБЛИРУЕТ globalShortcut в main.js, а дополняет его.
+     globalShortcut перехватывает клавиши громкости/плеера ВСЕЙ СИСТЕМЫ
+     и рисует своё уведомление; панель ОС при этом остаётся пустой — там
+     нет ни названия трека, ни обложки, ни полосы прогресса, и кнопки в ней
+     не работают. `navigator.mediaSession` — штатный путь: ОС сама рисует
+     карточку с обложкой/названием/временем и вызывает наши обработчики.
+     mediaSession и globalShortcut умеют сосуществовать: аппаратные клавиши
+     уходят обоим, но аппаратные события ОС (`navigator.mediaSession` с
+     `setActionHandler`) обрабатываются ОС самой и globalShortcut их не
+     дублирует — дублирование возможно только если ОС шлёт и то и другое,
+     поэтому play/pause/next/prev здесь просто зовут те же ref-обёртки. */
+  useEffect(() => {
+    if (!navigator.mediaSession) return;
+    const ms = navigator.mediaSession;
+    /* ⚠️ setActionHandler бросает TypeError на действиях, которых текущая
+       браузерная сборка не знает. каждый в try/catch, иначе один
+       неподдерживаемый action (напр. seekto на старом Electron) роняет
+       весь эффект и не ставит НИ ОДНОЙ кнопки */
+    const set = (action, fn) => { try { ms.setActionHandler(action, fn); } catch {} };
+    /* ⚠️ объявлено ДО регистрации обработчиков: колбэки сработали бы и
+       после (они вызываются ОС позже), но полагаться на порядок инициализации
+       здесь нельзя — при любой перестановке строк это молча падает в TDZ */
+    const seekTarget = (dir, d) => {
+      const a = audioRef.current;
+      const dur = a?.duration || 0;
+      if (!dur) return 0;
+      const jump = Math.max(1, Number(d?.seekOffset) || 10);
+      const base = a.currentTime || 0;
+      return Math.max(0, Math.min(1, (base + (dir === 'backward' ? -jump : jump)) / dur));
+    };
+    set('play',          () => { setIsPlaying(true); });
+    set('pause',         () => { setIsPlaying(false); });
+    set('previoustrack', () => { handlePrevRef.current?.(); });
+    set('nexttrack',     () => { handleNextRef.current?.(); });
+    set('stop',          () => { setIsPlaying(false); });
+    set('seekbackward',  d => handleSeekRef.current?.(seekTarget('backward', d)));
+    set('seekforward',   d => handleSeekRef.current?.(seekTarget('forward',  d)));
+    /* seekto принимает абсолютное время — прокручивать надо от currentTime */
+    set('seekto', d => {
+      const t = d?.seekTime;
+      if (typeof t === 'number' && Number.isFinite(t)) {
+        const a = audioRef.current;
+        const dur = a?.duration || trackRef.current?.duration || 0;
+        if (dur > 0) handleSeekRef.current?.(Math.max(0, Math.min(1, t / dur)));
+      }
+    });
+  }, []);
+
+  /* метаданные + позиция для панели ОС. duration нужен числом и >0, иначе
+     панель показывает «--:--» и прячет полосу прогресса */
+  useEffect(() => {
+    if (!navigator.mediaSession) return;
+    const ms = navigator.mediaSession;
+    if (!track) { try { ms.metadata = null; } catch {} return; }
+
+    const dur = Number(track.duration) > 0 ? Number(track.duration) : 0;
+    const artwork = [];
+    if (track.coverUrl) {
+      /* ⚠️ Windows из panel'а не грузит локальные data-url и sc-кэш по
+         http без расширения — такую картинку панель молча не рисует.
+         отдаём то, что гарантированно распознаётся, и только если это
+         реально URL. data-url оставляем: часть версий панели их берёт */
+      const src = track.coverUrl;
+      const usable = src.startsWith('http') || src.startsWith('data:image');
+      if (usable) {
+        artwork.push({ src, sizes: '512x512', type: src.startsWith('data:') ? src.slice(5, src.indexOf(';')) : 'image/jpeg' });
+        artwork.push({ src, sizes: '256x256', type: src.startsWith('data:') ? src.slice(5, src.indexOf(';')) : 'image/jpeg' });
+      }
+    }
+    try {
+      ms.metadata = new MediaMetadata({
+        title:   track.title   || '',
+        artist:  track.artist  || '',
+        album:   track.album   || '',
+        artwork,
+      });
+      ms.playbackState = isPlaying ? 'playing' : 'paused';
+    } catch {}
+
+    /* setPositionState должен вызываться только с валидными значениями:
+       исключение на duration<=0 или NaN ломает панель до перезагрузки */
+    const a = audioRef.current;
+    const aDur = Number(a?.duration);
+    const useDur = Number.isFinite(aDur) && aDur > 0 ? aDur : dur;
+    if (useDur > 0) {
+      const ct = Math.max(0, Number(a?.currentTime) || 0);
+      try {
+        ms.setPositionState({
+          duration: useDur,
+          position: Math.min(ct, useDur),
+          playbackRate: 1,
+        });
+      } catch {}
+    }
+  }, [track?.id, track?.title, track?.artist, track?.album, track?.coverUrl, track?.duration, isPlaying]);
+
+  /* ⚠️ позиция панели ОС обновляется раз в ~1с, а не каждый кадр:
+     setPositionState дёргает IPC/браузерное событие наружу, и на 60fps
+     это лишняя работа впустую — панель всё равно перерисовывается раз
+     в секунду. тот же троттлинг по времени, что и у лерпа акцента */
+  useEffect(() => {
+    if (!navigator.mediaSession || !track) return;
+    const id = setInterval(() => {
+      const a = audioRef.current;
+      const d = Number(a?.duration);
+      if (!Number.isFinite(d) || d <= 0) return;
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: d,
+          position: Math.min(Math.max(0, Number(a.currentTime) || 0), d),
+          playbackRate: 1,
+        });
+      } catch {}
+    }, 1000);
+    return () => clearInterval(id);
+  }, [track?.id, track?.duration]);
+
   /* тумблер = решение на подключение вообще. раньше initDiscord() дёргался
      из app.whenReady безусловно: rpc выключен — а сокет в дискорд уже открыт,
      и наоборот, включить его было нельзя, не перезапустив приложение.
@@ -7171,6 +7357,10 @@ const shuffleKeepRef    = useRef(false);
        и задержка обновления присутствия становилась случайной */
     pushDiscord(400);
   }, [track, scPlayingTrack, pushDiscord]);
+  /* ref-обёртка для медиа-панели ОС: обработчики setActionHandler
+     регистрируются один раз и не видят свежих deps */
+  handleSeekRef.current = handleSeek;
+  trackRef.current = track;
 
   useEffect(() => { setEditingTitle(false); }, [trackIdx]);
 
@@ -8557,6 +8747,99 @@ const shuffleKeepRef    = useRef(false);
       setLibScrollTrigger(v => v + 1);
     }
   };
+  handleNavRef.current = handleNav;
+
+  /* ── Кнопки «назад/вперёд» мыши → hero-клон ───────────────────────────────
+     ⚠️ ЗАЧЕМ. До этого история браузера вообще не участвовала: приложение
+     живёт на `file://` и меняет `view` реактом, не трогая History API.
+     Нажатие «назад» на мыши уходило на ПУСТУЮ предыдущую запись файла —
+     то есть либо ничего, либо выход из приложения. Привычный жест работал
+     только внутри Chromium, но не как у пользователя ожидается: «назад»
+     должен возвращать на главную, а он её не возвращал.
+
+     Теперь home↔player — это две записи истории, и `popstate` приводит
+     приложение к состоянию из записи, ПРОИГРЫВАЯ тот же hero-клон, что и
+     при клике. То есть «назад» из плеера → обложка улетает на карточку
+     (обратный hero), «вперёд» → прилетает в плеер (прямой hero). Анимация
+     одна и та же, потому что переиспользуем `handleNav`/`selectTrack`
+     ровно те, что зовут кнопки в UI. */
+
+  /* какие записи истории «наши». чужие (about:blank, служебные) трогать
+     нельзя — иначе «назад» уводил бы в никуда */
+  const HISTORY_TAG = 'sewer';
+  /* ⚠️ храним ТОЛЬКО факт «home или player». трек сюда намеренно не кладём:
+     состояние плеера и так живёт в react, а копия id в истории дала бы
+     второй источник правды — при расхождении «вперёд» возвращал бы на
+     карточку трека, которого уже нет в сетке */
+  const pushView = (v) => {
+    try {
+      history.pushState({ [HISTORY_TAG]: 1, view: v }, '');
+    } catch {}
+  };
+  /* ⚠️ первая запись: `pushState` на САМОМ старте оставил бы «назад» в
+     никуда. `replaceState` переписывает текущую запись, поэтому «назад»
+     сразу после запуска корректно ничего не делает */
+  useEffect(() => {
+    try {
+      history.replaceState({ [HISTORY_TAG]: 1, view: viewRef.current }, '');
+    } catch {}
+  }, []);
+
+  const onPop = useRef(null);
+  useEffect(() => {
+    const handler = () => {
+      const st = history.state;
+      /* ⚠️ запись не наша (первый запуск, служебная страница) — не реагируем,
+         иначе «назад» с главной выкидывал бы из приложения */
+      if (!st || !st[HISTORY_TAG]) return;
+      if (st.view === 'player' && viewRef.current !== 'player') onPop.current?.('player');
+      else if (st.view === 'home' && viewRef.current !== 'home') onPop.current?.('home');
+    };
+    window.addEventListener('popstate', handler);
+    return () => window.removeEventListener('popstate', handler);
+  }, []);
+
+  /* обработчик popstate. ведёт себя ровно как нажатие соответствующей
+     кнопки UI: handleNav('home') уносит обложку на карточку, handleNav
+     любого другого раздела возвращает в плеер */
+  onPop.current = (target) => {
+    /* запоминаем, В КАКОЙ view нас должны были привести — и идём туда же,
+       куда вёл бы клик по кнопке UI */
+    popTargetRef.current = target;
+    if (target === 'home') handleNavRef.current?.('home');
+    else handleNavRef.current?.('library');
+  };
+
+  /* ⚠️ ЗАПИСЫВАТЬ ИСТОРИЮ НАДО ЗДЕСЬ, а не внутри handleNav/selectTrack:
+     popstate сам зовёт handleNav, и если бы тот же код пушил запись, то
+     «назад» породил бы новую запись и вперёд стал бы бесконечным.
+     Поэтому пишем историю в ОДНОМ месте — на факте смены `view`.
+     viewRef обновляется здесь же, он же читается обработчиком popstate. */
+  useEffect(() => {
+    viewRef.current = view;
+    /* ⚠️ ПЕРВЫЙ прогон эффекта — это монтирование, а не переход.
+       без этой проверки на старте пушилась лишняя запись «home» рядом с
+       той, что сделал replaceState, и первое нажатие «назад» уходило в
+       неё: view и так home, обработчик молчал, и пользователь терял
+       одно нажатие — «назад не работает» */
+    if (!histInitRef.current) { histInitRef.current = true; return; }
+
+    /* ⚠️ Отличает нашу обработку popstate от обычного перехода ПО ФАКТУ
+       достижения целевого view, а не флагом «я сейчас обрабатываю».
+       Флаг залипал: `handleNav` умеет НЕ переключить view (из редактора
+       плейлиста с несохранёнными правками выход только через его гарды —
+       он показывает предупреждение и остаётся на месте). тогда view не
+       менялся, эффект не срабатывал, флаг ждал следующего перехода и
+       гасил его запись — после чего «назад» переставал работать навсегда
+       и без единой ошибки. сверка цели самовосстанавливается: если
+       перехода не случилось, цель просто перезапишется следующим
+       popstate, а реальные переходы пушатся всегда. */
+    if (popTargetRef.current === view) { popTargetRef.current = null; return; }
+    popTargetRef.current = null;
+
+    if (view !== 'home' && view !== 'player') return;   /* остальные разделы в историю не пишем */
+    pushView(view);
+  }, [view]);
 
   if (!track) return null;
 
@@ -8730,18 +9013,14 @@ const shuffleKeepRef    = useRef(false);
                 </div>
               )
             ) : (
-              <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(128px, 1fr))', gap:18}}>
-                <AnimatePresence initial={false}>
-                  {activeList.map((t) => (
-                    <HomeCard key={t.id} track={t}
-                      artRef={getArtRef(t.id)}
-                      onSelect={selectTrackStable}
-                      artHidden={(reverseHero && !reverseHeroExiting && t.id === track.id) || (hero && !heroExiting && t.id === hero.track.id)}
-                      isLiked={sourceMode === 'sc' ? likedIds.has(t.id) : false}
-                      onLike={sourceMode === 'sc' ? handleLike : null}/>
-                  ))}
-                </AnimatePresence>
-              </div>
+              <HomeGrid
+                list={activeList}
+                likedIds={sourceMode === 'sc' ? likedIds : null}
+                onLike={sourceMode === 'sc' ? handleLike : null}
+                onSelect={selectTrackStable}
+                getArtRef={getArtRef}
+                heroId={hero && !heroExiting ? hero.track.id : null}
+                reverseId={reverseHero && !reverseHeroExiting ? track.id : null}/>
             )}
           </div>
         )}
@@ -9101,7 +9380,13 @@ const shuffleKeepRef    = useRef(false);
               <ProgressBar progressRef={progressRef} audioRef={audioRef} total={track.duration || 0}
                 onSeek={handleSeek} isPlaying={isPlaying} visible={playerVisible}
                 />
-            {(()=>{ const P = { spring:0.055, damping:0.84, clamp:10 }; const SIDE = 'clamp(40px, 5.2vw, 58px)'; return (
+            {/* ❌ был `const P = { spring:0.055, damping:0.84, clamp:10 }`,
+                который шестиминутно передавался в `physics={P}` во все
+                MagBtn/PlayBtn. НИ MagBtn, НИ PlayBtn этот проп не
+                принимают — анимация там на whileTap/whileHover Motion.
+                мёртвый объект пересоздавался на каждом рендере ради
+                ничего; удалён вместе с шестью передачами. */}
+            {(()=>{ const SIDE = 'clamp(40px, 5.2vw, 58px)'; return (
             <div style={{display:'flex', alignItems:'center', gap:14, justifyContent:'center', marginTop:16}}>
               {/* Левый балансирующий спейсер 27px УБРАН. Он уравнивал play с
                   кнопкой лайка, когда слева было только shuffle+prev. Слева
@@ -9111,20 +9396,20 @@ const shuffleKeepRef    = useRef(false);
                   когда трек локальный. Ряд сбалансирован в обоих случаях,
                   лайк никуда не уезжает. Слева спейсер не нужен вовсе —
                   flex gap уже даёт отступ от края. */}
-              <MagBtn onClick={handleToggleLyrics} active={lyricsOpen} size={SIDE} physics={P}>
+              <MagBtn onClick={handleToggleLyrics} active={lyricsOpen} size={SIDE}>
                 <img src="../assets/textt.png" style={{width:'clamp(18px, 2.2vw, 26px)',height:'clamp(18px, 2.2vw, 26px)',filter:'brightness(0) invert(1)',opacity:lyricsOpen?1:0.38,transition:'opacity 0.2s ease'}}/>
               </MagBtn>
-              <MagBtn onClick={()=>setShuffle(s=>!s)} active={shuffle} size={SIDE} physics={P}>
+              <MagBtn onClick={()=>setShuffle(s=>!s)} active={shuffle} size={SIDE}>
                 <img src="../assets/shuffle.png" style={{width:'clamp(18px, 2.2vw, 26px)',height:'clamp(18px, 2.2vw, 26px)',filter:'brightness(0) invert(1)',opacity:shuffle?1:0.38,transition:'opacity 0.2s ease'}}/>
               </MagBtn>
-              <MagBtn onClick={handlePrev} size={'clamp(46px, 6vw, 66px)'} physics={P}>
+              <MagBtn onClick={handlePrev} size={'clamp(46px, 6vw, 66px)'}>
                 <img src="../assets/rewind.png" style={{width:'clamp(18px, 2.2vw, 26px)',height:'clamp(18px, 2.2vw, 26px)',filter:'brightness(0) invert(1)',opacity:0.38}}/>
               </MagBtn>
-              <PlayBtn isPlaying={isPlaying} onToggle={()=>setIsPlaying(p=>!p)} physics={P}/>
-              <MagBtn onClick={handleNext} size={'clamp(46px, 6vw, 66px)'} physics={P}>
+              <PlayBtn isPlaying={isPlaying} onToggle={()=>setIsPlaying(p=>!p)}/>
+              <MagBtn onClick={handleNext} size={'clamp(46px, 6vw, 66px)'}>
                 <img src="../assets/forward.png" style={{width:'clamp(18px, 2.2vw, 26px)',height:'clamp(18px, 2.2vw, 26px)',filter:'brightness(0) invert(1)',opacity:0.38}}/>
               </MagBtn>
-              <MagBtn onClick={()=>setRepeat(r=>r==='off'?'all':r==='all'?'one':'off')} active={repeat!=='off'} size={SIDE} physics={P}>
+              <MagBtn onClick={()=>setRepeat(r=>r==='off'?'all':r==='all'?'one':'off')} active={repeat!=='off'} size={SIDE}>
                 <div style={{position:'relative',width:'clamp(18px, 2.2vw, 26px)',height:'clamp(18px, 2.2vw, 26px)'}}>
                   <img src="../assets/repeat.png"  style={{position:'absolute',top:0,left:0,width:'100%',height:'100%',filter:'brightness(0) invert(1)',opacity:repeat==='off'?0.38:repeat==='all'?1:0,transition:'opacity 0.2s ease'}}/>
                   <img src="../assets/repeat1.png" style={{position:'absolute',top:0,left:0,width:'100%',height:'100%',filter:'brightness(0) invert(1)',opacity:repeat==='one'?1:0,transition:'opacity 0.2s ease'}}/>

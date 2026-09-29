@@ -308,6 +308,14 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      /* ⚠️ НЕОБХОДИМО, иначе анимации в фоне встают колом.
+         по умолчанию Electron true: когда окно свёрнуто или полностью
+         перекрыто, Chromium душит rAF до ~1Гц. наш рендер целиком
+         построен на requestAnimationFrame — hero-клон на GSAP, бегунок
+         громкости, пульс лайка, лерп акцента. всё это замирает, а
+         ProgressBar дополнительно «откатывается» при возврате в окно,
+         потому что он читает позицию по кадрам, а не по времени. */
+      backgroundThrottling: false,
       preload: path.join(__dirname, 'renderer', 'preload.js'),
     },
   })
